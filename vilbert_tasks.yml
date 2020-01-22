@@ -5,13 +5,13 @@ TASK1:
   process: normal
   task_id: 1
   dataroot: datasets/VQA/
-  features_h5path1: datasets/coco/features_100/COCO_trainval_resnext152_faster_rcnn_genome.lmdb
+  features_h5path1: datasets/coco/COCO_trainval_resnext152_faster_rcnn_genome.lmdb
   features_h5path2: ''
   train_annotations_jsonpath: ''
   val_annotations_jsonpath: ''
   max_seq_length: 23
   max_region_num: 101
-  batch_size: 128
+  batch_size: 80
   eval_batch_size: 1024
   train_split: trainval
   val_split: minval
@@ -43,7 +43,7 @@ TASK3:
   process: dialog
   task_id: 3
   dataroot: datasets/visual_dialog
-  features_h5path1: datasets/coco/features_100/COCO_trainval_resnext152_faster_rcnn_genome.lmdb
+  features_h5path1: datasets/coco/COCO_trainval_resnext152_faster_rcnn_genome.lmdb
   features_h5path2: ''
   train_annotations_jsonpath: datasets/visual_dialog/visdial_1.0_train.json
   val_annotations_jsonpath: datasets/visual_dialog/visdial_1.0_val.json
@@ -331,3 +331,23 @@ TASK18:
   val_split: val
   lr: 0.000002
   num_epoch: 20
+TASK19:
+  name: TextVQA
+  type: V-logit
+  loss: BCEWithLogitLoss
+  process: normal
+  task_id: 19
+  dataroot: ""
+  features_h5path1: # obj-features
+  features_h5path2: # ocr-features
+  train_annotations_jsonpath: ''
+  val_annotations_jsonpath: ''
+  max_seq_length: 20
+  max_region_num: 100 # object features
+  max_resnet_num: 150 # grid features
+  max_ocr_num: 50 # ocr tokens
+  batch_size: 80
+  train_split: train
+  val_split: val
+  lr: 0.00004
+  num_epoch: 30

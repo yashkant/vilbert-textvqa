@@ -11,6 +11,7 @@ import logging
 import numpy as np
 import torch
 from torch.utils.data import Dataset
+from tqdm import tqdm
 
 from ._image_features_reader import ImageFeaturesH5Reader
 
@@ -39,7 +40,11 @@ def _load_dataset(dataroot, name, clean_datasets):
 
     dataroot: root path of dataset
     name: 'train', 'val', 'trainval', 'minsval'
+
+    (YK): We load questions and answers corresponding to
+        the splits, and return entries.
     """
+
     if name == "train" or name == "val":
         question_path = os.path.join(
             dataroot, "v2_OpenEnded_mscoco_%s2014_questions.json" % name
@@ -52,6 +57,7 @@ def _load_dataset(dataroot, name, clean_datasets):
         answers = sorted(answers, key=lambda x: x["question_id"])
 
     elif name == "trainval":
+        # LOAD TRAIN questions and answers
         question_path_train = os.path.join(
             dataroot, "v2_OpenEnded_mscoco_%s2014_questions.json" % "train"
         )
@@ -63,6 +69,7 @@ def _load_dataset(dataroot, name, clean_datasets):
         answers_train = cPickle.load(open(answer_path_train, "rb"))
         answers_train = sorted(answers_train, key=lambda x: x["question_id"])
 
+        # LOAD VAL questions and answers
         question_path_val = os.path.join(
             dataroot, "v2_OpenEnded_mscoco_%s2014_questions.json" % "val"
         )
@@ -73,6 +80,7 @@ def _load_dataset(dataroot, name, clean_datasets):
         answer_path_val = os.path.join(dataroot, "cache", "%s_target.pkl" % "val")
         answers_val = cPickle.load(open(answer_path_val, "rb"))
         answers_val = sorted(answers_val, key=lambda x: x["question_id"])
+        # Todo: What is this?
         questions = questions_train + questions_val[:-3000]
         answers = answers_train + answers_val[:-3000]
 
@@ -144,10 +152,13 @@ def _load_dataset(dataroot, name, clean_datasets):
         assert_eq(len(questions), len(answers))
         entries = []
         remove_ids = []
+        # Todo: What is this?
+        # Removing ids that are present in test-set of other tasks
         if clean_datasets:
             remove_ids = np.load(os.path.join(dataroot, "cache", "coco_test_ids.npy"))
-            remove_ids = [int(x) for x in remove_ids]
-        for question, answer in zip(questions, answers):
+            remove_ids = set([int(x) for x in remove_ids])
+
+        for question, answer in tqdm(zip(questions, answers)):
             if "train" in name and int(question["image_id"]) in remove_ids:
                 continue
             assert_eq(question["question_id"], answer["question_id"])
@@ -173,8 +184,12 @@ class VQAClassificationDataset(Dataset):
         max_seq_length=16,
         max_region_num=101,
     ):
+        """
+        (YK): Builds self.entries by reading questions and answers and caches them.
+        """
         super().__init__()
         self.split = split
+        # Todo: What are these?
         ans2label_path = os.path.join(dataroot, "cache", "trainval_ans2label.pkl")
         label2ans_path = os.path.join(dataroot, "cache", "trainval_label2ans.pkl")
         self.ans2label = cPickle.load(open(ans2label_path, "rb"))
@@ -210,7 +225,9 @@ class VQAClassificationDataset(Dataset):
             )
         if not os.path.exists(cache_path):
             self.entries = _load_dataset(dataroot, split, clean_datasets)
+            # convert questions to tokens, create masks, segment_ids
             self.tokenize(max_seq_length)
+            # convert all tokens to tensors
             self.tensorize()
             cPickle.dump(self.entries, open(cache_path, "wb"))
         else:
@@ -220,10 +237,10 @@ class VQAClassificationDataset(Dataset):
     def tokenize(self, max_length=16):
         """Tokenizes the questions.
 
-        This will add q_token in each entry of the dataset.
+        (YK): This will add (q_token, q_input_mask, q_segment_ids) in each entry of the dataset.
         -1 represent nil, and should be treated as padding_index in embedding
         """
-        for entry in self.entries:
+        for entry in tqdm(self.entries, desc="Tokenizing..."):
             tokens = self._tokenizer.encode(entry["question"])
             tokens = tokens[: max_length - 2]
             tokens = self._tokenizer.add_special_tokens_single_sentence(tokens)
@@ -244,8 +261,25 @@ class VQAClassificationDataset(Dataset):
             entry["q_segment_ids"] = segment_ids
 
     def tensorize(self):
+        """
+        Tensorizes `q_token`, `q_input_mask` and `q_segment_ids` and answer `labels` and `scores`.
 
-        for entry in self.entries:
+        entry: {
+            question_id,
+            image_id,
+            question,
+            answer: {
+                labels: 2542
+                scores: 0.9
+            }
+            q_token,
+            q_segment_ids,
+            q_input_mask
+        }
+
+        """
+
+        for entry in tqdm(self.entries, desc="Tensorizing..."):
             question = torch.from_numpy(np.array(entry["q_token"]))
             entry["q_token"] = question
 
@@ -269,6 +303,12 @@ class VQAClassificationDataset(Dataset):
                     entry["answer"]["scores"] = None
 
     def __getitem__(self, index):
+        """
+        1. Get image-features/bboxes and image mask (as nump-arrays), tensorize them.
+        2. Get question, input_mask, segment_ids and coattention mask
+        3. Build target (vocab-dim) with VQA scores scattered at label-indices
+        4. Return
+        """
         entry = self.entries[index]
         image_id = entry["image_id"]
         question_id = entry["question_id"]

@@ -47,3 +47,4 @@ checkpoints/
 # virtualenv
 venv/
 ENV/
+datasets/

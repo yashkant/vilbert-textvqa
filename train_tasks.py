@@ -148,7 +148,7 @@ def main():
     parser.add_argument(
         "--num_workers",
         type=int,
-        default=16,
+        default=0,
         help="Number of workers in the dataloader.",
     )
     parser.add_argument(
@@ -199,7 +199,7 @@ def main():
     )
     parser.add_argument(
         "--clean_train_sets",
-        default=True,
+        default=False,
         type=bool,
         help="whether clean train sets for multitask data.",
     )
@@ -226,6 +226,7 @@ def main():
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
+    # Todo: what is baseline? difference: BaseBert/ViLBert and BertConfig from pytorch/ViLBert
     if args.baseline:
         from pytorch_transformers.modeling_bert import BertConfig
         from vilbert.basebert import BaseBertForVLTasks
@@ -280,6 +281,7 @@ def main():
         )
     )
 
+    # (YK): default_gpu decides whether to log outputs
     default_gpu = False
     if dist.is_available() and args.local_rank != -1:
         rank = dist.get_rank()
@@ -300,9 +302,9 @@ def main():
             print("\n", file=f)
             print(config, file=f)
 
-    task_batch_size, task_num_iters, task_ids, task_datasets_train, task_datasets_val, task_dataloader_train, task_dataloader_val = LoadDatasets(
-        args, task_cfg, args.tasks.split("-")
-    )
+    # LOAD DATASETS
+    task_batch_size, task_num_iters, task_ids, task_datasets_train, task_datasets_val, task_dataloader_train, \
+    task_dataloader_val = LoadDatasets(args, task_cfg, args.tasks.split("-"))
 
     logdir = os.path.join(savePath, "logs")
     tbLogger = utils.tbLogger(
@@ -351,12 +353,16 @@ def main():
     )
     num_labels = max([dataset.num_labels for dataset in task_datasets_train.values()])
 
+    # num_labels = 3129
+
     if args.dynamic_attention:
         config.dynamic_attention = True
     if "roberta" in args.bert_model:
         config.model = "roberta"
 
+    # LOAD PRETRAINED VILBERT
     if args.baseline:
+        # (YK): Single-stream baseline model of ViLBERT
         model = BaseBertForVLTasks.from_pretrained(
             args.from_pretrained,
             config=config,
@@ -371,6 +377,7 @@ def main():
             default_gpu=default_gpu,
         )
 
+    # LOAD LOSSES
     task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
 
     no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
@@ -504,9 +511,11 @@ def main():
 
     task_iter_train = {name: None for name in task_ids}
     task_count = {name: 0 for name in task_ids}
+
+    # TRAINING LOOP
     for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
         model.train()
-        for step in range(median_num_iter):
+        for step in tqdm(range(median_num_iter), desc="Iters"):
             iterId = startIterID + step + (epochId * median_num_iter)
             first_task = True
             for task_id in task_ids:
