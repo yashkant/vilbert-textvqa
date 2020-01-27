@@ -184,144 +184,141 @@ def ForwardModelsTrain(
 
     task_count[task_id] += 1
     # get the batch
-    batch = task_iter_train[task_id].next()
-    batch = tuple(t.cuda(device=device, non_blocking=True) for t in batch)
+    batch_dict = task_iter_train[task_id].next()
 
-    if task_id == "TASK4" or task_id == "TASK17":
-        features, spatials, image_mask, question, target, input_mask, segment_ids, multiple_choice_ids, co_attention_mask, question_id = (
-            batch
-        )
-    else:
-        features, spatials, image_mask, question, target, input_mask, segment_ids, co_attention_mask, image_id, question_id = (
-            batch
-        )
+    for key, value in batch_dict.items():
+        if isinstance(value, torch.Tensor):
+            batch_dict[key] = value.cuda(device=device, non_blocking=True)
 
-    batch_size = features.size(0)
-    if task_cfg[task_id]["process"] in ["dialog"]:
-        max_num_bbox = features.size(1)
-        nround = question.size(1)
-        num_options = question.size(2)
-        rbatch_size = batch_size * nround
-        question = question.view(rbatch_size, question.size(2), question.size(3))
-        target = target.view(-1)
-        input_mask = input_mask.view(
-            rbatch_size, input_mask.size(2), input_mask.size(3)
-        )
-        segment_ids = segment_ids.view(
-            rbatch_size, segment_ids.size(2), segment_ids.size(3)
-        )
-        co_attention_mask = co_attention_mask.view(
-            rbatch_size,
-            co_attention_mask.size(2),
-            co_attention_mask.size(3),
-            co_attention_mask.size(4),
-        )
+    # batch_dict = tuple(t.cuda(device=device, non_blocking=True) for t in batch if isinstance(t, torch.Tensor))
+    # if task_id == "TASK4" or task_id == "TASK17":
+    #     features, spatials, image_mask, question, target, input_mask, segment_ids, multiple_choice_ids, co_attention_mask, question_id = (
+    #         batch
+    #     )
+    # else:
+    #     features, spatials, image_mask, question, target, input_mask, segment_ids, co_attention_mask, image_id, question_id = (
+    #         batch
+    #     )
 
-        features = (
-            features.unsqueeze(1)
-            .unsqueeze(1)
-            .expand(batch_size, nround, num_options, max_num_bbox, 2048)
-            .contiguous()
-            .view(-1, max_num_bbox, 2048)
-        )
-        spatials = (
-            spatials.unsqueeze(1)
-            .unsqueeze(1)
-            .expand(batch_size, nround, num_options, max_num_bbox, 5)
-            .contiguous()
-            .view(-1, max_num_bbox, 5)
-        )
-        image_mask = (
-            image_mask.unsqueeze(1)
-            .expand(batch_size, nround, num_options, max_num_bbox)
-            .contiguous()
-            .view(-1, max_num_bbox)
-        )
+    batch_size = batch_dict["pad_obj_features"].size(0)
+    question = batch_dict["question_indices"]
+    target = batch_dict["targets"]
+    # if task_cfg[task_id]["process"] in ["dialog"]:
+    #     max_num_bbox = features.size(1)
+    #     nround = question.size(1)
+    #     num_options = question.size(2)
+    #     rbatch_size = batch_size * nround
+    #     question = question.view(rbatch_size, question.size(2), question.size(3))
+    #     target = target.view(-1)
+    #     input_mask = input_mask.view(
+    #         rbatch_size, input_mask.size(2), input_mask.size(3)
+    #     )
+    #     segment_ids = segment_ids.view(
+    #         rbatch_size, segment_ids.size(2), segment_ids.size(3)
+    #     )
+    #     co_attention_mask = co_attention_mask.view(
+    #         rbatch_size,
+    #         co_attention_mask.size(2),
+    #         co_attention_mask.size(3),
+    #         co_attention_mask.size(4),
+    #     )
+    #
+    #     features = (
+    #         features.unsqueeze(1)
+    #         .unsqueeze(1)
+    #         .expand(batch_size, nround, num_options, max_num_bbox, 2048)
+    #         .contiguous()
+    #         .view(-1, max_num_bbox, 2048)
+    #     )
+    #     spatials = (
+    #         spatials.unsqueeze(1)
+    #         .unsqueeze(1)
+    #         .expand(batch_size, nround, num_options, max_num_bbox, 5)
+    #         .contiguous()
+    #         .view(-1, max_num_bbox, 5)
+    #     )
+    #     image_mask = (
+    #         image_mask.unsqueeze(1)
+    #         .expand(batch_size, nround, num_options, max_num_bbox)
+    #         .contiguous()
+    #         .view(-1, max_num_bbox)
+    #     )
+    #
+    #     question = question.view(-1, question.size(2))
+    #     input_mask = input_mask.view(-1, input_mask.size(2))
+    #     segment_ids = segment_ids.view(-1, segment_ids.size(2))
+    #     co_attention_mask = co_attention_mask.view(
+    #         -1, co_attention_mask.size(2), co_attention_mask.size(3)
+    #     )
+    #     batch_size = rbatch_size
+    #
+    # elif task_cfg[task_id]["process"] in ["expand"]:
+    #     max_num_bbox = features.size(1)
+    #     num_options = question.size(1)
+    #     features = (
+    #         features.unsqueeze(1)
+    #         .expand(batch_size, num_options, max_num_bbox, 2048)
+    #         .contiguous()
+    #         .view(-1, max_num_bbox, 2048)
+    #     )
+    #     spatials = (
+    #         spatials.unsqueeze(1)
+    #         .expand(batch_size, num_options, max_num_bbox, 5)
+    #         .contiguous()
+    #         .view(-1, max_num_bbox, 5)
+    #     )
+    #     image_mask = (
+    #         image_mask.unsqueeze(1)
+    #         .expand(batch_size, num_options, max_num_bbox)
+    #         .contiguous()
+    #         .view(-1, max_num_bbox)
+    #     )
+    #     question = question.view(-1, question.size(2))
+    #     input_mask = input_mask.view(-1, input_mask.size(2))
+    #     segment_ids = segment_ids.view(-1, segment_ids.size(2))
+    #     co_attention_mask = co_attention_mask.view(
+    #         -1, co_attention_mask.size(2), co_attention_mask.size(3)
+    #     )
+    #
+    # elif task_cfg[task_id]["process"] in ["retrieval"]:
+    #     max_num_bbox = features.size(1)
+    #     num_options = question.size(1)
+    #     features = features.view(-1, features.size(2), features.size(3))
+    #     spatials = spatials.view(-1, spatials.size(2), spatials.size(3))
+    #     image_mask = image_mask.view(-1, image_mask.size(2))
+    #     question = question.view(-1, question.size(2))
+    #     input_mask = input_mask.view(-1, input_mask.size(2))
+    #     segment_ids = segment_ids.view(-1, segment_ids.size(2))
+    #     co_attention_mask = co_attention_mask.view(
+    #         -1, co_attention_mask.size(2), co_attention_mask.size(3)
+    #     )
+    #
+    # elif task_cfg[task_id]["process"] in ["nlvr"]:
+    #     batch_size = features.size(0)
+    #     max_num_bbox = features.size(1)
+    #     num_options = question.size(1)
+    #     features = features.view(
+    #         batch_size * 2, int(features.size(1) / 2), features.size(2)
+    #     )
+    #     spatials = spatials.view(
+    #         batch_size * 2, int(spatials.size(1) / 2), spatials.size(2)
+    #     )
+    #     image_mask = image_mask.view(batch_size * 2, int(image_mask.size(1) / 2))
+    #     question = question.repeat(1, 2)
+    #     question = question.view(batch_size * 2, int(question.size(1) / 2))
+    #     input_mask = input_mask.repeat(1, 2)
+    #     input_mask = input_mask.view(batch_size * 2, int(input_mask.size(1) / 2))
+    #     segment_ids = segment_ids.repeat(1, 2)
+    #     segment_ids = segment_ids.view(batch_size * 2, int(segment_ids.size(1) / 2))
+    #     co_attention_mask = co_attention_mask.view(
+    #         batch_size * 2,
+    #         int(co_attention_mask.size(1) / 2),
+    #         co_attention_mask.size(2),
+    #     )
 
-        question = question.view(-1, question.size(2))
-        input_mask = input_mask.view(-1, input_mask.size(2))
-        segment_ids = segment_ids.view(-1, segment_ids.size(2))
-        co_attention_mask = co_attention_mask.view(
-            -1, co_attention_mask.size(2), co_attention_mask.size(3)
-        )
-        batch_size = rbatch_size
-
-    elif task_cfg[task_id]["process"] in ["expand"]:
-        max_num_bbox = features.size(1)
-        num_options = question.size(1)
-        features = (
-            features.unsqueeze(1)
-            .expand(batch_size, num_options, max_num_bbox, 2048)
-            .contiguous()
-            .view(-1, max_num_bbox, 2048)
-        )
-        spatials = (
-            spatials.unsqueeze(1)
-            .expand(batch_size, num_options, max_num_bbox, 5)
-            .contiguous()
-            .view(-1, max_num_bbox, 5)
-        )
-        image_mask = (
-            image_mask.unsqueeze(1)
-            .expand(batch_size, num_options, max_num_bbox)
-            .contiguous()
-            .view(-1, max_num_bbox)
-        )
-        question = question.view(-1, question.size(2))
-        input_mask = input_mask.view(-1, input_mask.size(2))
-        segment_ids = segment_ids.view(-1, segment_ids.size(2))
-        co_attention_mask = co_attention_mask.view(
-            -1, co_attention_mask.size(2), co_attention_mask.size(3)
-        )
-
-    elif task_cfg[task_id]["process"] in ["retrieval"]:
-        max_num_bbox = features.size(1)
-        num_options = question.size(1)
-        features = features.view(-1, features.size(2), features.size(3))
-        spatials = spatials.view(-1, spatials.size(2), spatials.size(3))
-        image_mask = image_mask.view(-1, image_mask.size(2))
-        question = question.view(-1, question.size(2))
-        input_mask = input_mask.view(-1, input_mask.size(2))
-        segment_ids = segment_ids.view(-1, segment_ids.size(2))
-        co_attention_mask = co_attention_mask.view(
-            -1, co_attention_mask.size(2), co_attention_mask.size(3)
-        )
-
-    elif task_cfg[task_id]["process"] in ["nlvr"]:
-        batch_size = features.size(0)
-        max_num_bbox = features.size(1)
-        num_options = question.size(1)
-        features = features.view(
-            batch_size * 2, int(features.size(1) / 2), features.size(2)
-        )
-        spatials = spatials.view(
-            batch_size * 2, int(spatials.size(1) / 2), spatials.size(2)
-        )
-        image_mask = image_mask.view(batch_size * 2, int(image_mask.size(1) / 2))
-        question = question.repeat(1, 2)
-        question = question.view(batch_size * 2, int(question.size(1) / 2))
-        input_mask = input_mask.repeat(1, 2)
-        input_mask = input_mask.view(batch_size * 2, int(input_mask.size(1) / 2))
-        segment_ids = segment_ids.repeat(1, 2)
-        segment_ids = segment_ids.view(batch_size * 2, int(segment_ids.size(1) / 2))
-        co_attention_mask = co_attention_mask.view(
-            batch_size * 2,
-            int(co_attention_mask.size(1) / 2),
-            co_attention_mask.size(2),
-        )
-
-    task_tokens = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
-    import pdb
-    pdb.set_trace()
+    batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
     vil_prediction, vil_prediction_gqa, vil_logit, vil_binary_prediction, vil_tri_prediction, vision_prediction, vision_logit, linguisic_prediction, linguisic_logit, _ = model(
-        question,
-        features,
-        spatials,
-        segment_ids,
-        input_mask,
-        image_mask,
-        co_attention_mask,
-        task_tokens,
+        batch_dict
     )
 
     # for different task, we use different output to calculate the loss.
@@ -414,6 +411,20 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
         if task_cfg[task]["features_h5path2"] not in task_feature_reader2:
             task_feature_reader2[task_cfg[task]["features_h5path2"]] = None
 
+    # (YK): Use with test split
+    # import pdb
+    # pdb.set_trace()
+    #
+    # for features_h5path in task_feature_reader1.keys():
+    #     task_feature_reader1.pop(features_h5path)
+    #     if features_h5path != "":
+    #         task_feature_reader1[features_h5path.format("trainval")] = None
+    #
+    # for features_h5path in task_feature_reader2.keys():
+    #     task_feature_reader2.pop(features_h5path)
+    #     if features_h5path != "":
+    #         task_feature_reader2[features_h5path.format("trainval")] = None
+
     # initilzie the feature reader
     for features_h5path in task_feature_reader1.keys():
         if features_h5path != "":
@@ -469,6 +480,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
                 padding_index=0,
                 max_seq_length=task_cfg[task]["max_seq_length"],
                 max_region_num=task_cfg[task]["max_region_num"],
+                extra_args=task_cfg[task]
             )
 
         task_datasets_val[task] = None
@@ -490,6 +502,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
                 padding_index=0,
                 max_seq_length=task_cfg[task]["max_seq_length"],
                 max_region_num=task_cfg[task]["max_region_num"],
+                extra_args=task_cfg[task]
             )
 
         task_num_iters[task] = 0
@@ -558,11 +571,6 @@ def LoadDatasetEval(args, task_cfg, ids):
             task_feature_reader2[features_h5path] = ImageFeaturesH5Reader(
                 features_h5path, args.in_memory
             )
-
-    import pdb
-    pdb.set_trace()
-
-    task_feature_reader1[features_h5path][1]
 
     task_datasets_val = {}
     task_dataloader_val = {}
@@ -648,7 +656,7 @@ def EvaluatingModel(
     results,
     others,
 ):
-    batch = tuple(t.cuda(device=device, non_blocking=True) for t in batch)
+    batch = tuple(t.cuda(device=device, non_blocking=True) for t in batch if isinstance(t, torch.Tensor))
 
     if task_id == "TASK4" or task_id == "TASK17":
         features, spatials, image_mask, question, target, input_mask, segment_ids, multiple_choice_ids, co_attention_mask, question_id = (

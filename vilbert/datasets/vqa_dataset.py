@@ -183,6 +183,7 @@ class VQAClassificationDataset(Dataset):
         padding_index=0,
         max_seq_length=16,
         max_region_num=101,
+        extra_args=None
     ):
         """
         (YK): Builds self.entries by reading questions and answers and caches them.

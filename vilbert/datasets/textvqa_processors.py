@@ -81,13 +81,20 @@ from .textvqa_vocab import VocabDict
 from ..phoc import build_phoc
 
 
-def _pad_tokens(tokens):
-    padded_tokens = [self.PAD_TOKEN] * self.max_length
-    token_length = min(len(tokens), self.max_length)
+def _pad_tokens(tokens, PAD_TOKEN, max_length):
+    padded_tokens = [PAD_TOKEN] * max_length
+    token_length = min(len(tokens), max_length)
     padded_tokens[:token_length] = tokens[:token_length]
     token_length = torch.tensor(token_length, dtype=torch.long)
     return padded_tokens, token_length
 
+class WordToVectorDict:
+    def __init__(self, model):
+        self.model = model
+
+    def __getitem__(self, word):
+        # Check if mean for word split needs to be done here
+        return np.mean([self.model.get_word_vector(w) for w in word.split(" ")], axis=0)
 
 class BaseProcessor:
     """Every processor in Pythia needs to inherit this class for compatability
@@ -324,9 +331,9 @@ class FastTextProcessor:
 
     def __init__(self, config, *args, **kwargs):
         self.max_length = config.max_length
-        self._load_fasttext_model("/srv/share/ykant3/pythia/.vector_cache/wiki.en.bin")
+        self._load_fasttext_model("/srv/share/ykant3/pythia/vector_cache/wiki.en.bin")
         self.PAD_INDEX = 0
-        self.PAD_TOKEN = "<p>"
+        self.PAD_TOKEN = "<pad>"
 
 
     def _load_fasttext_model(self, model_file):
@@ -354,7 +361,7 @@ class FastTextProcessor:
         # indices are padded
         indices = self._map_strings_to_indices(item["tokens"])
         # pad tokens
-        tokens, length = _pad_tokens(item["tokens"])
+        tokens, length = _pad_tokens(item["tokens"], self.PAD_TOKEN, self.max_length)
         return {"padded_token_indices": indices, "padded_tokens": tokens, "length": length}
 
 
@@ -765,6 +772,7 @@ class PhocProcessor:
         self.max_length = config.max_length
         self.config = config
         self.PAD_INDEX = 0
+        self.PAD_TOKEN = "<pad>"
 
 
     def _map_strings_to_indices(self, tokens):
@@ -784,11 +792,9 @@ class PhocProcessor:
         return output
 
     def __call__(self, item):
-        import pdb
-        pdb.set_trace()
         indices = self._map_strings_to_indices(item["tokens"])
-        tokens, length = _pad_tokens(item["tokens"])
-        return {"padded_token_indices": indices, "padded_tokens": tokens, "length": length}
+        tokens, length = _pad_tokens(item["tokens"], self.PAD_TOKEN, self.max_length)
+        return {"padded_phoc_features": indices, "padded_tokens": tokens, "length": length}
 
 
 class CopyProcessor(BaseProcessor):
@@ -828,17 +834,10 @@ class BertTokenizerProcessor:
         token_inds[:len(indices)] = torch.tensor(indices)
         token_num = torch.tensor(len(indices), dtype=torch.long)
 
-        results = {'token_inds': token_inds, 'token_num': token_num}
+        tokens_mask = torch.zeros(self.max_length, dtype=torch.long)
+        tokens_mask[:len(indices)] = 1
 
-        if self.get_qgen_inds:
-            # default will be -1 (ignored labels in softmax loss)
-            qgen_inds = -torch.ones(self.max_length, dtype=torch.long)
-            # stripping [CLS] at beginning and [SEP] at end
-            # then add two [PAD] at end (as stop tokens)
-            indices_qgen = indices[1:-1] + [0, 0]
-            qgen_inds[:len(indices_qgen)] = torch.tensor(indices_qgen)
-            results['qgen_inds'] = qgen_inds
-
+        results = {'token_inds': token_inds, 'token_num': token_num, "tokens_mask": tokens_mask}
         return results
 
 
@@ -862,9 +861,6 @@ class M4CAnswerProcessor:
         assert self.BOS_IDX != self.answer_vocab.UNK_INDEX
         assert self.EOS_IDX != self.answer_vocab.UNK_INDEX
         assert self.PAD_IDX == 0
-
-        self.answer_preprocessor = Processor(config.preprocessor)
-        assert self.answer_preprocessor is not None
 
         self.num_answers = config.num_answers
         self.max_ocr_tokens = config.max_ocr_tokens
@@ -920,9 +916,6 @@ class M4CAnswerProcessor:
 
     def __call__(self, item):
         answers = item["answers"]
-        answers = [
-            self.answer_preprocessor({"text": a})["text"] for a in answers
-        ]
         assert len(answers) == self.num_answers
         assert len(self.answer_vocab) == len(self.answer_vocab.word2idx_dict)
 
@@ -1017,7 +1010,7 @@ class M4CAnswerProcessor:
         answer_info = {
             'answers': answers,
             'answers_scores': scores,
-            'sampled_idx_seq': idx_seq,
+            'sampled_idx_seq': [train_prev_inds.new(idx_seq)],
             'train_prev_inds': train_prev_inds,
             'train_loss_mask': train_loss_mask,
             'train_acc_mask': train_acc_mask,

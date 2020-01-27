@@ -351,9 +351,7 @@ def main():
     num_train_optimization_steps = (
         median_num_iter * args.num_train_epochs // args.gradient_accumulation_steps
     )
-    num_labels = max([dataset.num_labels for dataset in task_datasets_train.values()])
-
-    # num_labels = 3129
+    # num_labels = max([dataset.num_labels for dataset in task_datasets_train.values()])
 
     if args.dynamic_attention:
         config.dynamic_attention = True
@@ -366,14 +364,14 @@ def main():
         model = BaseBertForVLTasks.from_pretrained(
             args.from_pretrained,
             config=config,
-            num_labels=num_labels,
+            num_labels=None,
             default_gpu=default_gpu,
         )
     else:
         model = VILBertForVLTasks.from_pretrained(
             args.from_pretrained,
             config=config,
-            num_labels=num_labels,
+            num_labels=None,
             default_gpu=default_gpu,
         )
 
