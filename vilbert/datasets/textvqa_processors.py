@@ -75,7 +75,7 @@ import warnings
 from collections import Counter, defaultdict
 import numpy as np
 import torch
-
+from tools.registry import registry
 from pytorch_transformers.tokenization_bert import BertTokenizer
 from .textvqa_vocab import VocabDict
 from ..phoc import build_phoc
@@ -814,11 +814,12 @@ class CopyProcessor(BaseProcessor):
 
 class BertTokenizerProcessor:
     """
-    Tokenize a text string with BERT tokenizer
+    Tokenize a text string with BERT tokenizer, using Tokenizer passed to the dataset.
     """
-    def __init__(self, config):
+    def __init__(self, config, tokenizer):
         self.max_length = config.max_length
-        self.bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        self.bert_tokenizer = tokenizer
+        # self.bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
         assert self.bert_tokenizer.encode(self.bert_tokenizer.pad_token) == [0]
 
     def get_vocab_size(self):
@@ -855,6 +856,12 @@ class M4CAnswerProcessor:
         self.BOS_IDX = self.answer_vocab.word2idx('<s>')
         self.EOS_IDX = self.answer_vocab.word2idx('</s>')
         self.UNK_IDX = self.answer_vocab.UNK_INDEX
+
+        registry.PAD_IDX = self.answer_vocab.word2idx('<pad>')
+        registry.BOS_IDX = self.answer_vocab.word2idx('<s>')
+        registry.EOS_IDX = self.answer_vocab.word2idx('</s>')
+        registry.UNK_IDX = self.answer_vocab.UNK_INDEX
+        registry.answer_vocab = self.answer_vocab
 
         # make sure PAD_IDX, BOS_IDX and PAD_IDX are valid (not <unk>)
         assert self.PAD_IDX != self.answer_vocab.UNK_INDEX
@@ -916,6 +923,7 @@ class M4CAnswerProcessor:
 
     def __call__(self, item):
         answers = item["answers"]
+        item["context_tokens"] = item["context_tokens"][:self.max_ocr_tokens]
         assert len(answers) == self.num_answers
         assert len(self.answer_vocab) == len(self.answer_vocab.word2idx_dict)
 
@@ -971,7 +979,11 @@ class M4CAnswerProcessor:
                 # for example:
                 # if "red apple" has score 0.7 and "red flag" has score 0.8
                 # the score for "red" at Step 0 will be max(0.7, 0.8) = 0.8
-                scores[0, score_idx] = max(scores[0, score_idx], score)
+                try:
+                    scores[0, score_idx] = max(scores[0, score_idx], score)
+                except:
+                    import pdb
+                    pdb.set_trace()
 
         # train_prev_inds is the previous prediction indices in auto-regressive
         # decoding
@@ -1009,7 +1021,7 @@ class M4CAnswerProcessor:
 
         answer_info = {
             'answers': answers,
-            'answers_scores': scores,
+            'targets': scores,
             'sampled_idx_seq': [train_prev_inds.new(idx_seq)],
             'train_prev_inds': train_prev_inds,
             'train_loss_mask': train_loss_mask,

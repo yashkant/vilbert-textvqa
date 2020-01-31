@@ -98,7 +98,10 @@ class ImageFeaturesH5Reader(object):
 
                     # (YK): Get average feature and concatenate it to front + all features
                     num_boxes = features.shape[0]
-                    g_feat = np.sum(features, axis=0) / num_boxes
+                    div_num_boxes = 0
+                    if num_boxes == 0:
+                        div_num_boxes = 1
+                    g_feat = np.sum(features, axis=0) / (num_boxes + div_num_boxes)
                     num_boxes = num_boxes + 1
                     features = np.concatenate(
                         [np.expand_dims(g_feat, axis=0), features], axis=0

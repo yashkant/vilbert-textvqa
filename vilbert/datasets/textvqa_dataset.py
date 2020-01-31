@@ -7,7 +7,8 @@ import os
 import json
 import _pickle as cPickle
 import logging
-
+from tools.registry import registry
+from tools.objects_to_byte_tensor import enc_obj2bytes, dec_bytes2obj
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -22,18 +23,6 @@ os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 def assert_eq(real, expected):
     assert real == expected, "%s (true) vs %s (expected)" % (real, expected)
-
-
-def _create_entry(question, answer):
-    answer.pop("image_id")
-    answer.pop("question_id")
-    entry = {
-        "question_id": question["question_id"],
-        "image_id": question["image_id"],
-        "question": question["question"],
-        "answer": answer,
-    }
-    return entry
 
 
 def _load_dataset(dataroot, name, clean_datasets, debug):
@@ -70,7 +59,7 @@ def _load_dataset(dataroot, name, clean_datasets, debug):
         "image_height",
         "image_width",
         "google_ocr_tokens_filtered",
-        "google_ocr_info_filtered",
+        # "google_ocr_info_filtered",
     ]
 
     logger.info(f"Building Entries for {name}")
@@ -143,23 +132,30 @@ class TextVQADataset(Dataset):
                 task + "_" + split + "_" + str(max_seq_length) + clean_train + ".pkl",
             )
 
-        # Initialize Processors
-        self.processors = Processors()
+        import pdb
+        pdb.set_trace()
 
-        if not os.path.exists(cache_path):
+        if not os.path.exists(cache_path) or self.debug:
+            # Initialize Processors
+            self.processors = Processors(self._tokenizer)
             self.entries, _ = _load_dataset(dataroot, split, clean_datasets, self.debug)
             # convert questions to tokens, create masks, segment_ids
             self.process()
             if not self.debug:
                 cPickle.dump(self.entries, open(cache_path, "wb"))
         else:
+            self.processors = Processors(self._tokenizer, only_registry=True)  # only initialize the M4C processor (for registry)
             logger.info("Loading from %s" % cache_path)
             self.entries = cPickle.load(open(cache_path, "rb"))
-
 
     def process(self):
         logger.info("Processing Entries")
         for entry in tqdm(self.entries):
+
+            # tensorize
+            entry["question_id"] = torch.tensor(entry["question_id"])
+            entry["image_height"] = torch.tensor(entry["image_height"])
+            entry["image_width"] = torch.tensor(entry["image_width"])
 
             # process question
             processed_question = self.processors.bert_processor({"question": entry["question"]})
@@ -186,11 +182,13 @@ class TextVQADataset(Dataset):
                 "answers": cleaned_answers,
                 "context_tokens": cleaned_ocr_tokens,
             })
-            entry["targets"] = processed_answers["answers_scores"]
-            # entry["sampled_idx_seq"] = processed_answers["sampled_idx_seq"]
-            entry["train_prev_inds"] = processed_answers["train_prev_inds"]
-            entry["train_loss_mask"] = processed_answers["train_loss_mask"]
-            entry["train_acc_mask"] = processed_answers["train_acc_mask"]
+
+            entry.update(processed_answers)
+
+            # biggest keys are: ocr_phoc, ocr_fasttext and targets (that goes into caching)
+            remove_keys = ["sampled_idx_seq", "google_ocr_info_filtered", "google_ocr_tokens_filtered"]
+            for key in remove_keys:
+                entry.pop(key, None)
 
 
     def __len__(self):
@@ -224,7 +222,6 @@ class TextVQADataset(Dataset):
         """
         entry = self.entries[index]
         image_id = entry["image_id"]
-        question_id = torch.tensor(entry["question_id"]).long()
 
         # add object-features and bounding boxes
         obj_features, obj_num_boxes, obj_bboxes, _ = self.obj_features_reader[image_id]
@@ -257,6 +254,15 @@ class TextVQADataset(Dataset):
 
         item.update(entry)
         item["co_attention_mask"] = co_attention_mask
+
+        if image_id == "7a8487d00e4761fe":
+            import pdb
+            pdb.set_trace()
+
+        # Collate Function doesn't work correctly with lists
+        for key, value in item.items():
+            if not isinstance(value, torch.Tensor):
+                item[key] = enc_obj2bytes(value)
         return item
 
         #
@@ -296,13 +302,23 @@ class Processors:
         decoding answer.
     """
 
-    def __init__(self):
-
+    def __init__(self, bert_tokenizer, only_registry=False):
         logger.info("Loading Processors")
+        # decode-answers
+        answer_config = edict()
+        answer_config.max_copy_steps = 12
+        answer_config.num_answers = 10
+        answer_config.max_ocr_tokens = 50
+        self.answer_processor = M4CAnswerProcessor(answer_config)
+
+        if only_registry:
+            logger.info("Only registry processor initialized")
+            return
+
         # question
         question_config = edict()
         question_config.max_length = 20
-        self.bert_processor = BertTokenizerProcessor(question_config)
+        self.bert_processor = BertTokenizerProcessor(question_config, bert_tokenizer)
 
         # ocr-tokens
         ocr_config = edict()
@@ -310,12 +326,6 @@ class Processors:
         self.fasttext_processor = FastTextProcessor(ocr_config)
         self.phoc_processor = PhocProcessor(ocr_config)
 
-        # decode-answers
-        answer_config = edict()
-        answer_config.max_copy_steps = 12
-        answer_config.num_answers = 10
-        answer_config.max_ocr_tokens = 50
-        self.answer_processor = M4CAnswerProcessor(answer_config)
 
 
     @staticmethod

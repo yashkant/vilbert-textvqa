@@ -10,8 +10,9 @@ import os
 import random
 from io import open
 import numpy as np
-
+import pprint
 from tensorboardX import SummaryWriter
+from torch.optim import Adam
 from tqdm import tqdm
 from bisect import bisect
 import yaml
@@ -85,7 +86,7 @@ def main():
     )
     parser.add_argument(
         "--num_train_epochs",
-        default=20,
+        default=66,
         type=int,
         help="Total number of training epochs to perform.",
     )
@@ -156,7 +157,7 @@ def main():
     )
     parser.add_argument(
         "--in_memory",
-        default=False,
+        default=True,
         type=bool,
         help="whether use chunck for parallel training.",
     )
@@ -217,10 +218,30 @@ def main():
         action="store_true",
         help="whether to use task specific tokens for the multi-task learning.",
     )
+    parser.add_argument(
+        "--task_file", default="vilbert_tasks.yml", type=str, help="joint config file"
+    )
+
+    parser.add_argument(
+        "--tag", default="debug", type=str, help="tag for the experiment", required=True
+    )
+
+    parser.add_argument(
+        "--model_type", default="22", type=str, help="Type of model 22 or 31", required=True
+    )
+
+    parser.add_argument(
+        "--from_scratch", action="store_true", help="Initialize ViLBERT weights from scratch/ does it make"
+                                                    "what about question encodings!?")
 
     args = parser.parse_args()
-    with open("vilbert_tasks.yml", "r") as f:
+    with open(args.task_file, "r") as f:
         task_cfg = edict(yaml.safe_load(f))
+
+    logger.info("-"*20 + "Config Start" + "-"*20)
+    print(vars(args))
+    print(task_cfg["TASK19"])
+    logger.info("-"*20 + "Config End" + "-"*20)
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -230,9 +251,14 @@ def main():
     if args.baseline:
         from pytorch_transformers.modeling_bert import BertConfig
         from vilbert.basebert import BaseBertForVLTasks
-    else:
+    elif args.model_type == "22":
         from vilbert.vilbert import BertConfig
         from vilbert.vilbert import VILBertForVLTasks
+    elif args.model_type == "31":
+        from vilbert.vilbert_3_1 import BertConfig
+        from vilbert.vilbert_3_1 import VILBertForVLTasks
+    else:
+        raise ValueError
 
     task_names = []
     task_lr = []
@@ -257,6 +283,7 @@ def main():
         + "_"
         + args.config_file.split("/")[1].split(".")[0]
         + prefix
+        + f"-{args.tag}"
     )
     savePath = os.path.join(args.output_dir, timeStamp)
 
@@ -330,7 +357,7 @@ def main():
         os.makedirs(args.output_dir)
 
     task_ave_iter = {}
-    task_stop_controller = {}
+    # task_stop_controller = {}
     for task_id, num_iter in task_num_iters.items():
         task_ave_iter[task_id] = int(
             task_cfg[task]["num_epoch"]
@@ -338,20 +365,19 @@ def main():
             * args.train_iter_multiplier
             / args.num_train_epochs
         )
-        task_stop_controller[task_id] = utils.MultiTaskStopOnPlateau(
-            mode="max",
-            patience=1,
-            continue_threshold=0.005,
-            cooldown=1,
-            threshold=0.001,
-        )
+        # task_stop_controller[task_id] = utils.MultiTaskStopOnPlateau(
+        #     mode="max",
+        #     patience=1,
+        #     continue_threshold=0.005,
+        #     cooldown=1,
+        #     threshold=0.001,
+        # )
 
     task_ave_iter_list = sorted(task_ave_iter.values())
     median_num_iter = task_ave_iter_list[-1]
     num_train_optimization_steps = (
         median_num_iter * args.num_train_epochs // args.gradient_accumulation_steps
     )
-    # num_labels = max([dataset.num_labels for dataset in task_datasets_train.values()])
 
     if args.dynamic_attention:
         config.dynamic_attention = True
@@ -368,12 +394,19 @@ def main():
             default_gpu=default_gpu,
         )
     else:
-        model = VILBertForVLTasks.from_pretrained(
-            args.from_pretrained,
-            config=config,
-            num_labels=None,
-            default_gpu=default_gpu,
-        )
+        if args.from_scratch:
+            model = VILBertForVLTasks(
+                config=config,
+                num_labels=None,
+                default_gpu=default_gpu,
+            )
+        else:
+            model = VILBertForVLTasks.from_pretrained(
+                args.from_pretrained,
+                config=config,
+                num_labels=None,
+                default_gpu=default_gpu,
+            )
 
     # LOAD LOSSES
     task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
@@ -428,6 +461,8 @@ def main():
         optimizer = AdamW(optimizer_grouped_parameters, lr=base_lr, correct_bias=False)
     elif args.optim == "RAdam":
         optimizer = RAdam(optimizer_grouped_parameters, lr=base_lr)
+    elif args.optim == "Adam":
+        optimizer = Adam(optimizer_grouped_parameters, lr=base_lr)
 
     warmpu_steps = args.warmup_proportion * num_train_optimization_steps
 
@@ -438,7 +473,7 @@ def main():
     else:
         warmup_scheduler = WarmupConstantSchedule(optimizer, warmup_steps=warmpu_steps)
 
-    lr_reduce_list = np.array([5, 7])
+    lr_reduce_list = np.array([35, 50])
     if args.lr_scheduler == "automatic":
         lr_scheduler = ReduceLROnPlateau(
             optimizer, mode="max", factor=0.2, patience=1, cooldown=1, threshold=0.001
@@ -478,7 +513,7 @@ def main():
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         global_step = checkpoint["global_step"]
         start_epoch = int(checkpoint["epoch_id"]) + 1
-        task_stop_controller = checkpoint["task_stop_controller"]
+        # task_stop_controller = checkpoint["task_stop_controller"]
         tbLogger = checkpoint["tb_logger"]
         del checkpoint
 
@@ -510,18 +545,23 @@ def main():
     task_iter_train = {name: None for name in task_ids}
     task_count = {name: 0 for name in task_ids}
 
+    # Todo
+    if start_epoch >= args.num_train_epochs:
+        start_epoch = 0
+
     # TRAINING LOOP
     for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
         model.train()
+
         for step in tqdm(range(median_num_iter), desc="Iters"):
             iterId = startIterID + step + (epochId * median_num_iter)
             first_task = True
             for task_id in task_ids:
-                is_forward = False
-                if (not task_stop_controller[task_id].in_stop) or (
-                    iterId % args.train_iter_gap == 0
-                ):
-                    is_forward = True
+                is_forward = True
+                # if (not task_stop_controller[task_id].in_stop) or (
+                #     iterId % args.train_iter_gap == 0
+                # ):
+                #     is_forward = True
 
                 if is_forward:
                     loss, score = ForwardModelsTrain(
@@ -583,15 +623,20 @@ def main():
             ):
                 tbLogger.showLossTrain()
 
+            best_val_score = 0
             # decided whether to evaluate on each tasks.
             for task_id in task_ids:
+                # don't run validation during debug runs
+                # if task_cfg["TASK19"]["debug"]:
+                #     break
+
                 if (iterId != 0 and iterId % task_num_iters[task_id] == 0) or (
                     epochId == args.num_train_epochs - 1 and step == median_num_iter - 1
                 ):
-                    evaluate(
+                    curr_val_score = evaluate(
                         args,
                         task_dataloader_val,
-                        task_stop_controller,
+                        None,
                         task_cfg,
                         device,
                         task_id,
@@ -602,41 +647,47 @@ def main():
                         tbLogger,
                     )
 
+                    if default_gpu and not task_cfg["TASK19"]["debug"]:
+                        # Save a trained model
+                        logger.info("** ** * Saving fine - tuned model ** ** * ")
+                        model_to_save = (
+                            model.module if hasattr(model, "module") else model
+                        )  # Only save the model it-self
+                        # output_model_file = os.path.join(
+                        #     savePath, "pytorch_model_" + str(epochId) + ".bin"
+                        # )
+                        # torch.save(model_to_save.state_dict(), output_model_file)
+                        if curr_val_score > best_val_score:
+                            output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
+                            logger.info(f"Saving Checkpoint: {output_checkpoint}")
+                            logger.info(
+                                f"Current Validation Score: {curr_val_score} | Previous Best Validation Score: {best_val_score}")
+                            best_val_score = curr_val_score
+                            torch.save(
+                                {
+                                    "model_state_dict": model_to_save.state_dict(),
+                                    "optimizer_state_dict": optimizer.state_dict(),
+                                    "warmup_scheduler_state_dict": warmup_scheduler.state_dict(),
+                                    # 'lr_scheduler_state_dict': lr_scheduler.state_dict(),
+                                    "global_step": global_step,
+                                    "epoch_id": epochId,
+                                    # "task_stop_controller": task_stop_controller,
+                                    "tb_logger": tbLogger,
+                                },
+                                output_checkpoint,
+                            )
+
         if args.lr_scheduler == "automatic":
             lr_scheduler.step(sum(val_scores.values()))
             logger.info("best average score is %3f" % lr_scheduler.best)
         elif args.lr_scheduler == "mannul":
             lr_scheduler.step()
 
-        if epochId in lr_reduce_list:
-            for task_id in task_ids:
-                # reset the task_stop_controller once the lr drop
-                task_stop_controller[task_id]._reset()
+        # if epochId in lr_reduce_list:
+        #     for task_id in task_ids:
+        #         # reset the task_stop_controller once the lr drop
+        #         task_stop_controller[task_id]._reset()
 
-        if default_gpu:
-            # Save a trained model
-            logger.info("** ** * Saving fine - tuned model ** ** * ")
-            model_to_save = (
-                model.module if hasattr(model, "module") else model
-            )  # Only save the model it-self
-            output_model_file = os.path.join(
-                savePath, "pytorch_model_" + str(epochId) + ".bin"
-            )
-            output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
-            torch.save(model_to_save.state_dict(), output_model_file)
-            torch.save(
-                {
-                    "model_state_dict": model_to_save.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                    "warmup_scheduler_state_dict": warmup_scheduler.state_dict(),
-                    # 'lr_scheduler_state_dict': lr_scheduler.state_dict(),
-                    "global_step": global_step,
-                    "epoch_id": epochId,
-                    "task_stop_controller": task_stop_controller,
-                    "tb_logger": tbLogger,
-                },
-                output_checkpoint,
-            )
     tbLogger.txt_close()
 
 
@@ -667,9 +718,10 @@ def evaluate(
             sys.stdout.flush()
 
     # update the multi-task scheduler.
-    task_stop_controller[task_id].step(tbLogger.getValScore(task_id))
-    score = tbLogger.showLossVal(task_id, task_stop_controller)
+    # task_stop_controller[task_id].step(tbLogger.getValScore(task_id))
+    score = tbLogger.showLossVal(task_id, task_stop_controller=None)
     model.train()
+    return score
 
 
 if __name__ == "__main__":
