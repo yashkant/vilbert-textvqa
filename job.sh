@@ -1,11 +1,10 @@
 #!/bin/bash
 
 #SBATCH -p  long
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:1
 #SBATCH -J vilbert-textvqa
-#SBATCH -o jlogs/vilbert-multi.txt
+#SBATCH -o jlogs/adamw-lr-1e4-warm-10-bs-96-32-model-22ss.txt
 #SBATCH -x neo,kipp,calculon,ripl-s1,ash,ava,siri,johnny5,irona,cortana
-#SBATCH -w hal
 
 host_name=$(srun hostname)
 echo $host_name
@@ -14,10 +13,9 @@ echo $host_name
 
 srun \
 python train_tasks.py \
---task_file vilbert_tasks.yml \
---bert_model bert-base-uncased \
---from_pretrained data/multitask_model/pytorch_model_14.bin \
---config_file config/bert_base_6layer_6conect_textvqa.json \
---tasks 19  --lr_scheduler 'warmup_linear' \
+--task_file sweeps/adamw-lr-1e4-warm-10\|bs-96-32\|model-22ss.yml \
+--from_scratch \
+--config_file config/small_bert_base_3layer_2conect_textvqa.json \
+--tasks 19 \
 --train_iter_gap 4 --save_name finetune_from_multi_task_model \
---optim "AdamW" --tag "adamw-2-2-multi-14" --model_type "22"
+--tag "adamw-lr-1e4-warm-10-bs-96-32-model-22ss"

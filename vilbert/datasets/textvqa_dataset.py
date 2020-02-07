@@ -16,6 +16,7 @@ from tqdm import tqdm
 from .textvqa_processors import *
 from easydict import EasyDict as edict
 from ._image_features_reader import ImageFeaturesH5Reader
+from vilbert.spatial_utils_regat import torch_broadcast_adj_matrix
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
@@ -106,6 +107,8 @@ class TextVQADataset(Dataset):
         self._padding_index = padding_index
         self.max_obj_num = extra_args["max_obj_num"]
         self.max_ocr_num = extra_args["max_ocr_num"]
+        assert self.max_obj_num == 100
+        assert self.max_ocr_num == 50
         self.max_resnet_num = extra_args["max_resnet_num"]
         self.debug = extra_args.get("debug", False)
 
@@ -131,9 +134,6 @@ class TextVQADataset(Dataset):
                 "cache",
                 task + "_" + split + "_" + str(max_seq_length) + clean_train + ".pkl",
             )
-
-        import pdb
-        pdb.set_trace()
 
         if not os.path.exists(cache_path) or self.debug:
             # Initialize Processors
@@ -190,11 +190,27 @@ class TextVQADataset(Dataset):
             for key in remove_keys:
                 entry.pop(key, None)
 
+            # Adding spatial graph matrix
+            obj_features, obj_num_boxes, obj_bboxes, _ = self.obj_features_reader[entry["image_id"]]
+            obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes-1, obj_bboxes[1:]
+            _, _, pad_obj_bboxes = self._pad_features(
+                obj_features, obj_bboxes, obj_num_boxes, self.max_obj_num-1, tensorize=False
+            )
+
+            ocr_features, ocr_num_boxes, ocr_bboxes, _ = self.ocr_features_reader[entry["image_id"]]
+            ocr_features, ocr_num_boxes, ocr_bboxes = ocr_features[1:], ocr_num_boxes - 1, ocr_bboxes[1:]
+            _, _, pad_ocr_bboxes = self._pad_features(
+                ocr_features, ocr_bboxes, ocr_num_boxes, self.max_ocr_num, tensorize=False
+            )
+
+            spatial_adj_matrix = self.processors.spatial_processor({"pad_ocr_bboxes": pad_ocr_bboxes[:, :-1],
+                                                               "pad_obj_bboxes": pad_obj_bboxes[:, :-1]})["adj_matrix"]
+            entry["spatial_adj_matrix"] = spatial_adj_matrix
 
     def __len__(self):
         return len(self.entries)
 
-    def _pad_features(self, features, bboxes, num_boxes, max_feat_num):
+    def _pad_features(self, features, bboxes, num_boxes, max_feat_num, tensorize=True):
         mix_num_boxes = min(int(num_boxes), max_feat_num)
         mask = [1] * (int(mix_num_boxes))
         while len(mask) < max_feat_num:
@@ -206,12 +222,20 @@ class TextVQADataset(Dataset):
         mix_features_pad = np.zeros((max_feat_num, 2048))
         mix_features_pad[:mix_num_boxes] = features[:mix_num_boxes]
 
+        if not tensorize:
+            return mix_features_pad, mask, mix_boxes_pad
+
         # tensorize
         pad_features = torch.tensor(mix_features_pad).float()
         mask_features = torch.tensor(mask).long()
         pad_bboxes = torch.tensor(mix_boxes_pad).float()
 
         return pad_features, mask_features, pad_bboxes
+
+    def _debug_inputs(self):
+        for entry in self.entries:
+            if entry["question_id"] == 24823:
+                return entry
 
     def __getitem__(self, index):
         """
@@ -225,6 +249,8 @@ class TextVQADataset(Dataset):
 
         # add object-features and bounding boxes
         obj_features, obj_num_boxes, obj_bboxes, _ = self.obj_features_reader[image_id]
+        # remove avg-features
+        obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes-1, obj_bboxes[1:]
         pad_obj_features, pad_obj_mask, pad_obj_bboxes= self._pad_features(
             obj_features, obj_bboxes, obj_num_boxes, self.max_obj_num
         )
@@ -252,17 +278,24 @@ class TextVQADataset(Dataset):
             "segment_ids": segment_ids
         })
 
-        item.update(entry)
         item["co_attention_mask"] = co_attention_mask
 
-        if image_id == "7a8487d00e4761fe":
-            import pdb
-            pdb.set_trace()
+        # In the first iteration expand all the spatial relation matrices
+        if not isinstance(entry["spatial_adj_matrix"], torch.Tensor):
+            entry["spatial_adj_matrix"] = torch_broadcast_adj_matrix(torch.from_numpy(entry["spatial_adj_matrix"]))
+        else:
+            try:
+                assert len(entry["spatial_adj_matrix"].shape) == 3
+            except:
+                import pdb
+                pdb.set_trace()
 
+        item.update(entry)
         # Collate Function doesn't work correctly with lists
         for key, value in item.items():
             if not isinstance(value, torch.Tensor):
                 item[key] = enc_obj2bytes(value)
+
         return item
 
         #
@@ -311,6 +344,9 @@ class Processors:
         answer_config.max_ocr_tokens = 50
         self.answer_processor = M4CAnswerProcessor(answer_config)
 
+        # Attach bert-tokenizer
+        registry["bert_tokenizer"] = bert_tokenizer
+
         if only_registry:
             logger.info("Only registry processor initialized")
             return
@@ -326,6 +362,8 @@ class Processors:
         self.fasttext_processor = FastTextProcessor(ocr_config)
         self.phoc_processor = PhocProcessor(ocr_config)
 
+        # spatial-relations
+        self.spatial_processor = SpatialProcessor()
 
 
     @staticmethod

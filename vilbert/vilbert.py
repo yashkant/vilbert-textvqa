@@ -432,26 +432,68 @@ class BertDecodeEmbeddings(nn.Module):
         if self.task_specific_tokens:
             self.task_embeddings = nn.Embedding(20, config.hidden_size)
 
+        # (YK): New (Removed)
         self.vocabLayerNorm = BertLayerNorm(config.hidden_size, eps=1e-12)
+
+    # def forward(self, input_ids, decode_ids, vocab_cls_weights, ocr_features, token_type_ids=None, task_ids=None, position_ids=None):
+    #     assert decode_ids.dim() == 2 and decode_ids.dtype == torch.long
+    #     assert vocab_cls_weights.dim() == 2
+    #     assert vocab_cls_weights.size(-1) == ocr_features.size(-1)
+    #
+    #     seq_shape = (input_ids.size(0), decode_ids.size(1) + input_ids.size(1))
+    #     batch_size = seq_shape[0]
+    #     vocab_cls_weights = self.vocabLayerNorm(vocab_cls_weights)
+    #     vocab_cls_weights = vocab_cls_weights.unsqueeze(0).expand(batch_size, -1, -1)
+    #     joint_embeddings = torch.cat([vocab_cls_weights, ocr_features], dim=1)
+    #     decode_embeddings = _batch_gather(joint_embeddings, decode_ids)
+    #     words_embeddings = self.word_embeddings(input_ids)
+    #     position_ids = torch.arange(seq_shape[1], dtype=torch.long, device=input_ids.device)
+    #     position_ids = position_ids.unsqueeze(0).expand(seq_shape)
+    #     token_type_ids = torch.cat((token_type_ids, decode_ids.new_ones(decode_ids.shape)), dim=1)
+    #     position_embeddings = self.position_embeddings(position_ids)
+    #     token_type_embeddings = self.token_type_embeddings(token_type_ids)
+    #     words_embeddings = words_embeddings + position_embeddings[:, :input_ids.size(1)] + token_type_embeddings[:, :input_ids.size(1)]
+    #     if self.task_specific_tokens:
+    #         task_embeddings = self.task_embeddings(task_ids)
+    #         words_embeddings = torch.cat(
+    #             [words_embeddings[:, 0:1], task_embeddings, words_embeddings[:, 1:]], dim=1
+    #         )
+    #     words_embeddings = self.LayerNorm(words_embeddings)
+    #     decode_embeddings = decode_embeddings +\
+    #                         self.LayerNorm(position_embeddings[:, input_ids.size(1):] + token_type_embeddings[:, input_ids.size(1):])
+    #     embeddings = torch.cat((words_embeddings, decode_embeddings), dim=1)
+    #     return embeddings
 
     def forward(self, input_ids, decode_ids, vocab_cls_weights, ocr_features, token_type_ids=None, task_ids=None, position_ids=None):
         assert decode_ids.dim() == 2 and decode_ids.dtype == torch.long
         assert vocab_cls_weights.dim() == 2
         assert vocab_cls_weights.size(-1) == ocr_features.size(-1)
 
+        # import pdb
+        # pdb.set_trace()
+
         seq_shape = (input_ids.size(0), input_ids.size(1) + decode_ids.size(1))
         batch_size = seq_shape[0]
-        vocab_cls_weights = self.vocabLayerNorm(vocab_cls_weights)
-        vocab_cls_weights = vocab_cls_weights.unsqueeze(0).expand(batch_size, -1, -1)
-        joint_embeddings = torch.cat([vocab_cls_weights, ocr_features], dim=1)
-        decode_embeddings = _batch_gather(joint_embeddings, decode_ids)
-        words_embeddings = self.word_embeddings(input_ids)
 
+        # Position Embeddings
         position_ids = torch.arange(seq_shape[1], dtype=torch.long, device=input_ids.device)
         position_ids = position_ids.unsqueeze(0).expand(seq_shape)
-        token_type_ids = torch.cat((token_type_ids, decode_ids.new_ones(decode_ids.shape)), dim=1)
         position_embeddings = self.position_embeddings(position_ids)
+
+        # Type Embeddings
+        token_type_ids = torch.cat((token_type_ids, decode_ids.new_ones(decode_ids.shape)), dim=1)
         token_type_embeddings = self.token_type_embeddings(token_type_ids)
+
+        # Process Decoding Stream
+        # vocab_cls_weights = self.vocabLayerNorm(vocab_cls_weights)
+        vocab_cls_weights = vocab_cls_weights.unsqueeze(0).expand(batch_size, -1, -1)
+        # import pdb
+        # pdb.set_trace()
+        joint_embeddings = torch.cat([vocab_cls_weights, ocr_features], dim=1)
+        decode_embeddings = _batch_gather(joint_embeddings, decode_ids)
+
+        # Process Input Words Stream
+        words_embeddings = self.word_embeddings(input_ids)
         words_embeddings = words_embeddings + position_embeddings[:, :input_ids.size(1)] + token_type_embeddings[:, :input_ids.size(1)]
         if self.task_specific_tokens:
             task_embeddings = self.task_embeddings(task_ids)
@@ -459,10 +501,14 @@ class BertDecodeEmbeddings(nn.Module):
                 [words_embeddings[:, 0:1], task_embeddings, words_embeddings[:, 1:]], dim=1
             )
         words_embeddings = self.LayerNorm(words_embeddings)
-        decode_embeddings = decode_embeddings +\
-                            self.LayerNorm(position_embeddings[:, input_ids.size(1):] + token_type_embeddings[:, input_ids.size(1):])
+
+        # Does not make sense to add type-1 embedding to decoding steps (Removed)
+        decode_embeddings = self.LayerNorm(decode_embeddings + position_embeddings[:, input_ids.size(1):])
+
+        # Concatenate and Dropout
+        words_embeddings = self.dropout(words_embeddings)
+        # Cannot use dropout with decoding steps!?
         embeddings = torch.cat((words_embeddings, decode_embeddings), dim=1)
-        embeddings = self.dropout(embeddings)
         return embeddings
 
 
@@ -1035,8 +1081,6 @@ class BertConnectionLayer(nn.Module):
         co_attention_mask=None,
         use_co_attention_mask=False,
     ):
-        # import pdb
-        # pdb.set_trace()
 
         bi_output1, bi_output2, co_attention_probs = self.biattention(
             input_tensor1,
@@ -1275,9 +1319,6 @@ class BertEncoder(nn.Module):
             all_encoder_layers_t.append(txt_embedding)
             all_encoder_layers_v.append(image_embedding)
 
-        # import pdb
-        # pdb.set_trace()
-        #
         return (
             all_encoder_layers_t,
             all_encoder_layers_v,
@@ -1486,7 +1527,7 @@ class BertModel(BertPreTrainedModel):
         self.task_specific_tokens = config.task_specific_tokens
 
         # initlize the vision embedding
-        self.img_ocr_embeddings = BertImageOCREmbeddings(config)
+        self.v_embeddings = BertImageOCREmbeddings(config)
 
         self.encoder = BertEncoder(config)
         self.t_pooler = BertTextPooler(config)
@@ -1543,9 +1584,6 @@ class BertModel(BertPreTrainedModel):
         # used in OpenAI GPT, we just need to prepare the broadcast dimension here.
         # (bs, 1, 1, max_len_txt)
 
-        # import pdb
-        # pdb.set_trace()
-
         # add causal mask
         decoding_mask = torch.zeros_like(batch_dict["train_prev_inds"])
         attention_mask = torch.cat((attention_mask, decoding_mask), dim=1)
@@ -1599,7 +1637,7 @@ class BertModel(BertPreTrainedModel):
 
         # join image-ocr embeddings
         ocr_features = torch.cat((batch_dict["pad_ocr_features"], batch_dict["ocr_fasttext"], batch_dict["ocr_phoc"]), dim=2)
-        image_embeddings, ocr_embeddings = self.img_ocr_embeddings(
+        image_embeddings, ocr_embeddings = self.v_embeddings(
             input_imgs,
             batch_dict["pad_obj_bboxes"],
             ocr_features,
@@ -1685,31 +1723,30 @@ class BertImageOCREmbeddings(nn.Module):
 
     def __init__(self, config):
         super(BertImageOCREmbeddings, self).__init__()
-        self.ocr_embeddings = nn.Linear(config.ocr_feature_size, config.v_hidden_size)
+
         self.image_embeddings = nn.Linear(config.v_feature_size, config.v_hidden_size)
-        self.location_embeddings = nn.Linear(5, config.v_hidden_size)
-
-        self.imageLayerNorm = BertLayerNorm(config.v_hidden_size, eps=1e-12)
-        self.ocrLayerNorm = BertLayerNorm(config.v_hidden_size, eps=1e-12)
-
+        self.LayerNorm = BertLayerNorm(config.v_hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.token_type_embeddings = nn.Embedding(
-            2, config.v_hidden_size
-        )
+        self.image_location_embeddings = nn.Linear(5, config.v_hidden_size)
+
+        # (YK): New Weights
+        self.ocr_embeddings = nn.Linear(config.ocr_feature_size, config.v_hidden_size)
+        self.ocrLayerNorm = BertLayerNorm(config.v_hidden_size, eps=1e-12)
+        self.token_type_embeddings = nn.Embedding(2, config.v_hidden_size)
 
 
     def forward(self, image_features, image_bboxes, ocr_features, ocr_bboxes):
-        # import pdb
-        # pdb.set_trace()
         img_embeddings = self.image_embeddings(image_features)
-        img_loc_embeddings = self.location_embeddings(image_bboxes)
+        img_loc_embeddings = self.image_location_embeddings(image_bboxes)
         img_type_embeddings = self.token_type_embeddings(img_embeddings.new_zeros(img_embeddings.shape[:2]).long() )
-        image_embeddings = self.imageLayerNorm(img_embeddings + img_loc_embeddings + img_type_embeddings)
+        image_embeddings = self.LayerNorm(img_embeddings + img_loc_embeddings + img_type_embeddings)
 
+        # (YK): New Computation
         o_embeddings = self.ocr_embeddings(ocr_features)
-        o_loc_embeddings = self.location_embeddings(ocr_bboxes)
+        o_loc_embeddings = self.image_location_embeddings(ocr_bboxes)
         o_type_embeddings = self.token_type_embeddings(o_embeddings.new_ones(o_embeddings.shape[:2]).long())
         ocr_embeddings = self.ocrLayerNorm(o_embeddings + o_loc_embeddings + o_type_embeddings)
+
         return image_embeddings, ocr_embeddings
 
 
@@ -1983,6 +2020,7 @@ class VILBertForVLTasks(BertPreTrainedModel):
         vocab_scores = self.vil_prediction_textvqa_vocab(dec_output)
         ocr_scores = self.vil_prediction_textvqa_ocr(dec_output, self.v_to_t_linear(ocr_output), ocr_attention_mask)
         textvqa_scores = torch.cat([vocab_scores, ocr_scores], dim=-1)
+        # print("ocr mean: ", ocr_scores.mean(), "vocab mean", vocab_scores.mean())
         return textvqa_scores
 
 
@@ -2001,9 +2039,11 @@ class VILBertForVLTasks(BertPreTrainedModel):
         output_all_attention_masks=False,
     ):
         batch_dict["textvqa_cls_weights"] = self.vil_prediction_textvqa_vocab.weight
-        batch_dict["train_targets"] = batch_dict["train_prev_inds"]
+        # batch_dict["train_targets"] = batch_dict["train_prev_inds"]
 
         if self.training:
+            # import pdb
+            # pdb.set_trace()
             sequence_output_t, sequence_output_v, all_attention_mask = self.bert(
                 batch_dict,
                 output_all_encoded_layers=output_all_encoded_layers,
@@ -2042,8 +2082,6 @@ class VILBertForVLTasks(BertPreTrainedModel):
         # linguisic_prediction = 0
         # linguisic_logit = 0
         #
-        # import pdb
-        # pdb.set_trace()
         #
         #
         # linguisic_prediction, vision_prediction, vil_binary_prediction = self.cls(

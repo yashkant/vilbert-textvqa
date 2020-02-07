@@ -9,10 +9,12 @@ import logging
 import os
 import sys
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
 import torch.distributed as dist
+from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
 from pytorch_transformers.tokenization_bert import BertTokenizer
@@ -22,6 +24,18 @@ from vilbert.datasets._image_features_reader import ImageFeaturesH5Reader
 from vilbert.datasets.textvqa_metrics import TextVQAAccuracy
 import pdb
 from tools.registry import registry
+from torch.optim.lr_scheduler import (
+    LambdaLR,
+    ReduceLROnPlateau,
+    CosineAnnealingLR,
+    CosineAnnealingWarmRestarts,
+)
+from pytorch_transformers.optimization import (
+    AdamW,
+    WarmupConstantSchedule,
+    WarmupLinearSchedule,
+)
+from vilbert.optimization import RAdam
 
 logger = logging.getLogger(__name__)
 
@@ -33,20 +47,97 @@ class M4CDecodingBCEWithMaskLoss(nn.Module):
         self.debug_count = 0
 
     def forward(self, scores, targets, loss_mask):
-        self.debug_count += 1
-        # if self.debug_count >= 50:
-        #     import pdb
-        #     pdb.set_trace()
-
+        # self.debug_count += 1
         assert scores.dim() == 3 and loss_mask.dim() == 2
-        losses = F.binary_cross_entropy_with_logits(
-            scores, targets, reduction="none"
-        )
+        losses = F.binary_cross_entropy_with_logits(scores, targets, reduction="none")
         losses *= loss_mask.unsqueeze(-1)
         count = torch.max(torch.sum(loss_mask), self.one.to(losses.device))
+        # if self.debug_count % 5 == 0:
+        #     print("Count: ", count)
+        #     print("Loss: ", losses.sum(dim=-1))
+        #     print("Scores: ", scores.argmax(dim=-1)*loss_mask.long())
+        #     print("Targets: ", (targets.argmax(dim=-1)*loss_mask).long())
+
         loss = torch.sum(losses) / count
         return loss
 
+
+def clip_gradients(model, max_grad_l2_norm, clip_norm_mode):
+    # TODO: Fix question model retrieval
+    # Todo: Add tensorboard logger
+
+    if max_grad_l2_norm is not None:
+        if clip_norm_mode == "all":
+            norm = nn.utils.clip_grad_norm_(model.parameters(), max_grad_l2_norm)
+            # import pdb
+            # pdb.set_trace()
+            # print("Grad norm:", norm)
+            # writer.add_scalars({"grad_norm": norm}, i_iter)
+
+        elif clip_norm_mode == "question":
+            question_embedding = model.module.question_embedding_module
+            norm = nn.utils.clip_grad_norm(
+                question_embedding.parameters(), max_grad_l2_norm
+            )
+
+            # writer.add_scalars({"question_grad_norm": norm}, i_iter)
+        else:
+            raise NotImplementedError(
+                "Clip norm mode %s not implemented" % clip_norm_mode
+            )
+
+
+def get_optim_scheduler(args,
+                        config,
+                        optimizer_grouped_parameters,
+                        num_train_optimization_steps,
+                        base_lr,
+                        median_num_iter):
+
+    optim_config = config["TASK19"]["optim"] if args.optim is None else args.optim
+    scheduler_config = config["TASK19"]["lr_scheduler"] if args.lr_scheduler is None else args.lr_scheduler
+
+    if optim_config == "AdamW":
+        optimizer = AdamW(optimizer_grouped_parameters, lr=base_lr, correct_bias=False)
+    elif optim_config == "RAdam":
+        optimizer = RAdam(optimizer_grouped_parameters, lr=base_lr)
+    elif optim_config == "Adam":
+        optimizer = Adam(optimizer_grouped_parameters, lr=base_lr)
+    else:
+        raise ValueError
+
+    warmpu_steps = args.warmup_proportion * num_train_optimization_steps
+    lr_reduce_list = np.array(config["TASK19"].get("lr_decay_steps", [-1]))
+
+    if scheduler_config == "warmup_linear":
+        warmup_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=warmpu_steps, t_total=num_train_optimization_steps)
+    else:
+        warmup_scheduler = WarmupConstantSchedule(optimizer, warmup_steps=warmpu_steps)
+
+    logger.info(f"Warmup Scheduler: {str(warmup_scheduler)}")
+
+    if scheduler_config == "automatic":
+        lr_scheduler = ReduceLROnPlateau(
+            optimizer, mode="max", factor=0.2, patience=1, cooldown=1, threshold=0.001
+        )
+    elif scheduler_config == "cosine":
+        lr_scheduler = CosineAnnealingLR(
+            optimizer, T_max=median_num_iter * args.num_train_epochs
+        )
+    elif scheduler_config == "cosine_warm":
+        lr_scheduler = CosineAnnealingWarmRestarts(
+            optimizer, T_0=median_num_iter * args.num_train_epochs
+        )
+    elif scheduler_config == "mannul":
+        def lr_lambda_fun(epoch):
+            return pow(config["TASK19"].get("lr_decay", 0.2), np.sum(lr_reduce_list <= epoch))
+        lr_scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda_fun)
+    else:
+        logger.info(f"Didn't recognize lr_scheduler: {scheduler_config}")
+        lr_scheduler = None
+
+    logger.info(f"LR Scheduler: {str(lr_scheduler)}")
+    return optimizer, warmup_scheduler, lr_scheduler, scheduler_config, warmpu_steps
 
 LossMap = {
     "BCEWithLogitLoss": nn.BCEWithLogitsLoss(reduction="mean"),
@@ -154,13 +245,14 @@ def ForwardModelsVal(args, task_cfg, device, task_id, batch_dict, model, task_lo
     #     co_attention_mask,
     #     task_tokens,
     # )
+
     question = batch_dict["question_indices"]
     batch_size = len(batch_dict["question_id"])
     batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
     textvqa_scores = model(batch_dict)
     loss = task_losses[task_id](textvqa_scores, batch_dict["targets"], batch_dict["train_loss_mask"])
     textvqa_metric = MetricsMap["TextVQA"]
-    batch_score = textvqa_metric.calculate(batch_dict, textvqa_scores)
+    batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, textvqa_scores)
 
 
     # if task_cfg[task_id]["type"] == "VL-classifier":
@@ -206,7 +298,7 @@ def ForwardModelsVal(args, task_cfg, device, task_id, batch_dict, model, task_lo
     #     loss = loss.mean()
     #     batch_score = compute_score_with_logits(vil_tri_prediction, target).sum()
 
-    return float(loss), float(batch_score), batch_size
+    return float(loss), float(batch_acc), batch_size
 
 
 def ForwardModelsTrain(
@@ -221,6 +313,9 @@ def ForwardModelsTrain(
     task_losses,
 ):
     # given the current task, decided whether to forward the model and forward with specific loss.
+
+    # import pdb
+    # pdb.set_trace()
 
     # reset the task iteration when needed.
     if task_count[task_id] % len(task_dataloader_train[task_id]) == 0:
@@ -362,7 +457,7 @@ def ForwardModelsTrain(
     textvqa_scores = model(batch_dict)
     loss = task_losses[task_id](textvqa_scores, batch_dict["targets"], batch_dict["train_loss_mask"])
     textvqa_metric = MetricsMap["TextVQA"]
-    batch_score = textvqa_metric.calculate(batch_dict, textvqa_scores)
+    batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, textvqa_scores)
 
     # # for different task, we use different output to calculate the loss.
     # if task_cfg[task_id]["type"] == "VL-classifier":
@@ -416,7 +511,7 @@ def ForwardModelsTrain(
     #         vil_tri_prediction, target
     #     ).sum() / float(batch_size)
 
-    return loss, batch_score
+    return loss, batch_acc
 
 
 def LoadLosses(args, task_cfg, task_ids):

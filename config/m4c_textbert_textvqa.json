@@ -1,0 +1,17 @@
+{
+  "hidden_act": "gelu",
+  "lr_scale_text_bert": 0.1,
+  "hidden_dropout_prob": 0.1,
+  "hidden_size": 768,
+  "intermediate_size": 3072,
+  "max_position_embeddings": 512,
+  "num_attention_heads": 12,
+  "num_hidden_layers": 4,
+  "type_vocab_size": 2,
+  "vocab_size": 30522,
+  "textvqa_vocab_size": 3998,
+  "pooling_method": "mul",
+  "ptr_query_size": 768,
+  "ocr_feature_size": 2952,
+  "text_bert_init_from_bert_base": false
+}

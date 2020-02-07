@@ -999,6 +999,19 @@ class PreTrainedModel(nn.Module):
             model_to_load = getattr(model, cls.base_model_prefix)
 
         load(model_to_load, prefix=start_prefix)
+
+        # Check what keys are present in the state_dict but not in the model
+        state_dict_keys = set(state_dict.keys())
+        model_dict_keys = set(model.state_dict().keys())
+        unused_keys = state_dict_keys - model_dict_keys
+
+        if len(unused_keys) > 0:
+            logger.info(
+                "Unused weights present in pretrained model: {}".format(
+                    unused_keys
+                )
+            )
+
         if len(missing_keys) > 0 and default_gpu:
             logger.info(
                 "Weights of {} not initialized from pretrained model: {}".format(

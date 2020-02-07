@@ -79,7 +79,7 @@ from tools.registry import registry
 from pytorch_transformers.tokenization_bert import BertTokenizer
 from .textvqa_vocab import VocabDict
 from ..phoc import build_phoc
-
+from vilbert.spatial_utils_regat import build_graph
 
 def _pad_tokens(tokens, PAD_TOKEN, max_length):
     padded_tokens = [PAD_TOKEN] * max_length
@@ -810,6 +810,19 @@ class CopyProcessor(BaseProcessor):
         final_blob[:len(blob)] = blob[:len(final_blob)]
 
         return {"blob": torch.from_numpy(final_blob)}
+
+
+class SpatialProcessor:
+    """
+    Copy boxes from numpy array
+    """
+
+    def __call__(self, item):
+        pad_obj_bboxes = item["pad_obj_bboxes"]
+        pad_ocr_bboxes = item["pad_ocr_bboxes"]
+        pad_obj_ocr_bboxes = np.concatenate([pad_obj_bboxes, pad_ocr_bboxes], axis=0)
+        adj_matrix = build_graph(pad_obj_ocr_bboxes)
+        return {"adj_matrix": adj_matrix}
 
 
 class BertTokenizerProcessor:
