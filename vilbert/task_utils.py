@@ -92,7 +92,9 @@ def get_optim_scheduler(args,
                         optimizer_grouped_parameters,
                         num_train_optimization_steps,
                         base_lr,
-                        median_num_iter):
+                        median_num_iter,
+                        no_warmup=False
+                        ):
 
     optim_config = config["TASK19"]["optim"] if args.optim is None else args.optim
     scheduler_config = config["TASK19"]["lr_scheduler"] if args.lr_scheduler is None else args.lr_scheduler
@@ -109,12 +111,15 @@ def get_optim_scheduler(args,
     warmpu_steps = args.warmup_proportion * num_train_optimization_steps
     lr_reduce_list = np.array(config["TASK19"].get("lr_decay_steps", [-1]))
 
-    if scheduler_config == "warmup_linear":
-        warmup_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=warmpu_steps, t_total=num_train_optimization_steps)
+    if not no_warmup:
+        if scheduler_config == "warmup_linear":
+            warmup_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=warmpu_steps, t_total=num_train_optimization_steps)
+        else:
+            warmup_scheduler = WarmupConstantSchedule(optimizer, warmup_steps=warmpu_steps)
+        logger.info(f"Warmup Scheduler: {str(warmup_scheduler)}")
     else:
-        warmup_scheduler = WarmupConstantSchedule(optimizer, warmup_steps=warmpu_steps)
-
-    logger.info(f"Warmup Scheduler: {str(warmup_scheduler)}")
+        warmup_scheduler = None
+        logger.info(f"Not using Warmup Scheduler")
 
     if scheduler_config == "automatic":
         lr_scheduler = ReduceLROnPlateau(

@@ -482,7 +482,8 @@ def main():
         print(len(list(model.named_parameters())), len(optimizer_grouped_parameters))
 
     optimizer, warmup_scheduler, lr_scheduler, lr_scheduler_config, warmpu_steps = get_optim_scheduler(
-        args, task_cfg, optimizer_grouped_parameters, num_train_optimization_steps, base_lr, median_num_iter)
+        args, task_cfg, optimizer_grouped_parameters, num_train_optimization_steps, base_lr, median_num_iter
+    )
 
     startIterID = 0
     global_step = 0
@@ -622,9 +623,9 @@ def main():
 
             # decided whether to evaluate on each tasks.
             for task_id in task_ids:
-                # # don't run validation during debug runs
-                # if task_cfg["TASK19"]["debug"]:
-                #     break
+                # don't run validation during debug runs
+                if task_cfg["TASK19"]["debug"]:
+                    break
 
                 if (iterId != 0 and iterId % task_num_iters[task_id] == 0) or (
                     epochId == args.num_train_epochs - 1 and step == median_num_iter - 1

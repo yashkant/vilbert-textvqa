@@ -14,10 +14,12 @@ from vilbert.textvqa_encoders import ImageEncoder
 
 logger = logging.getLogger(__name__)
 
+
 class M4C(nn.Module):
     """
     M4C has two transfomers MMT and TextBert.
     """
+
     def __init__(self, mmt_config, text_bert_config):
         super().__init__()
         # self.mmt_config = BertConfig(**self.config.mmt)
@@ -156,7 +158,8 @@ class M4C(nn.Module):
 
     def _build_output(self):
         # dynamic OCR-copying scores with pointer network
-        self.ocr_ptr_net = OcrPtrNet(hidden_size=self.mmt_config.hidden_size, query_key_size=self.mmt_config.ptr_query_size)
+        self.ocr_ptr_net = OcrPtrNet(hidden_size=self.mmt_config.hidden_size,
+                                     query_key_size=self.mmt_config.ptr_query_size)
         self.classifier = nn.Linear(self.mmt_config.hidden_size, 3998)
         # fixed answer vocabulary scores
         # num_choices = registry.get(self._datasets[0] + "_num_final_outputs")
@@ -205,11 +208,11 @@ class M4C(nn.Module):
         obj_feat = obj_fc7
         obj_bbox = batch_dict["pad_obj_bboxes"]
         obj_mmt_in = (
-            self.obj_feat_layer_norm(
-                self.linear_obj_feat_to_mmt_in(obj_feat)
-            ) + self.obj_bbox_layer_norm(
-                self.linear_obj_bbox_to_mmt_in(obj_bbox)
-            )
+                self.obj_feat_layer_norm(
+                    self.linear_obj_feat_to_mmt_in(obj_feat)
+                ) + self.obj_bbox_layer_norm(
+            self.linear_obj_bbox_to_mmt_in(obj_bbox)
+        )
         )
         obj_mmt_in = self.obj_drop(obj_mmt_in)
         batch_dict['obj_mmt_in'] = obj_mmt_in
@@ -238,7 +241,7 @@ class M4C(nn.Module):
 
         # OCR order vectors (legacy from LoRRA model; set to all zeros)
         # TODO remove OCR order vectors; they are not needed
-        ocr_order_vectors = ocr_fc6.new_zeros((ocr_phoc.size(0), 50,50))
+        ocr_order_vectors = ocr_fc6.new_zeros((ocr_phoc.size(0), 50, 50))
 
         if self.mmt_config.use_phoc_fasttext:
             ocr_feat = torch.cat(
@@ -252,11 +255,11 @@ class M4C(nn.Module):
             )
         ocr_bbox = batch_dict["pad_ocr_bboxes"]
         ocr_mmt_in = (
-            self.ocr_feat_layer_norm(
-                self.linear_ocr_feat_to_mmt_in(ocr_feat)
-            ) + self.ocr_bbox_layer_norm(
-                self.linear_ocr_bbox_to_mmt_in(ocr_bbox)
-            )
+                self.ocr_feat_layer_norm(
+                    self.linear_ocr_feat_to_mmt_in(ocr_feat)
+                ) + self.ocr_bbox_layer_norm(
+            self.linear_ocr_bbox_to_mmt_in(ocr_bbox)
+        )
         )
         ocr_mmt_in = self.ocr_drop(ocr_mmt_in)
         batch_dict['ocr_mmt_in'] = ocr_mmt_in
@@ -365,8 +368,9 @@ class TextBert(BertPreTrainedModel):
 
 class SpatialBertSelfAttention(nn.Module):
     """
-    Todo: Keep 768 and build zero-mask for 12th head
+    Todo: Keep 768 and build zero-mask for 12th head (not needed with identity relation)
     """
+
     def __init__(self, config):
         super(SpatialBertSelfAttention, self).__init__()
         assert hasattr(config, "num_spatial_relations")
@@ -375,6 +379,7 @@ class SpatialBertSelfAttention(nn.Module):
                 "The hidden size (%d) is not a multiple of the number of attention "
                 "heads (%d)" % (config.hidden_size, config.num_spatial_relations))
         self.output_attentions = config.output_attentions
+        self.max_seq_len = config.max_seq_length
 
         self.num_attention_heads = config.num_spatial_relations
         self.attention_head_size = int(config.hidden_size / config.num_spatial_relations)
@@ -400,12 +405,22 @@ class SpatialBertSelfAttention(nn.Module):
         One Problem: We concatenate the outputs from all the 12 heads, now:
             - Leave others as zeros? (this will happen if there's no rel_i th of this embedding with others) (as it is) [rel_enc1, rel_enc2, ... rel_enc11]
             - Balancing these features might be an issue if I have these zeros popping in at places.
-            -
+            - Also balancing them even when they aren't zero? Like you had 12 heads contributing before,
+                but now the heads might be anywhere from 1-12.
+
+        spatial_adj_matrix has 0s across the diagonal terms, attaching an identity matrix for this
 
         """
 
-        import pdb
-        pdb.set_trace()
+        # build attention-mask from spatial_adj_matrix
+        batch_size, ocr_obj_num, _, num_heads = spatial_adj_matrix.shape
+        num_features = hidden_states.size(1)
+        spatial_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, num_heads))
+        spatial_attention_mask[:, self.max_seq_len:self.max_seq_len + ocr_obj_num,
+        self.max_seq_len:self.max_seq_len + ocr_obj_num, :] = spatial_adj_matrix
+        spatial_attention_mask = (1.0 - spatial_attention_mask) * -10000.0
+        spatial_attention_mask = spatial_attention_mask.permute((0, 3, 1, 2))
+
         mixed_query_layer = self.query(hidden_states)
         mixed_key_layer = self.key(hidden_states)
         mixed_value_layer = self.value(hidden_states)
@@ -418,7 +433,7 @@ class SpatialBertSelfAttention(nn.Module):
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
         # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
-        attention_scores = attention_scores + attention_mask
+        attention_scores = attention_scores + attention_mask + spatial_attention_mask
 
         # Normalize the attention scores to probabilities.
         attention_probs = nn.Softmax(dim=-1)(attention_scores)
@@ -490,11 +505,12 @@ class SpatialBertLayer(nn.Module):
     def forward(self, hidden_states, attention_mask, spatial_adj_matrix, head_mask=None):
         attention_outputs = self.attention(hidden_states, attention_mask, spatial_adj_matrix, head_mask)
         attention_output = attention_outputs[0]
+        # Intermediate is dense + activation
         intermediate_output = self.intermediate(attention_output)
+        # Output is dense + dropout + residual + layernorm
         layer_output = self.output(intermediate_output, attention_output)
         outputs = (layer_output,) + attention_outputs[1:]  # add attentions if we output them
         return outputs
-
 
 
 class BertSpatialEncoder(nn.Module):
@@ -505,7 +521,6 @@ class BertSpatialEncoder(nn.Module):
         from pytorch_transformers.modeling_bert import BertLayer
         self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
         self.spatial_layer = nn.ModuleList([SpatialBertLayer(config) for _ in range(config.num_spatial_layers)])
-
 
     def forward(self, hidden_states, attention_mask, spatial_adj_matrix, head_mask=None):
         all_hidden_states = ()
@@ -543,7 +558,6 @@ class BertSpatialEncoder(nn.Module):
         return outputs  # last-layer hidden state, (all hidden states), (all attentions)
 
 
-
 class MMT(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
@@ -557,7 +571,6 @@ class MMT(BertPreTrainedModel):
     def forward(self,
                 batch_dict,
                 fixed_ans_emb):
-
         # build embeddings for predictions in previous decoding steps
         # fixed_ans_emb is an embedding lookup table for each fixed vocabulary
         dec_emb = self.prev_pred_embeddings(fixed_ans_emb, batch_dict["ocr_mmt_in"], batch_dict["train_prev_inds"])
@@ -744,7 +757,7 @@ def _get_causal_mask(seq_length, device):
     # generate a lower triangular mask
     mask = torch.zeros(seq_length, seq_length, device=device)
     for i in range(seq_length):
-        for j in range(i+1):
+        for j in range(i + 1):
             mask[i, j] = 1.
     return mask
 
@@ -754,7 +767,7 @@ def _batch_gather(x, inds):
     batch_size = x.size(0)
     length = x.size(1)
     dim = x.size(2)
-    x_flat = x.view(batch_size*length, dim)
+    x_flat = x.view(batch_size * length, dim)
 
     batch_offsets = torch.arange(batch_size, device=inds.device) * length
     batch_offsets = batch_offsets.unsqueeze(-1)

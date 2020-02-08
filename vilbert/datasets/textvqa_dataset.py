@@ -190,12 +190,20 @@ class TextVQADataset(Dataset):
             for key in remove_keys:
                 entry.pop(key, None)
 
+            # import pdb
+            # pdb.set_trace()
+
+            import time
+            start_time = time.time()
+
             # Adding spatial graph matrix
             obj_features, obj_num_boxes, obj_bboxes, _ = self.obj_features_reader[entry["image_id"]]
             obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes-1, obj_bboxes[1:]
             _, _, pad_obj_bboxes = self._pad_features(
-                obj_features, obj_bboxes, obj_num_boxes, self.max_obj_num-1, tensorize=False
+                obj_features, obj_bboxes, obj_num_boxes, self.max_obj_num, tensorize=False
             )
+
+            load_obj_time = time.time()
 
             ocr_features, ocr_num_boxes, ocr_bboxes, _ = self.ocr_features_reader[entry["image_id"]]
             ocr_features, ocr_num_boxes, ocr_bboxes = ocr_features[1:], ocr_num_boxes - 1, ocr_bboxes[1:]
@@ -203,9 +211,20 @@ class TextVQADataset(Dataset):
                 ocr_features, ocr_bboxes, ocr_num_boxes, self.max_ocr_num, tensorize=False
             )
 
+            load_ocr_time = time.time()
+
             spatial_adj_matrix = self.processors.spatial_processor({"pad_ocr_bboxes": pad_ocr_bboxes[:, :-1],
                                                                "pad_obj_bboxes": pad_obj_bboxes[:, :-1]})["adj_matrix"]
+
+            load_adj_mat_time = time.time()
+
             entry["spatial_adj_matrix"] = spatial_adj_matrix
+
+            # print("-"*20)
+            # print("Load obj: ", load_obj_time - start_time)
+            # print("Load ocr: ", load_ocr_time - load_obj_time)
+            # print("Load adj: ", load_adj_mat_time - load_ocr_time)
+            # print("Total : ", load_adj_mat_time - start_time)
 
     def __len__(self):
         return len(self.entries)
@@ -282,7 +301,11 @@ class TextVQADataset(Dataset):
 
         # In the first iteration expand all the spatial relation matrices
         if not isinstance(entry["spatial_adj_matrix"], torch.Tensor):
-            entry["spatial_adj_matrix"] = torch_broadcast_adj_matrix(torch.from_numpy(entry["spatial_adj_matrix"]))
+            # label_num = 12 classifies self-relationship as label=12
+            entry["spatial_adj_matrix"] = torch_broadcast_adj_matrix(
+                torch.from_numpy(entry["spatial_adj_matrix"]),
+                label_num=12
+            )
         else:
             try:
                 assert len(entry["spatial_adj_matrix"].shape) == 3

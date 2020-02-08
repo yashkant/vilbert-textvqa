@@ -821,7 +821,7 @@ class SpatialProcessor:
         pad_obj_bboxes = item["pad_obj_bboxes"]
         pad_ocr_bboxes = item["pad_ocr_bboxes"]
         pad_obj_ocr_bboxes = np.concatenate([pad_obj_bboxes, pad_ocr_bboxes], axis=0)
-        adj_matrix = build_graph(pad_obj_ocr_bboxes)
+        adj_matrix = build_graph(pad_obj_ocr_bboxes).astype(np.int8)
         return {"adj_matrix": adj_matrix}
 
 
