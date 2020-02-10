@@ -2,7 +2,7 @@
 
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
-
+from bisect import bisect
 from io import open
 import json
 import logging
@@ -95,7 +95,6 @@ def get_optim_scheduler(args,
                         median_num_iter,
                         no_warmup=False
                         ):
-
     optim_config = config["TASK19"]["optim"] if args.optim is None else args.optim
     scheduler_config = config["TASK19"]["lr_scheduler"] if args.lr_scheduler is None else args.lr_scheduler
 
@@ -113,7 +112,24 @@ def get_optim_scheduler(args,
 
     if not no_warmup:
         if scheduler_config == "warmup_linear":
-            warmup_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=warmpu_steps, t_total=num_train_optimization_steps)
+            warmup_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=warmpu_steps,
+                                                    t_total=num_train_optimization_steps)
+        elif scheduler_config == "pythia_warmup_decay":
+            warmup_iters = config["TASK19"].get("warmup_iters", 1000)
+            lr_decay_iters = config["TASK19"].get("lr_decay_iters", [14000, 19000])
+            warmup_factor = config["TASK19"].get("warmup_factor", 0.1)
+            # total_iters = int(np.ceil(34602/config["TASK19"]["batch_size"])*num_train_optimization_steps)
+
+            def pythia_lr_update(_iter):
+                if _iter <= warmup_iters:
+                    alpha = float(_iter) / float(warmup_iters)
+                    return warmup_factor * (1.0 - alpha) + alpha
+                else:
+                    idx = bisect(lr_decay_iters, _iter)
+                    return pow(config["TASK19"].get("lr_decay", 0.2), idx)
+
+            warmup_scheduler = LambdaLR(optimizer, lr_lambda=pythia_lr_update)
+            warmpu_steps = -1
         else:
             warmup_scheduler = WarmupConstantSchedule(optimizer, warmup_steps=warmpu_steps)
         logger.info(f"Warmup Scheduler: {str(warmup_scheduler)}")
@@ -136,6 +152,7 @@ def get_optim_scheduler(args,
     elif scheduler_config == "mannul":
         def lr_lambda_fun(epoch):
             return pow(config["TASK19"].get("lr_decay", 0.2), np.sum(lr_reduce_list <= epoch))
+
         lr_scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda_fun)
     else:
         logger.info(f"Didn't recognize lr_scheduler: {scheduler_config}")
@@ -143,6 +160,7 @@ def get_optim_scheduler(args,
 
     logger.info(f"LR Scheduler: {str(lr_scheduler)}")
     return optimizer, warmup_scheduler, lr_scheduler, scheduler_config, warmpu_steps
+
 
 LossMap = {
     "BCEWithLogitLoss": nn.BCEWithLogitsLoss(reduction="mean"),
@@ -259,7 +277,6 @@ def ForwardModelsVal(args, task_cfg, device, task_id, batch_dict, model, task_lo
     textvqa_metric = MetricsMap["TextVQA"]
     batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, textvqa_scores)
 
-
     # if task_cfg[task_id]["type"] == "VL-classifier":
     #     loss = task_losses[task_id](vil_prediction, target)
     #     loss = loss.mean() * target.size(1)
@@ -307,15 +324,15 @@ def ForwardModelsVal(args, task_cfg, device, task_id, batch_dict, model, task_lo
 
 
 def ForwardModelsTrain(
-    args,
-    task_cfg,
-    device,
-    task_id,
-    task_count,
-    task_iter_train,
-    task_dataloader_train,
-    model,
-    task_losses,
+        args,
+        task_cfg,
+        device,
+        task_id,
+        task_count,
+        task_iter_train,
+        task_dataloader_train,
+        model,
+        task_losses,
 ):
     # given the current task, decided whether to forward the model and forward with specific loss.
 
@@ -520,7 +537,6 @@ def ForwardModelsTrain(
 
 
 def LoadLosses(args, task_cfg, task_ids):
-
     losses = {}
     task_types = []
     num_labels = 0
@@ -535,7 +551,6 @@ def LoadLosses(args, task_cfg, task_ids):
 
 
 def LoadDatasets(args, task_cfg, ids, split="trainval"):
-
     if "roberta" in args.bert_model:
         tokenizer = RobertaTokenizer.from_pretrained(
             args.bert_model, do_lower_case=args.do_lower_case
@@ -690,7 +705,6 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
 
 
 def LoadDatasetEval(args, task_cfg, ids):
-
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=True)
 
     task_feature_reader1 = {}
@@ -788,16 +802,16 @@ def compute_score_with_logits(logits, labels):
 
 
 def EvaluatingModel(
-    args,
-    task_cfg,
-    device,
-    task_id,
-    batch,
-    model,
-    task_dataloader,
-    task_losses,
-    results,
-    others,
+        args,
+        task_cfg,
+        device,
+        task_id,
+        batch,
+        model,
+        task_dataloader,
+        task_losses,
+        results,
+        others,
 ):
     batch = tuple(t.cuda(device=device, non_blocking=True) for t in batch if isinstance(t, torch.Tensor))
 
@@ -833,23 +847,23 @@ def EvaluatingModel(
 
         features = (
             features.unsqueeze(1)
-            .unsqueeze(1)
-            .expand(batch_size, nround, num_options, max_num_bbox, 2048)
-            .contiguous()
-            .view(-1, max_num_bbox, 2048)
+                .unsqueeze(1)
+                .expand(batch_size, nround, num_options, max_num_bbox, 2048)
+                .contiguous()
+                .view(-1, max_num_bbox, 2048)
         )
         spatials = (
             spatials.unsqueeze(1)
-            .unsqueeze(1)
-            .expand(batch_size, nround, num_options, max_num_bbox, 5)
-            .contiguous()
-            .view(-1, max_num_bbox, 5)
+                .unsqueeze(1)
+                .expand(batch_size, nround, num_options, max_num_bbox, 5)
+                .contiguous()
+                .view(-1, max_num_bbox, 5)
         )
         image_mask = (
             image_mask.unsqueeze(1)
-            .expand(batch_size, nround, num_options, max_num_bbox)
-            .contiguous()
-            .view(-1, max_num_bbox)
+                .expand(batch_size, nround, num_options, max_num_bbox)
+                .contiguous()
+                .view(-1, max_num_bbox)
         )
 
         question = question.view(-1, question.size(2))
@@ -865,21 +879,21 @@ def EvaluatingModel(
         num_options = question.size(1)
         features = (
             features.unsqueeze(1)
-            .expand(batch_size, num_options, max_num_bbox, 2048)
-            .contiguous()
-            .view(-1, max_num_bbox, 2048)
+                .expand(batch_size, num_options, max_num_bbox, 2048)
+                .contiguous()
+                .view(-1, max_num_bbox, 2048)
         )
         spatials = (
             spatials.unsqueeze(1)
-            .expand(batch_size, num_options, max_num_bbox, 5)
-            .contiguous()
-            .view(-1, max_num_bbox, 5)
+                .expand(batch_size, num_options, max_num_bbox, 5)
+                .contiguous()
+                .view(-1, max_num_bbox, 5)
         )
         image_mask = (
             image_mask.unsqueeze(1)
-            .expand(batch_size, num_options, max_num_bbox)
-            .contiguous()
-            .view(-1, max_num_bbox)
+                .expand(batch_size, num_options, max_num_bbox)
+                .contiguous()
+                .view(-1, max_num_bbox)
         )
         question = question.view(-1, question.size(2))
         input_mask = input_mask.view(-1, input_mask.size(2))

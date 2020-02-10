@@ -12,7 +12,7 @@ TASK19:
   val_annotations_jsonpath: ''
   max_seq_length: 20
   max_obj_num: 100 # object features + avg feature
-  max_resnet_num: 100 # grid features + avg feature
+  max_resnet_num: 151 # grid features + avg feature
   max_ocr_num: 50 # ocr tokens + avg feature
   batch_size: 96
   train_split: train
@@ -23,6 +23,12 @@ TASK19:
   debug: false
   grad_clip_mode: all
   max_grad_norm: 0.25
-  lr_scheduler: warmup_linear
+  model_type: m4c
+  lr_scheduler: pythia_warmup_decay
   optim: Adam
-  model_type: m4c_spatial
+  lr_decay_iters: [14000, 19000]
+  lr_decay: 0.1
+  warmup_factor: 0.2
+  warmup_iters: 1000
+  vocab_type: 5k
+  dynamic_sampling: true

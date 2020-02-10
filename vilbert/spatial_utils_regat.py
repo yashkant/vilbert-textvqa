@@ -40,16 +40,21 @@ def bb_intersection_over_union(boxA, boxB):
     return iou
 
 
-def build_graph(bbox, label_num=11):
+def build_graph_using_normalized_boxes(bbox, label_num=11):
     """ Build spatial graph
-
     Args:
         bbox: [num_boxes, 4]
-
     Returns:
         adj_matrix: [num_boxes, num_boxes, label_num]
-    """
 
+    # (YK): Fixed by @harsh
+    Remember
+        - Adjacency matrix [j, i] means relationship of j (target/blue) with respect to i (origin/red) (j is W-NW of i and so on)
+        - j_box is blue
+        - i_box is red
+        - blue arrow is from i_box (red box) to j_box (blue box) i.e from  origin to target
+        - red arrow is from j_box (blue box) to i_box (red box) i.e from target to origin
+    """
     num_box = bbox.shape[0]
     adj_matrix = np.zeros((num_box, num_box))
     xmin, ymin, xmax, ymax = np.split(bbox, 4, axis=1)
@@ -62,28 +67,21 @@ def build_graph(bbox, label_num=11):
     center_x = 0.5 * (xmin + xmax)
     center_y = 0.5 * (ymin + ymax)
     image_diag = math.sqrt(image_h ** 2 + image_w ** 2)
-
     for i in range(num_box):
         bbA = bbox[i]
-
         # (YK): Padded bbox
         if sum(bbA) == 0:
             continue
         adj_matrix[i, i] = 12
-
         for j in range(i + 1, num_box):
             bbB = bbox[j]
-
             # (YK): Padded bbox
             if sum(bbB) == 0:
                 continue
-
             # class 1: inside (j inside i)
-            if xmin[i] < xmin[j] and xmax[i] > xmax[j] and \
-                    ymin[i] < ymin[j] and ymax[i] > ymax[j]:
+            if xmin[i] < xmin[j] and xmax[i] > xmax[j] and ymin[i] < ymin[j] and ymax[i] > ymax[j]:
                 adj_matrix[i, j] = 1  # covers
                 adj_matrix[j, i] = 2  # inside
-
             # class 2: cover (j covers i)
             elif (xmin[j] < xmin[i] and xmax[j] > xmax[i] and
                   ymin[j] < ymin[i] and ymax[j] > ymax[i]):
@@ -91,6 +89,7 @@ def build_graph(bbox, label_num=11):
                 adj_matrix[j, i] = 1
             else:
                 ioU = bb_intersection_over_union(bbA, bbB)
+
                 # class 3: i and j overlap
                 if ioU >= 0.5:
                     adj_matrix[i, j] = 3
@@ -105,7 +104,7 @@ def build_graph(bbox, label_num=11):
                         # first quadrant
                         if sin_ij >= 0 and cos_ij >= 0:
                             label_i = np.arcsin(sin_ij)
-                            label_j = 2 * math.pi - label_i
+                            label_j = math.pi + label_i
                         # fourth quadrant
                         elif sin_ij < 0 and cos_ij >= 0:
                             label_i = np.arcsin(sin_ij) + 2 * math.pi
@@ -113,12 +112,13 @@ def build_graph(bbox, label_num=11):
                         # second quadrant
                         elif sin_ij >= 0 and cos_ij < 0:
                             label_i = np.arccos(cos_ij)
-                            label_j = 2 * math.pi - label_i
+                            label_j = label_i + math.pi
                         # third quadrant
                         else:
-                            label_i = -np.arccos(sin_ij) + 2 * math.pi
+                            label_i = 2 * math.pi - np.arccos(cos_ij)
                             label_j = label_i - math.pi
                         # goes from [0-8] + 3 -> [4-11]
+                        # if (adj_matrix[i, j] > 0):
                         adj_matrix[i, j] = int(np.ceil(label_i / (math.pi / 4))) + 3
                         adj_matrix[j, i] = int(np.ceil(label_j / (math.pi / 4))) + 3
     return adj_matrix

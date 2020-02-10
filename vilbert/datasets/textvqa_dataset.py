@@ -17,6 +17,7 @@ from .textvqa_processors import *
 from easydict import EasyDict as edict
 from ._image_features_reader import ImageFeaturesH5Reader
 from vilbert.spatial_utils_regat import torch_broadcast_adj_matrix
+import multiprocessing as mp
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
@@ -35,7 +36,7 @@ def _load_dataset(dataroot, name, clean_datasets, debug):
     (YK): We load questions and answers corresponding to
         the splits, and return entries.
     """
-    
+
     if name == "train" or name == "val" or name =="test":
         imdb_holder = "imdb_google_det_bbox_textvqa_multidec_sa_info_ascii_{}.npy"
         if name == "test":
@@ -86,6 +87,7 @@ class TextVQADataset(Dataset):
         padding_index=0,
         max_seq_length=16,
         max_region_num=101,
+        processing_threads=32,
         extra_args=None
     ):
         """
@@ -111,6 +113,12 @@ class TextVQADataset(Dataset):
         assert self.max_ocr_num == 50
         self.max_resnet_num = extra_args["max_resnet_num"]
         self.debug = extra_args.get("debug", False)
+        self.vocab_type = extra_args.get("vocab_type", "4k")
+        self.dynamic_sampling = extra_args.get("dynamic_sampling", False)
+        self.processing_threads = processing_threads
+        registry.vocab_type = self.vocab_type
+        logger.info(f"Dynamic Sampling is {self.dynamic_sampling}")
+
 
         clean_train = "_cleaned" if clean_datasets else ""
 
@@ -132,26 +140,29 @@ class TextVQADataset(Dataset):
             cache_path = os.path.join(
                 dataroot,
                 "cache",
-                task + "_" + split + "_" + str(max_seq_length) + clean_train + ".pkl",
+                task + "_" + split + "_" + str(max_seq_length) + clean_train + f"_vocab_type{self.vocab_type}"
+                + f"_dynamic_{self.dynamic_sampling}" +".pkl",
             )
+        logger.info(f"Cache Name:  {cache_path}")
 
         if not os.path.exists(cache_path) or self.debug:
             # Initialize Processors
-            self.processors = Processors(self._tokenizer)
+            self.processors = Processors(self._tokenizer, vocab_type=self.vocab_type)
             self.entries, _ = _load_dataset(dataroot, split, clean_datasets, self.debug)
             # convert questions to tokens, create masks, segment_ids
             self.process()
             if not self.debug:
                 cPickle.dump(self.entries, open(cache_path, "wb"))
         else:
-            self.processors = Processors(self._tokenizer, only_registry=True)  # only initialize the M4C processor (for registry)
+            self.processors = Processors(self._tokenizer, only_registry=True, vocab_type=self.vocab_type)  # only initialize the M4C processor (for registry)
             logger.info("Loading from %s" % cache_path)
             self.entries = cPickle.load(open(cache_path, "rb"))
 
     def process(self):
-        logger.info("Processing Entries")
-        for entry in tqdm(self.entries):
 
+        # Fill the boxes from readers
+        pad_obj_ocr_bboxes_list = []
+        for entry in tqdm(self.entries, desc="Processing Entries"):
             # tensorize
             entry["question_id"] = torch.tensor(entry["question_id"])
             entry["image_height"] = torch.tensor(entry["image_height"])
@@ -171,30 +182,26 @@ class TextVQADataset(Dataset):
             entry["ocr_fasttext"] = ft_processed_tokens["padded_token_indices"]
             entry["ocr_tokens"] = ft_processed_tokens["padded_tokens"]
             entry["ocr_length"] = ft_processed_tokens["length"]
+            entry["cleaned_ocr_tokens"] = cleaned_ocr_tokens
 
             # phoc features
             phoc_processed_tokens = self.processors.phoc_processor({"tokens": cleaned_ocr_tokens})
             entry["ocr_phoc"] = phoc_processed_tokens["padded_phoc_features"]
 
-            # process answers
-            cleaned_answers = [Processors.word_cleaner(word) for word in entry["answers"]]
-            processed_answers = self.processors.answer_processor({
-                "answers": cleaned_answers,
-                "context_tokens": cleaned_ocr_tokens,
-            })
-
-            entry.update(processed_answers)
+            # # process answers
+            # cleaned_answers = [Processors.word_cleaner(word) for word in entry["answers"]]
+            # processed_answers = self.processors.answer_processor({
+            #     "answers": cleaned_answers,
+            #     "context_tokens": cleaned_ocr_tokens,
+            # })
+            #
+            # entry.update(processed_answers)
 
             # biggest keys are: ocr_phoc, ocr_fasttext and targets (that goes into caching)
             remove_keys = ["sampled_idx_seq", "google_ocr_info_filtered", "google_ocr_tokens_filtered"]
             for key in remove_keys:
                 entry.pop(key, None)
 
-            # import pdb
-            # pdb.set_trace()
-
-            import time
-            start_time = time.time()
 
             # Adding spatial graph matrix
             obj_features, obj_num_boxes, obj_bboxes, _ = self.obj_features_reader[entry["image_id"]]
@@ -203,28 +210,26 @@ class TextVQADataset(Dataset):
                 obj_features, obj_bboxes, obj_num_boxes, self.max_obj_num, tensorize=False
             )
 
-            load_obj_time = time.time()
-
             ocr_features, ocr_num_boxes, ocr_bboxes, _ = self.ocr_features_reader[entry["image_id"]]
             ocr_features, ocr_num_boxes, ocr_bboxes = ocr_features[1:], ocr_num_boxes - 1, ocr_bboxes[1:]
             _, _, pad_ocr_bboxes = self._pad_features(
                 ocr_features, ocr_bboxes, ocr_num_boxes, self.max_ocr_num, tensorize=False
             )
+            # Append bboxes to the list
+            pad_obj_ocr_bboxes_list.append(np.concatenate([pad_obj_bboxes[:, :-1], pad_ocr_bboxes[:, :-1]], axis=0))
 
-            load_ocr_time = time.time()
+        logger.info(f"Processsing Spatial Relations with {self.processing_threads} threads")
+        pool = mp.Pool(self.processing_threads)
+        # map is synchronous (ordered)
+        results = pool.map(SpatialProcessor, pad_obj_ocr_bboxes_list)
+        pool.close()
+        pool.join()
+        assert len(results) == len(self.entries)
+        for result, entry in zip(results, self.entries):
+            entry["spatial_adj_matrix"] = result
 
-            spatial_adj_matrix = self.processors.spatial_processor({"pad_ocr_bboxes": pad_ocr_bboxes[:, :-1],
-                                                               "pad_obj_bboxes": pad_obj_bboxes[:, :-1]})["adj_matrix"]
 
-            load_adj_mat_time = time.time()
 
-            entry["spatial_adj_matrix"] = spatial_adj_matrix
-
-            # print("-"*20)
-            # print("Load obj: ", load_obj_time - start_time)
-            # print("Load ocr: ", load_ocr_time - load_obj_time)
-            # print("Load adj: ", load_adj_mat_time - load_ocr_time)
-            # print("Total : ", load_adj_mat_time - start_time)
 
     def __len__(self):
         return len(self.entries)
@@ -299,6 +304,15 @@ class TextVQADataset(Dataset):
 
         item["co_attention_mask"] = co_attention_mask
 
+        # process answers (dynamic sampling)
+        cleaned_answers = [Processors.word_cleaner(word) for word in entry["answers"]]
+        cleaned_ocr_tokens = entry["cleaned_ocr_tokens"]
+        processed_answers = self.processors.answer_processor({
+            "answers": cleaned_answers,
+            "context_tokens": cleaned_ocr_tokens,
+        })
+        entry.update(processed_answers)
+
         # In the first iteration expand all the spatial relation matrices
         if not isinstance(entry["spatial_adj_matrix"], torch.Tensor):
             # label_num = 12 classifies self-relationship as label=12
@@ -314,10 +328,19 @@ class TextVQADataset(Dataset):
                 pdb.set_trace()
 
         item.update(entry)
+
+        # remove unwanted key
+        if "cleaned_ocr_tokens" in item:
+            item.pop("cleaned_ocr_tokens", None)
+
         # Collate Function doesn't work correctly with lists
         for key, value in item.items():
             if not isinstance(value, torch.Tensor):
-                item[key] = enc_obj2bytes(value)
+                try:
+                    item[key] = enc_obj2bytes(value)
+                except:
+                    import pdb
+                    pdb.set_trace()
 
         return item
 
@@ -358,13 +381,15 @@ class Processors:
         decoding answer.
     """
 
-    def __init__(self, bert_tokenizer, only_registry=False):
+    def __init__(self, bert_tokenizer, vocab_type="4k", only_registry=False):
         logger.info("Loading Processors")
+        logger.info(f"Vocab Type: {vocab_type}")
         # decode-answers
         answer_config = edict()
         answer_config.max_copy_steps = 12
         answer_config.num_answers = 10
         answer_config.max_ocr_tokens = 50
+        answer_config.vocab_type = vocab_type
         self.answer_processor = M4CAnswerProcessor(answer_config)
 
         # Attach bert-tokenizer
@@ -384,9 +409,6 @@ class Processors:
         ocr_config.max_length = 50
         self.fasttext_processor = FastTextProcessor(ocr_config)
         self.phoc_processor = PhocProcessor(ocr_config)
-
-        # spatial-relations
-        self.spatial_processor = SpatialProcessor()
 
 
     @staticmethod

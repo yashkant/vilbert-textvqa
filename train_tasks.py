@@ -404,7 +404,6 @@ def main():
     else:
         if args.from_scratch:
             logger.info("Not Using Pre-trained weights")
-
             if model_type != "m4c" and model_type != "m4c_spatial":
                 model = VILBertForVLTasks(
                     config=config,
@@ -412,8 +411,21 @@ def main():
                     default_gpu=default_gpu,
                 )
             else:
-                # from pytorch_transformers.modeling_bert import BertConfig as BertConfig2
-                mmt_config = BertConfig.from_json_file(args.config_file)
+                if model_type == "m4c_spatial":
+                    with open(args.config_file, "r") as file:
+                        config_dict = json.load(file)
+                    assert "attention_mask_quadrants" in task_cfg["TASK19"]
+
+                    # Transfer keys from config to BertConfig
+                    transfer_keys = ["attention_mask_quadrants", "hidden_size", "num_implicit_relations"]
+                    for key in transfer_keys:
+                        if key in task_cfg["TASK19"]:
+                            config_dict[key] = task_cfg["TASK19"][key]
+                            logger.info(f"Transferring keys:  {key}, {config_dict[key]}")
+                    mmt_config = BertConfig.from_dict(config_dict)
+                else:
+                    mmt_config = BertConfig.from_json_file(args.config_file)
+
                 text_bert_config = BertConfig.from_json_file("config/m4c_textbert_textvqa.json")
                 model = M4C(mmt_config, text_bert_config)
         else:
@@ -448,8 +460,8 @@ def main():
     #         print("filtered weight")
     #         print(bert_weight_name_filtered)
 
-    # Turned of weight-decay and fine-tune stuff!
-    if model_type != "M4C":
+    # Turned of weight-decay and fine-tune stuff in ViLBERT!
+    if "m4c" not in model_type:
         optimizer_grouped_parameters = []
         for key, value in dict(model.named_parameters()).items():
             if value.requires_grad:
@@ -588,13 +600,16 @@ def main():
                         #     )
                         #     for param_group in optimizer.param_groups:
                         #         param_group["lr"] = lr_this_step
+                        optimizer.step()
+
                         if first_task and (
                             global_step < warmpu_steps
                             or lr_scheduler_config == "warmup_linear"
+                            or lr_scheduler_config == "pythia_warmup_decay"
                         ):
                             warmup_scheduler.step()
 
-                        optimizer.step()
+
                         model.zero_grad()
                         if first_task:
                             global_step += 1
@@ -620,6 +635,8 @@ def main():
                 and default_gpu
             ):
                 tbLogger.showLossTrain()
+                if step % (100 * args.gradient_accumulation_steps) == 0:
+                    logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}")
 
             # decided whether to evaluate on each tasks.
             for task_id in task_ids:

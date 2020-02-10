@@ -22,7 +22,7 @@ class M4C(nn.Module):
         super().__init__()
         # self.mmt_config = BertConfig(**self.config.mmt)
         self.mmt_config = mmt_config
-        self.text_bert_config = BertConfig.from_json_file("config/m4c_textbert_textvqa.json")
+        self.text_bert_config = text_bert_config
         # self._datasets = registry.get("config").datasets.split(",")
 
         if self.mmt_config.finetune_ocr_obj:
@@ -55,7 +55,6 @@ class M4C(nn.Module):
 
     def _build_txt_encoding(self):
         TEXT_BERT_HIDDEN_SIZE = 768
-
         # self.text_bert_config = BertConfig(**self.config.text_bert)
         if self.text_bert_config.text_bert_init_from_bert_base:
             self.text_bert = TextBert.from_pretrained(
@@ -108,7 +107,7 @@ class M4C(nn.Module):
 
         # object location feature: relative bounding box coordinates (4-dim)
         self.linear_obj_bbox_to_mmt_in = nn.Linear(
-            5, self.mmt_config.hidden_size
+            4, self.mmt_config.hidden_size
         )
 
         self.obj_feat_layer_norm = BertLayerNorm(self.mmt_config.hidden_size)
@@ -138,7 +137,7 @@ class M4C(nn.Module):
 
         # OCR location feature: relative bounding box coordinates (4-dim)
         self.linear_ocr_bbox_to_mmt_in = nn.Linear(
-            5, self.mmt_config.hidden_size
+            4, self.mmt_config.hidden_size
         )
 
         self.ocr_feat_layer_norm = BertLayerNorm(self.mmt_config.hidden_size)
@@ -157,7 +156,13 @@ class M4C(nn.Module):
     def _build_output(self):
         # dynamic OCR-copying scores with pointer network
         self.ocr_ptr_net = OcrPtrNet(hidden_size=self.mmt_config.hidden_size, query_key_size=self.mmt_config.ptr_query_size)
-        self.classifier = nn.Linear(self.mmt_config.hidden_size, 3998)
+
+        if registry.vocab_type == "5k":
+            num_outputs = 5000
+        else:
+            num_outputs = 3998
+
+        self.classifier = nn.Linear(self.mmt_config.hidden_size, num_outputs)
         # fixed answer vocabulary scores
         # num_choices = registry.get(self._datasets[0] + "_num_final_outputs")
         # # remove the OCR copying dimensions in LoRRA's classifier output
@@ -203,7 +208,9 @@ class M4C(nn.Module):
             obj_fc7 = F.normalize(obj_fc7, dim=-1)
 
         obj_feat = obj_fc7
-        obj_bbox = batch_dict["pad_obj_bboxes"]
+
+        # remove bbox-area
+        obj_bbox = batch_dict["pad_obj_bboxes"][:, :, :-1]
         obj_mmt_in = (
             self.obj_feat_layer_norm(
                 self.linear_obj_feat_to_mmt_in(obj_feat)
@@ -250,7 +257,9 @@ class M4C(nn.Module):
                 [ocr_fc7, ocr_order_vectors],
                 dim=-1
             )
-        ocr_bbox = batch_dict["pad_ocr_bboxes"]
+
+        # remove area
+        ocr_bbox = batch_dict["pad_ocr_bboxes"][:, :, :-1]
         ocr_mmt_in = (
             self.ocr_feat_layer_norm(
                 self.linear_ocr_feat_to_mmt_in(ocr_feat)
@@ -314,7 +323,6 @@ class M4C(nn.Module):
 
     def get_optimizer_parameters(self, base_lr):
         optimizer_param_groups = []
-
         # base_lr = config.optimizer_attributes.params.lr
         # collect all the parameters that need different/scaled lr
         finetune_params_set = set()
@@ -338,7 +346,6 @@ class M4C(nn.Module):
 class TextBert(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
-
         self.embeddings = BertEmbeddings(config)
         self.encoder = BertEncoder(config)
         # self.apply(self.init_weights)  # old versions of pytorch_transformers
@@ -557,7 +564,7 @@ def _get_causal_mask(seq_length, device):
     # generate a lower triangular mask
     mask = torch.zeros(seq_length, seq_length, device=device)
     for i in range(seq_length):
-        for j in range(i+1):
+        for j in range(i + 1):
             mask[i, j] = 1.
     return mask
 
@@ -567,7 +574,7 @@ def _batch_gather(x, inds):
     batch_size = x.size(0)
     length = x.size(1)
     dim = x.size(2)
-    x_flat = x.view(batch_size*length, dim)
+    x_flat = x.view(batch_size * length, dim)
 
     batch_offsets = torch.arange(batch_size, device=inds.device) * length
     batch_offsets = batch_offsets.unsqueeze(-1)

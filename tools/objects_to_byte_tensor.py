@@ -18,8 +18,6 @@ def enc_obj2bytes(obj, max_size=16000):
     obj_enc = pickle.dumps(obj)
     obj_size = len(obj_enc)
     if obj_size > max_size:
-        import pdb
-        pdb.set_trace()
         raise Exception(
             'objects too large: object size {}, max size {}'.format(
                 obj_size, max_size

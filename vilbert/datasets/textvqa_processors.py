@@ -79,7 +79,7 @@ from tools.registry import registry
 from pytorch_transformers.tokenization_bert import BertTokenizer
 from .textvqa_vocab import VocabDict
 from ..phoc import build_phoc
-from vilbert.spatial_utils_regat import build_graph
+from vilbert.spatial_utils_regat import build_graph_using_normalized_boxes
 
 def _pad_tokens(tokens, PAD_TOKEN, max_length):
     padded_tokens = [PAD_TOKEN] * max_length
@@ -812,17 +812,9 @@ class CopyProcessor(BaseProcessor):
         return {"blob": torch.from_numpy(final_blob)}
 
 
-class SpatialProcessor:
-    """
-    Copy boxes from numpy array
-    """
-
-    def __call__(self, item):
-        pad_obj_bboxes = item["pad_obj_bboxes"]
-        pad_ocr_bboxes = item["pad_ocr_bboxes"]
-        pad_obj_ocr_bboxes = np.concatenate([pad_obj_bboxes, pad_ocr_bboxes], axis=0)
-        adj_matrix = build_graph(pad_obj_ocr_bboxes).astype(np.int8)
-        return {"adj_matrix": adj_matrix}
+def SpatialProcessor(pad_obj_ocr_bboxes):
+    adj_matrix = build_graph_using_normalized_boxes(pad_obj_ocr_bboxes).astype(np.int8)
+    return adj_matrix
 
 
 class BertTokenizerProcessor:
@@ -861,9 +853,13 @@ class M4CAnswerProcessor:
     # (YK): Modified to activate logits of the same word in ocr/vocabulary in targets.
     """
     def __init__(self, config, *args, **kwargs):
-        self.answer_vocab = VocabDict(
-            "/srv/share/ykant3/pythia/vocabs/answers_textvqa_more_than_1_m4c_no_dups.txt", *args, **kwargs
-        )
+        vocab5k = "/srv/share/ykant3/m4c-release/data/m4c_vocabs/textvqa/fixed_answer_vocab_textvqa_5k.txt"
+        vocab4k = "/srv/share/ykant3/pythia/vocabs/answers_textvqa_more_than_1_m4c_no_dups.txt"
+
+        if config.vocab_type == "5k":
+            self.answer_vocab = VocabDict(vocab5k, *args, **kwargs)
+        else:
+            self.answer_vocab = VocabDict(vocab4k, *args, **kwargs)
 
         self.PAD_IDX = self.answer_vocab.word2idx('<pad>')
         self.BOS_IDX = self.answer_vocab.word2idx('<s>')
@@ -1035,7 +1031,7 @@ class M4CAnswerProcessor:
         answer_info = {
             'answers': answers,
             'targets': scores,
-            'sampled_idx_seq': [train_prev_inds.new(idx_seq)],
+            # 'sampled_idx_seq': [train_prev_inds.new(idx_seq)],
             'train_prev_inds': train_prev_inds,
             'train_loss_mask': train_loss_mask,
             'train_acc_mask': train_acc_mask,

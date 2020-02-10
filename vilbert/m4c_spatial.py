@@ -14,17 +14,15 @@ from vilbert.textvqa_encoders import ImageEncoder
 
 logger = logging.getLogger(__name__)
 
-
 class M4C(nn.Module):
     """
     M4C has two transfomers MMT and TextBert.
     """
-
     def __init__(self, mmt_config, text_bert_config):
         super().__init__()
         # self.mmt_config = BertConfig(**self.config.mmt)
         self.mmt_config = mmt_config
-        self.text_bert_config = BertConfig.from_json_file("config/m4c_textbert_textvqa.json")
+        self.text_bert_config = text_bert_config
         # self._datasets = registry.get("config").datasets.split(",")
 
         if self.mmt_config.finetune_ocr_obj:
@@ -57,7 +55,6 @@ class M4C(nn.Module):
 
     def _build_txt_encoding(self):
         TEXT_BERT_HIDDEN_SIZE = 768
-
         # self.text_bert_config = BertConfig(**self.config.text_bert)
         if self.text_bert_config.text_bert_init_from_bert_base:
             self.text_bert = TextBert.from_pretrained(
@@ -110,7 +107,7 @@ class M4C(nn.Module):
 
         # object location feature: relative bounding box coordinates (4-dim)
         self.linear_obj_bbox_to_mmt_in = nn.Linear(
-            5, self.mmt_config.hidden_size
+            4, self.mmt_config.hidden_size
         )
 
         self.obj_feat_layer_norm = BertLayerNorm(self.mmt_config.hidden_size)
@@ -140,7 +137,7 @@ class M4C(nn.Module):
 
         # OCR location feature: relative bounding box coordinates (4-dim)
         self.linear_ocr_bbox_to_mmt_in = nn.Linear(
-            5, self.mmt_config.hidden_size
+            4, self.mmt_config.hidden_size
         )
 
         self.ocr_feat_layer_norm = BertLayerNorm(self.mmt_config.hidden_size)
@@ -158,9 +155,14 @@ class M4C(nn.Module):
 
     def _build_output(self):
         # dynamic OCR-copying scores with pointer network
-        self.ocr_ptr_net = OcrPtrNet(hidden_size=self.mmt_config.hidden_size,
-                                     query_key_size=self.mmt_config.ptr_query_size)
-        self.classifier = nn.Linear(self.mmt_config.hidden_size, 3998)
+        self.ocr_ptr_net = OcrPtrNet(hidden_size=self.mmt_config.hidden_size, query_key_size=self.mmt_config.ptr_query_size)
+
+        if registry.vocab_type == "5k":
+            num_outputs = 5000
+        else:
+            num_outputs = 3998
+
+        self.classifier = nn.Linear(self.mmt_config.hidden_size, num_outputs)
         # fixed answer vocabulary scores
         # num_choices = registry.get(self._datasets[0] + "_num_final_outputs")
         # # remove the OCR copying dimensions in LoRRA's classifier output
@@ -206,13 +208,15 @@ class M4C(nn.Module):
             obj_fc7 = F.normalize(obj_fc7, dim=-1)
 
         obj_feat = obj_fc7
-        obj_bbox = batch_dict["pad_obj_bboxes"]
+
+        # remove bbox-area
+        obj_bbox = batch_dict["pad_obj_bboxes"][:, :, :-1]
         obj_mmt_in = (
-                self.obj_feat_layer_norm(
-                    self.linear_obj_feat_to_mmt_in(obj_feat)
-                ) + self.obj_bbox_layer_norm(
-            self.linear_obj_bbox_to_mmt_in(obj_bbox)
-        )
+            self.obj_feat_layer_norm(
+                self.linear_obj_feat_to_mmt_in(obj_feat)
+            ) + self.obj_bbox_layer_norm(
+                self.linear_obj_bbox_to_mmt_in(obj_bbox)
+            )
         )
         obj_mmt_in = self.obj_drop(obj_mmt_in)
         batch_dict['obj_mmt_in'] = obj_mmt_in
@@ -241,7 +245,7 @@ class M4C(nn.Module):
 
         # OCR order vectors (legacy from LoRRA model; set to all zeros)
         # TODO remove OCR order vectors; they are not needed
-        ocr_order_vectors = ocr_fc6.new_zeros((ocr_phoc.size(0), 50, 50))
+        ocr_order_vectors = ocr_fc6.new_zeros((ocr_phoc.size(0), 50,50))
 
         if self.mmt_config.use_phoc_fasttext:
             ocr_feat = torch.cat(
@@ -253,13 +257,15 @@ class M4C(nn.Module):
                 [ocr_fc7, ocr_order_vectors],
                 dim=-1
             )
-        ocr_bbox = batch_dict["pad_ocr_bboxes"]
+
+        # remove area
+        ocr_bbox = batch_dict["pad_ocr_bboxes"][:, :, :-1]
         ocr_mmt_in = (
-                self.ocr_feat_layer_norm(
-                    self.linear_ocr_feat_to_mmt_in(ocr_feat)
-                ) + self.ocr_bbox_layer_norm(
-            self.linear_ocr_bbox_to_mmt_in(ocr_bbox)
-        )
+            self.ocr_feat_layer_norm(
+                self.linear_ocr_feat_to_mmt_in(ocr_feat)
+            ) + self.ocr_bbox_layer_norm(
+                self.linear_ocr_bbox_to_mmt_in(ocr_bbox)
+            )
         )
         ocr_mmt_in = self.ocr_drop(ocr_mmt_in)
         batch_dict['ocr_mmt_in'] = ocr_mmt_in
@@ -341,7 +347,6 @@ class M4C(nn.Module):
 class TextBert(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
-
         self.embeddings = BertEmbeddings(config)
         self.encoder = BertEncoder(config)
         # self.apply(self.init_weights)  # old versions of pytorch_transformers
@@ -374,15 +379,26 @@ class SpatialBertSelfAttention(nn.Module):
     def __init__(self, config):
         super(SpatialBertSelfAttention, self).__init__()
         assert hasattr(config, "num_spatial_relations")
-        if config.hidden_size % config.num_spatial_relations != 0:
-            raise ValueError(
-                "The hidden size (%d) is not a multiple of the number of attention "
-                "heads (%d)" % (config.hidden_size, config.num_spatial_relations))
-        self.output_attentions = config.output_attentions
-        self.max_seq_len = config.max_seq_length
 
         self.num_attention_heads = config.num_spatial_relations
-        self.attention_head_size = int(config.hidden_size / config.num_spatial_relations)
+        self.num_spatial_relations = config.num_spatial_relations
+
+        if hasattr(config, "num_implicit_relations"):
+            self.num_attention_heads += config.num_implicit_relations
+            self.num_implicit_relations = config.num_implicit_relations
+
+
+        if config.hidden_size % self.num_attention_heads != 0:
+            raise ValueError(
+                "The hidden size (%d) is not a multiple of the number of attention "
+                "heads (%d)" % (config.hidden_size, self.num_attention_heads))
+
+        self.output_attentions = config.output_attentions
+        self.max_seq_len = config.max_seq_length
+        self.mask_quadrants = config.attention_mask_quadrants
+        self.max_decoding_steps = config.num_decoding_steps
+
+        self.attention_head_size = int(config.hidden_size / self.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
 
         self.query = nn.Linear(config.hidden_size, self.all_head_size)
@@ -400,7 +416,7 @@ class SpatialBertSelfAttention(nn.Module):
         """
         spatial_adj_matrix: (bs, num_ocr + num_obj, num_ocr + num_obj, type_relations == num_heads)
         TODO: Is there way you can draw some connections across these heads? Like one-head using some
-            other heads K/Q/V, can this modelled as any relationship, think think.
+            other heads K/Q/V, can this modelled as any cross-relationship, think think.
 
         One Problem: We concatenate the outputs from all the 12 heads, now:
             - Leave others as zeros? (this will happen if there's no rel_i th of this embedding with others) (as it is) [rel_enc1, rel_enc2, ... rel_enc11]
@@ -413,11 +429,31 @@ class SpatialBertSelfAttention(nn.Module):
         """
 
         # build attention-mask from spatial_adj_matrix
-        batch_size, ocr_obj_num, _, num_heads = spatial_adj_matrix.shape
+        batch_size, ocr_obj_num, _, num_spatial_heads = spatial_adj_matrix.shape
         num_features = hidden_states.size(1)
-        spatial_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, num_heads))
+        spatial_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, num_spatial_heads))
         spatial_attention_mask[:, self.max_seq_len:self.max_seq_len + ocr_obj_num,
         self.max_seq_len:self.max_seq_len + ocr_obj_num, :] = spatial_adj_matrix
+
+        # Add implicit mask
+        if self.num_attention_heads != self.num_spatial_relations:
+            assert hasattr(self, "num_implicit_relations")
+            implicit_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, self.num_implicit_relations))
+            spatial_attention_mask = torch.cat([spatial_attention_mask, implicit_attention_mask], dim=-1)
+
+        assert spatial_attention_mask.shape == (batch_size, num_features, num_features, self.num_attention_heads)
+
+        # Mask attention-quadrants
+        for quadrant in self.mask_quadrants:
+            if quadrant == 1:
+                spatial_attention_mask[:, :self.max_seq_len, :self.max_seq_len, :] = 0
+            elif quadrant == 2:
+                spatial_attention_mask[:, :self.max_seq_len, self.max_seq_len:self.max_seq_len+ocr_obj_num, :] = 0
+            elif quadrant == 4:
+                spatial_attention_mask[:, self.max_seq_len:self.max_seq_len+ocr_obj_num, :self.max_seq_len, :] = 0
+            else:
+                raise ValueError
+
         spatial_attention_mask = (1.0 - spatial_attention_mask) * -10000.0
         spatial_attention_mask = spatial_attention_mask.permute((0, 3, 1, 2))
 
@@ -645,10 +681,6 @@ class MMT(BertPreTrainedModel):
             'mmt_dec_output': mmt_dec_output,
         }
         return results
-
-
-class SpatialTransformer(BertPreTrainedModel):
-    pass
 
 
 class OcrPtrNet(nn.Module):
