@@ -40,3 +40,6 @@ TASK19:
   warmup_factor: 0.2
   warmup_iters: 1000
   vocab_type: 5k
+  num_hidden_layers: 0
+  num_spatial_layers: 6
+  spatial_type: top

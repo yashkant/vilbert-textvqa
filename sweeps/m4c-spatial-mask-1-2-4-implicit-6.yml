@@ -41,3 +41,4 @@ TASK19:
   lr_decay: 0.1
   warmup_factor: 0.2
   warmup_iters: 1000
+  vocab_type: 5k

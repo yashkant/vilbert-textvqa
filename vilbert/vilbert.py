@@ -2125,7 +2125,7 @@ class VILBertForVLTasks(BertPreTrainedModel):
 
 
 class SimpleClassifier(nn.Module):
-    def __init__(self, in_dim, hid_dim, out_dim, dropout):
+    def __init__(self, in_dim, hid_dim, out_dim, dropout=0):
         super().__init__()
         self.logit_fc = nn.Sequential(
             nn.Linear(in_dim, hid_dim),

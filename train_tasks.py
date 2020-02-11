@@ -257,6 +257,10 @@ def main():
         logger.info("Using M4C model")
         from vilbert.m4c import BertConfig
         from vilbert.m4c import M4C
+    elif model_type == "m4c_rd":
+        logger.info("Using M4C-RD model")
+        from vilbert.m4c_decode_rd import BertConfig
+        from vilbert.m4c_decode_rd import M4C
     elif model_type == "22ss":
         from vilbert.vilbert_ss import BertConfig, VILBertForVLTasks
     elif model_type == "m4c_spatial":
@@ -404,7 +408,7 @@ def main():
     else:
         if args.from_scratch:
             logger.info("Not Using Pre-trained weights")
-            if model_type != "m4c" and model_type != "m4c_spatial":
+            if "m4c" not in model_type:
                 model = VILBertForVLTasks(
                     config=config,
                     num_labels=None,
@@ -412,19 +416,28 @@ def main():
                 )
             else:
                 if model_type == "m4c_spatial":
-                    with open(args.config_file, "r") as file:
-                        config_dict = json.load(file)
                     assert "attention_mask_quadrants" in task_cfg["TASK19"]
-
+                    assert "spatial_type" in task_cfg["TASK19"]
                     # Transfer keys from config to BertConfig
-                    transfer_keys = ["attention_mask_quadrants", "hidden_size", "num_implicit_relations"]
-                    for key in transfer_keys:
-                        if key in task_cfg["TASK19"]:
-                            config_dict[key] = task_cfg["TASK19"][key]
-                            logger.info(f"Transferring keys:  {key}, {config_dict[key]}")
-                    mmt_config = BertConfig.from_dict(config_dict)
+                    transfer_keys = ["attention_mask_quadrants", "hidden_size", "num_implicit_relations", "spatial_type", "num_hidden_layers", "num_spatial_layers"]
+                elif model_type == "m4c" or model_type == "m4c_rd":
+                    # Transfer keys from config to BertConfig
+                    transfer_keys = ["num_hidden_layers"]
                 else:
-                    mmt_config = BertConfig.from_json_file(args.config_file)
+                    raise ValueError
+
+                # Common keys
+                transfer_keys.extend(["aux_spatial_fusion", "use_aux_heads"])
+
+                # Load config-file M4C
+                with open(args.config_file, "r") as file:
+                    config_dict = json.load(file)
+                # Replace keys
+                for key in transfer_keys:
+                    if key in task_cfg["TASK19"]:
+                        config_dict[key] = task_cfg["TASK19"][key]
+                        logger.info(f"Transferring keys:  {key}, {config_dict[key]}")
+                mmt_config = BertConfig.from_dict(config_dict)
 
                 text_bert_config = BertConfig.from_json_file("config/m4c_textbert_textvqa.json")
                 model = M4C(mmt_config, text_bert_config)

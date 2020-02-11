@@ -14,10 +14,12 @@ from vilbert.textvqa_encoders import ImageEncoder
 
 logger = logging.getLogger(__name__)
 
+
 class M4C(nn.Module):
     """
     M4C has two transfomers MMT and TextBert.
     """
+
     def __init__(self, mmt_config, text_bert_config):
         super().__init__()
         # self.mmt_config = BertConfig(**self.config.mmt)
@@ -26,18 +28,27 @@ class M4C(nn.Module):
         # self._datasets = registry.get("config").datasets.split(",")
 
         if self.mmt_config.finetune_ocr_obj:
-            print("Finetuning object and ocr FRCN layer")
+            logger.info("Finetuning object and ocr FRCN layer")
             self.frcn_encoder_type = "finetune_faster_rcnn_fpn_fc7"
         else:
-            print("Not finetuning object and ocr FRCN layer")
+            logger.info("Not finetuning object and ocr FRCN layer")
             self.frcn_encoder_type = "default"
 
         if not self.mmt_config.use_phoc_fasttext:
-            print("Not using Fasttext and PHOC features for OCR")
+            logger.info("Not using Fasttext and PHOC features for OCR")
 
         self.normalize = self.mmt_config.normalize
         if not self.mmt_config.normalize:
-            print("Not normalizing OCR and Object features")
+            logger.info("Not normalizing OCR and Object features")
+
+        # auxiliary heads and fusion
+        self.aux_spatial_fusion = getattr(self.mmt_config, "aux_spatial_fusion", "mul")
+        self.use_aux_heads = getattr(self.mmt_config, "use_aux_heads", False)
+        if self.use_aux_heads:
+            logger.info("Using spatial-aux heads")
+            logger.info(f"Spatial aux fusion type: {self.aux_spatial_fusion}")
+        else:
+            logger.info("Not using spatial-aux heads")
 
         # build the models
         self.build()
@@ -52,6 +63,8 @@ class M4C(nn.Module):
         self._build_ocr_encoding()
         self._build_mmt()
         self._build_output()
+        if self.use_aux_heads:
+            self._build_aux_heads()
 
     def _build_txt_encoding(self):
         TEXT_BERT_HIDDEN_SIZE = 768
@@ -178,6 +191,13 @@ class M4C(nn.Module):
         #     self._datasets[0] + "_answer_processor"
         # )
 
+    def _build_aux_heads(self):
+        from vilbert.vilbert import SimpleClassifier
+        # spatial-category classification head
+        self.origin_transform = SimpleClassifier(self.mmt_config.hidden_size, 128, 32)
+        self.dest_transform = SimpleClassifier(self.mmt_config.hidden_size, 128, 32)
+        self.spatial_classifier = nn.Linear(32, 12)
+
     def forward(self, batch_dict):
         # import pdb
         # pdb.set_trace()
@@ -187,10 +207,15 @@ class M4C(nn.Module):
         self._forward_obj_encoding(batch_dict)
         self._forward_ocr_encoding(batch_dict)
         self._forward_mmt_and_output(batch_dict)
+        if self.use_aux_heads:
+            self._forward_aux(batch_dict)
 
-        # only keep scores in the forward pass results
-        # results = {"scores": batch_dict["scores"]}
-        return batch_dict["scores"]
+        results_dict={
+            "textvqa_scores": batch_dict["scores"],
+            "spatial_scores": None if not self.use_aux_heads else batch_dict["spatial_head_out"]
+        }
+
+        return results_dict
 
     # def _forward_txt_encoding(self, sample_list, fwd_results):
     #     fwd_results['txt_inds'] = sample_list.text
@@ -245,7 +270,7 @@ class M4C(nn.Module):
 
         # OCR order vectors (legacy from LoRRA model; set to all zeros)
         # TODO remove OCR order vectors; they are not needed
-        ocr_order_vectors = ocr_fc6.new_zeros((ocr_phoc.size(0), 50,50))
+        ocr_order_vectors = ocr_fc6.new_zeros((ocr_phoc.size(0), 50, 50))
 
         if self.mmt_config.use_phoc_fasttext:
             ocr_feat = torch.cat(
@@ -321,8 +346,36 @@ class M4C(nn.Module):
                 argmax_inds = batch_dict["scores"].argmax(dim=-1)
                 batch_dict['train_prev_inds'][:, 1:] = argmax_inds[:, :-1]
 
+    def _forward_aux(self, batch_dict):
+        txt_max_num = batch_dict["question_mask"].size(-1)
+        obj_max_num = batch_dict["pad_obj_mask"].size(-1)
+        ocr_max_num = batch_dict["pad_ocr_mask"].size(-1)
+        mmt_output = batch_dict["mmt_seq_output"]
+        obj_ocr_output = mmt_output[:, txt_max_num: txt_max_num + obj_max_num + ocr_max_num, :]
+
+        # shape: (bs, obj_ocr_num, hid_dim)
+        obj_ocr_origin_transform = self.origin_transform(obj_ocr_output)
+        # shape: (bs, obj_ocr_num, obj_ocr_num, hid_dim)
+        obj_ocr_origin_transform = obj_ocr_origin_transform.unsqueeze(-2).repeat(1, 1, 150, 1)
+
+        # shape: (bs, obj_ocr_num, hid_dim)
+        obj_ocr_dest_transform = self.dest_transform(obj_ocr_output)
+        # shape: (bs, obj_ocr_num, obj_ocr_num, hid_dim)
+        obj_ocr_dest_transform = obj_ocr_dest_transform.unsqueeze(-3).repeat(1, 150, 1, 1)
+
+        # Add and average the features or Multiply
+        if self.aux_spatial_fusion == "mul":
+            spatial_head_out = obj_ocr_origin_transform * obj_ocr_dest_transform
+        elif self.aux_spatial_fusion == "add":
+            spatial_head_out = obj_ocr_origin_transform + obj_ocr_dest_transform
+        else:
+            raise ValueError
+
+        batch_dict["spatial_head_out"] = self.spatial_classifier(spatial_head_out)
+
     def get_optimizer_parameters(self, base_lr):
         optimizer_param_groups = []
+
         # base_lr = config.optimizer_attributes.params.lr
         # collect all the parameters that need different/scaled lr
         finetune_params_set = set()
@@ -382,7 +435,6 @@ class MMT(BertPreTrainedModel):
     def forward(self,
                 batch_dict,
                 fixed_ans_emb):
-
         # build embeddings for predictions in previous decoding steps
         # fixed_ans_emb is an embedding lookup table for each fixed vocabulary
         dec_emb = self.prev_pred_embeddings(fixed_ans_emb, batch_dict["ocr_mmt_in"], batch_dict["train_prev_inds"])

@@ -25,7 +25,7 @@ TASK19:
   max_grad_norm: 0.25
   model_type: m4c_spatial
   # allowed quadrants to mask are 1,2,4
-  attention_mask_quadrants: [1,2,4]
+  attention_mask_quadrants: [4]
 #  Quadrants (QUE + OCR and OBJ + DEC)
 #
 #  1 | 2 | 3
@@ -35,8 +35,9 @@ TASK19:
 #  7 | 8 | 9
   lr_scheduler: pythia_warmup_decay
   optim: Adam
-  lr_decay_iters: [14000, 19000]
+  lr_decay_iters: [14000, 23000]
   lr_decay: 0.1
   warmup_factor: 0.2
   warmup_iters: 1000
   vocab_type: 5k
+  spatial_type: top

@@ -52,14 +52,50 @@ class M4CDecodingBCEWithMaskLoss(nn.Module):
         losses = F.binary_cross_entropy_with_logits(scores, targets, reduction="none")
         losses *= loss_mask.unsqueeze(-1)
         count = torch.max(torch.sum(loss_mask), self.one.to(losses.device))
-        # if self.debug_count % 5 == 0:
-        #     print("Count: ", count)
-        #     print("Loss: ", losses.sum(dim=-1))
-        #     print("Scores: ", scores.argmax(dim=-1)*loss_mask.long())
-        #     print("Targets: ", (targets.argmax(dim=-1)*loss_mask).long())
-
         loss = torch.sum(losses) / count
         return loss
+
+
+class M4CandSpatialLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.one = torch.Tensor([1.])
+        self.print_count = 0
+
+    def forward(self, batch_dict):
+        self.print_count += 1
+
+        # textvqa loss
+        scores = batch_dict["textvqa_scores"]
+        loss_mask = batch_dict["train_loss_mask"]
+        targets = batch_dict["targets"]
+        assert scores.dim() == 3 and loss_mask.dim() == 2
+
+
+        losses = F.binary_cross_entropy_with_logits(scores, targets, reduction="none")
+        losses *= loss_mask.unsqueeze(-1)
+        count = torch.max(torch.sum(loss_mask), self.one.to(losses.device))
+        loss = torch.sum(losses) / count
+
+        # spatial loss
+        assert "spatial_scores" in batch_dict
+        spa_loss_mask = batch_dict["spatial_loss_mask"].float()
+        spa_targets = batch_dict["spatial_adj_matrix"].argmax(dim=-1).view(-1)
+        spa_scores = batch_dict["spatial_scores"].view(-1, 12)
+        spa_losses = F.cross_entropy(spa_scores, spa_targets, reduction="none")
+        spa_losses = spa_losses.view_as(spa_loss_mask)
+        spa_losses *= spa_loss_mask
+        spa_count = torch.max(torch.sum(spa_loss_mask), self.one.to(spa_losses.device))
+        spa_loss = torch.sum(spa_losses) / spa_count
+        total_loss = loss + spa_loss
+
+        if self.print_count % 20 == 0:
+            round_print = lambda x: round(float(x), 4)
+            logger.info(f"Spatial Loss: {round_print(spa_loss)}, "
+                        f"TextVQA Loss: {round_print(loss)}, "
+                        f"Total Loss: {round_print(total_loss)}")
+
+        return total_loss
 
 
 def clip_gradients(model, max_grad_l2_norm, clip_norm_mode):
@@ -166,6 +202,7 @@ LossMap = {
     "BCEWithLogitLoss": nn.BCEWithLogitsLoss(reduction="mean"),
     "CrossEntropyLoss": nn.CrossEntropyLoss(),
     "TextVQALoss": M4CDecodingBCEWithMaskLoss(),
+    "TextVQAandSpatialLoss": M4CandSpatialLoss(),
 }
 
 MetricsMap = {
@@ -272,10 +309,16 @@ def ForwardModelsVal(args, task_cfg, device, task_id, batch_dict, model, task_lo
     question = batch_dict["question_indices"]
     batch_size = len(batch_dict["question_id"])
     batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
-    textvqa_scores = model(batch_dict)
-    loss = task_losses[task_id](textvqa_scores, batch_dict["targets"], batch_dict["train_loss_mask"])
+
+    results_dict = model(batch_dict)
+    batch_dict.update(results_dict)
+    if task_cfg[task_id]["loss"] == "TextVQAandSpatialLoss":
+        loss = task_losses[task_id](batch_dict)
+    else:
+        loss = task_losses[task_id](batch_dict["textvqa_scores"], batch_dict["targets"], batch_dict["train_loss_mask"])
+
     textvqa_metric = MetricsMap["TextVQA"]
-    batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, textvqa_scores)
+    batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, batch_dict["textvqa_scores"])
 
     # if task_cfg[task_id]["type"] == "VL-classifier":
     #     loss = task_losses[task_id](vil_prediction, target)
@@ -476,10 +519,15 @@ def ForwardModelsTrain(
     question = batch_dict["question_indices"]
     batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
 
-    textvqa_scores = model(batch_dict)
-    loss = task_losses[task_id](textvqa_scores, batch_dict["targets"], batch_dict["train_loss_mask"])
+    results_dict = model(batch_dict)
+    batch_dict.update(results_dict)
+    if task_cfg[task_id]["loss"] == "TextVQAandSpatialLoss":
+        loss = task_losses[task_id](batch_dict)
+    else:
+        loss = task_losses[task_id](batch_dict["textvqa_scores"], batch_dict["targets"], batch_dict["train_loss_mask"])
+
     textvqa_metric = MetricsMap["TextVQA"]
-    batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, textvqa_scores)
+    batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, batch_dict["textvqa_scores"])
 
     # # for different task, we use different output to calculate the loss.
     # if task_cfg[task_id]["type"] == "VL-classifier":

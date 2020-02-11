@@ -114,7 +114,7 @@ class TextVQADataset(Dataset):
         self.max_resnet_num = extra_args["max_resnet_num"]
         self.debug = extra_args.get("debug", False)
         self.vocab_type = extra_args.get("vocab_type", "4k")
-        self.dynamic_sampling = extra_args.get("dynamic_sampling", False)
+        self.dynamic_sampling = extra_args.get("dynamic_sampling", True)
         self.processing_threads = processing_threads
         registry.vocab_type = self.vocab_type
         logger.info(f"Dynamic Sampling is {self.dynamic_sampling}")
@@ -313,8 +313,10 @@ class TextVQADataset(Dataset):
         })
         entry.update(processed_answers)
 
+
         # In the first iteration expand all the spatial relation matrices
         if not isinstance(entry["spatial_adj_matrix"], torch.Tensor):
+            entry["spatial_loss_mask"] = torch.from_numpy((entry["spatial_adj_matrix"] != 0).astype(np.float))
             # label_num = 12 classifies self-relationship as label=12
             entry["spatial_adj_matrix"] = torch_broadcast_adj_matrix(
                 torch.from_numpy(entry["spatial_adj_matrix"]),
@@ -323,6 +325,7 @@ class TextVQADataset(Dataset):
         else:
             try:
                 assert len(entry["spatial_adj_matrix"].shape) == 3
+                assert "spatial_loss_mask" in entry
             except:
                 import pdb
                 pdb.set_trace()
