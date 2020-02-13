@@ -485,7 +485,14 @@ class SpatialBertSelfAttention(nn.Module):
         # build attention-mask from spatial_adj_matrix
         batch_size, ocr_obj_num, _, num_spatial_heads = spatial_adj_matrix.shape
         num_features = hidden_states.size(1)
-        spatial_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, num_spatial_heads))
+
+        # basically mask everything
+        if -1 in self.mask_quadrants:
+            spatial_attention_mask = attention_mask.new_zeros((batch_size, num_features, num_features, num_spatial_heads))
+        else:
+            spatial_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, num_spatial_heads))
+
+        # Add explicit mask
         spatial_attention_mask[:, self.max_seq_len:self.max_seq_len + ocr_obj_num,
         self.max_seq_len:self.max_seq_len + ocr_obj_num, :] = spatial_adj_matrix
 
@@ -497,16 +504,16 @@ class SpatialBertSelfAttention(nn.Module):
 
         assert spatial_attention_mask.shape == (batch_size, num_features, num_features, self.num_attention_heads)
 
-        # Mask attention-quadrants
-        for quadrant in self.mask_quadrants:
-            if quadrant == 1:
-                spatial_attention_mask[:, :self.max_seq_len, :self.max_seq_len, :] = 0
-            elif quadrant == 2:
-                spatial_attention_mask[:, :self.max_seq_len, self.max_seq_len:self.max_seq_len+ocr_obj_num, :] = 0
-            elif quadrant == 4:
-                spatial_attention_mask[:, self.max_seq_len:self.max_seq_len+ocr_obj_num, :self.max_seq_len, :] = 0
-            else:
-                raise ValueError
+        # # Mask attention-quadrants
+        # for quadrant in self.mask_quadrants:
+        #     if quadrant == 1:
+        #         spatial_attention_mask[:, :self.max_seq_len, :self.max_seq_len, :] = 0
+        #     elif quadrant == 2:
+        #         spatial_attention_mask[:, :self.max_seq_len, self.max_seq_len:self.max_seq_len+ocr_obj_num, :] = 0
+        #     elif quadrant == 4:
+        #         spatial_attention_mask[:, self.max_seq_len:self.max_seq_len+ocr_obj_num, :self.max_seq_len, :] = 0
+        #     else:
+        #         raise ValueError
 
         spatial_attention_mask = (1.0 - spatial_attention_mask) * -10000.0
         spatial_attention_mask = spatial_attention_mask.permute((0, 3, 1, 2))

@@ -317,6 +317,9 @@ class TextVQADataset(Dataset):
         # In the first iteration expand all the spatial relation matrices
         if not isinstance(entry["spatial_adj_matrix"], torch.Tensor):
             entry["spatial_loss_mask"] = torch.from_numpy((entry["spatial_adj_matrix"] != 0).astype(np.float))
+            entry["spatial_ocr_relations"] = torch.from_numpy(
+                entry["spatial_adj_matrix"][-self.max_ocr_num:, -self.max_ocr_num:].astype(np.float)
+            )
             # label_num = 12 classifies self-relationship as label=12
             entry["spatial_adj_matrix"] = torch_broadcast_adj_matrix(
                 torch.from_numpy(entry["spatial_adj_matrix"]),
@@ -326,6 +329,7 @@ class TextVQADataset(Dataset):
             try:
                 assert len(entry["spatial_adj_matrix"].shape) == 3
                 assert "spatial_loss_mask" in entry
+                assert "spatial_ocr_relations" in entry
             except:
                 import pdb
                 pdb.set_trace()

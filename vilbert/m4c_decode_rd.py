@@ -168,14 +168,15 @@ class M4C(nn.Module):
 
     def _build_output(self):
         # dynamic OCR-copying scores with pointer network
-        self.ocr_ptr_net = OcrPtrNet(hidden_size=self.mmt_config.hidden_size, query_key_size=self.mmt_config.ptr_query_size)
+        self.ocr_ptr_net = OcrPtrNet(hidden_size=self.mmt_config.hidden_size,
+                                     query_key_size=self.mmt_config.ptr_query_size)
 
         if registry.vocab_type == "5k":
-            num_outputs = 5000
+            self.num_outputs = 5000
         else:
-            num_outputs = 3998
+            self.num_outputs = 3998
 
-        self.classifier = nn.Linear(self.mmt_config.hidden_size, num_outputs)
+        self.classifier = nn.Linear(self.mmt_config.hidden_size, self.num_outputs)
         # fixed answer vocabulary scores
         # num_choices = registry.get(self._datasets[0] + "_num_final_outputs")
         # # remove the OCR copying dimensions in LoRRA's classifier output
@@ -202,7 +203,6 @@ class M4C(nn.Module):
         # import pdb
         # pdb.set_trace()
         # fwd_results holds intermediate forward pass results
-        # TODO possibly replace it with another sample list
         # self._forward_txt_encoding(batch_dict)
         self._forward_obj_encoding(batch_dict)
         self._forward_ocr_encoding(batch_dict)
@@ -210,9 +210,10 @@ class M4C(nn.Module):
         if self.use_aux_heads:
             self._forward_aux(batch_dict)
 
-        results_dict={
+        results_dict = {
             "textvqa_scores": batch_dict["scores"],
-            "spatial_scores": None if not self.use_aux_heads else batch_dict["spatial_head_out"]
+            "spatial_scores": None if not self.use_aux_heads else batch_dict["spatial_head_out"],
+            "pred_answer_rd": batch_dict["pred_answer_rd"] if "pred_answer_rd" in batch_dict else None
         }
 
         return results_dict
@@ -237,11 +238,11 @@ class M4C(nn.Module):
         # remove bbox-area
         obj_bbox = batch_dict["pad_obj_bboxes"][:, :, :-1]
         obj_mmt_in = (
-            self.obj_feat_layer_norm(
-                self.linear_obj_feat_to_mmt_in(obj_feat)
-            ) + self.obj_bbox_layer_norm(
-                self.linear_obj_bbox_to_mmt_in(obj_bbox)
-            )
+                self.obj_feat_layer_norm(
+                    self.linear_obj_feat_to_mmt_in(obj_feat)
+                ) + self.obj_bbox_layer_norm(
+            self.linear_obj_bbox_to_mmt_in(obj_bbox)
+        )
         )
         obj_mmt_in = self.obj_drop(obj_mmt_in)
         batch_dict['obj_mmt_in'] = obj_mmt_in
@@ -286,11 +287,11 @@ class M4C(nn.Module):
         # remove area
         ocr_bbox = batch_dict["pad_ocr_bboxes"][:, :, :-1]
         ocr_mmt_in = (
-            self.ocr_feat_layer_norm(
-                self.linear_ocr_feat_to_mmt_in(ocr_feat)
-            ) + self.ocr_bbox_layer_norm(
-                self.linear_ocr_bbox_to_mmt_in(ocr_bbox)
-            )
+                self.ocr_feat_layer_norm(
+                    self.linear_ocr_feat_to_mmt_in(ocr_feat)
+                ) + self.ocr_bbox_layer_norm(
+            self.linear_ocr_bbox_to_mmt_in(ocr_bbox)
+        )
         )
         ocr_mmt_in = self.ocr_drop(ocr_mmt_in)
         batch_dict['ocr_mmt_in'] = ocr_mmt_in
@@ -340,17 +341,63 @@ class M4C(nn.Module):
                 self._forward_mmt(batch_dict)
                 self._forward_output(batch_dict)
 
-
                 # find the highest scoring output (either a fixed vocab
                 # or an OCR), and add it to prev_inds for auto-regressive
                 # decoding
                 argmax_inds = batch_dict["scores"].argmax(dim=-1)
 
-                # Todo: Logic for right-down decoding
-                import pdb
-                pdb.set_trace()
+                # quadrant-masking logic
+                if t >= 1:
+                    batch_prev_preds = argmax_inds[:, t - 1]
+                    batch_curr_scores_top_k, batch_curr_inds_top_k = torch.topk(batch_dict["scores"][:, t], 10)
 
-                batch_dict['train_prev_inds'][:, 1:] = argmax_inds[:, :-1]
+                    # Get relation types amongst all ocr-tokens (1-12)
+                    batch_relation_matrix = batch_dict["spatial_ocr_relations"]
+
+                    # iterate over each sample, and find relations between prev-index and current top-10 preds
+                    for sample_idx, (prev_idx, curr_scores_top_k, curr_inds_top_k, relation_matrix) in \
+                            enumerate(zip(batch_prev_preds, batch_curr_scores_top_k, batch_curr_inds_top_k,
+                                          batch_relation_matrix)):
+
+                        # skip if last or current top-word is from vocab
+                        if prev_idx < self.num_outputs or curr_inds_top_k[0] < self.num_outputs:
+                            continue
+                        else:
+                            prev_ocr_idx = prev_idx - self.num_outputs
+                            curr_inds_top_k = curr_inds_top_k - self.num_outputs
+                            curr_inds_mask = (curr_inds_top_k >= 0).int()
+
+                            # mask vocabulary-inds
+                            curr_ocr_inds_top_k = curr_inds_top_k * curr_inds_mask
+                            curr_ocr_inds_top_k = curr_ocr_inds_top_k.long().abs()
+
+                            # set prev-ocr-idx token at origin
+                            col_prev_idx_relns = relation_matrix[:, prev_ocr_idx]
+
+                            relations = torch.index_select(col_prev_idx_relns, dim=0, index=curr_ocr_inds_top_k)
+
+                            # remove relations of all vocab-words (masked indices)
+                            relations = relations * curr_inds_mask
+
+                            for idx, (rel, ocr_ind) in enumerate(zip(relations, curr_inds_top_k)):
+                                if rel in [3, 4, 5, 6, 11, 0]:
+                                    # assert ocr_ind >= 0
+                                    argmax_inds[sample_idx, t] = ocr_ind + self.num_outputs
+                                    # when we are not picking the most probable one
+                                    if idx != 0:
+                                        print("Replaced")
+                                    break
+
+                # skip last-step
+                if t+1 < dec_step_num:
+                    batch_dict['train_prev_inds'][:, t+1] = argmax_inds[:, t]
+
+            batch_dict["pred_answer_rd"] = torch.zeros_like(batch_dict["train_prev_inds"])
+            batch_dict["pred_answer_rd"][:, :-1] = batch_dict["train_prev_inds"][:, 1:]
+            assert t == 11
+            batch_dict["pred_answer_rd"][:, -1] = argmax_inds[:, t]
+
+
 
     def _forward_aux(self, batch_dict):
         txt_max_num = batch_dict["question_mask"].size(-1)

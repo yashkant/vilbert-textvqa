@@ -570,6 +570,8 @@ def main():
     # This validation score is used for model-saving.
     best_val_score = 0
 
+    # Todo: EVALUATION LOOP (Currently we perform one forward-step and then evaluate)
+
     # TRAINING LOOP
     for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
         model.train()

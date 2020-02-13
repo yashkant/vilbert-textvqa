@@ -80,6 +80,7 @@ class M4CandSpatialLoss(nn.Module):
         # spatial loss
         assert "spatial_scores" in batch_dict
         spa_loss_mask = batch_dict["spatial_loss_mask"].float()
+        # Todo: When all the relations are 0, argmax will return an arbitrary number between 0-11 (check it is masked)
         spa_targets = batch_dict["spatial_adj_matrix"].argmax(dim=-1).view(-1)
         spa_scores = batch_dict["spatial_scores"].view(-1, 12)
         spa_losses = F.cross_entropy(spa_scores, spa_targets, reduction="none")
