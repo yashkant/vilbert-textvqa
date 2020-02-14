@@ -9,5 +9,9 @@
   "finetune_ocr_obj": false,
   "use_phoc_fasttext": true,
   "normalize": true,
-  "lr_scale_mmt": 1.0
+  "lr_scale_mmt": 1.0,
+  "num_decoding_steps": 12,
+  "max_obj_num": 100,
+  "max_ocr_num": 50,
+  "max_seq_length": 20
 }
