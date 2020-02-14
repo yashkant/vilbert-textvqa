@@ -1,8 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import functools
 import math
-from collections import Counter
-
 import torch
 import logging
 from torch import nn
@@ -432,14 +430,14 @@ class SpatialBertSelfAttention(nn.Module):
     Todo: Keep 768 and build zero-mask for 12th head (not needed with identity relation)
     """
 
-    def __init__(self, config, use_implicit=False):
+    def __init__(self, config):
         super(SpatialBertSelfAttention, self).__init__()
         assert hasattr(config, "num_spatial_relations")
 
         self.num_attention_heads = config.num_spatial_relations
         self.num_spatial_relations = config.num_spatial_relations
 
-        if hasattr(config, "num_implicit_relations") and use_implicit:
+        if hasattr(config, "num_implicit_relations"):
             self.num_attention_heads += config.num_implicit_relations
             self.num_implicit_relations = config.num_implicit_relations
 
@@ -487,17 +485,7 @@ class SpatialBertSelfAttention(nn.Module):
         # build attention-mask from spatial_adj_matrix
         batch_size, ocr_obj_num, _, num_spatial_heads = spatial_adj_matrix.shape
         num_features = hidden_states.size(1)
-
-        # # basically mask everything
-        # if -1 in self.mask_quadrants:
-        # spatial_attention_mask = attention_mask.new_zeros((batch_size, num_features, num_features, num_spatial_heads))
-        # else:
-        # spatial_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, num_spatial_heads))
-
-        # Removing masking all quadrants
         spatial_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, num_spatial_heads))
-
-        # Add explicit mask
         spatial_attention_mask[:, self.max_seq_len:self.max_seq_len + ocr_obj_num,
         self.max_seq_len:self.max_seq_len + ocr_obj_num, :] = spatial_adj_matrix
 
@@ -509,20 +497,14 @@ class SpatialBertSelfAttention(nn.Module):
 
         assert spatial_attention_mask.shape == (batch_size, num_features, num_features, self.num_attention_heads)
 
-        # Mask attention-quadrants (spatial relations only)
+        # Mask attention-quadrants
         for quadrant in self.mask_quadrants:
             if quadrant == 1:
-                spatial_attention_mask[:, :self.max_seq_len, :self.max_seq_len, :self.num_spatial_relations] = 0
+                spatial_attention_mask[:, :self.max_seq_len, :self.max_seq_len, :] = 0
             elif quadrant == 2:
-                spatial_attention_mask[:, :self.max_seq_len, self.max_seq_len:self.max_seq_len+ocr_obj_num, :self.num_spatial_relations] = 0
+                spatial_attention_mask[:, :self.max_seq_len, self.max_seq_len:self.max_seq_len+ocr_obj_num, :] = 0
             elif quadrant == 4:
-                spatial_attention_mask[:, self.max_seq_len:self.max_seq_len+ocr_obj_num, :self.max_seq_len, :self.num_spatial_relations] = 0
-            elif quadrant == 7:
-                spatial_attention_mask[:, self.max_seq_len+ocr_obj_num:, :self.max_seq_len, :self.num_spatial_relations] = 0
-            elif quadrant == 8:
-                spatial_attention_mask[:, self.max_seq_len+ocr_obj_num:, self.max_seq_len:self.max_seq_len+ocr_obj_num, :self.num_spatial_relations] = 0
-            elif quadrant == 9:
-                spatial_attention_mask[:, self.max_seq_len+ocr_obj_num:, self.max_seq_len+ocr_obj_num:, :self.num_spatial_relations] = 0
+                spatial_attention_mask[:, self.max_seq_len:self.max_seq_len+ocr_obj_num, :self.max_seq_len, :] = 0
             else:
                 raise ValueError
 
@@ -541,7 +523,7 @@ class SpatialBertSelfAttention(nn.Module):
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
 
-        # Prevent imbalanced masking
+        # Prevent unbalanced masking
         combined_mask = torch.min(attention_mask, spatial_attention_mask)
         assert len(torch.unique(combined_mask)) == 2
 
@@ -577,9 +559,9 @@ class SpatialBertSelfAttention(nn.Module):
 
 
 class SpatialBertAttention(nn.Module):
-    def __init__(self, config, use_implicit=False):
+    def __init__(self, config):
         super(SpatialBertAttention, self).__init__()
-        self.self = SpatialBertSelfAttention(config, use_implicit)
+        self.self = SpatialBertSelfAttention(config)
         from pytorch_transformers.modeling_bert import BertSelfOutput
         self.output = BertSelfOutput(config)
         self.pruned_heads = set()
@@ -615,10 +597,10 @@ class SpatialBertAttention(nn.Module):
 
 
 class SpatialBertLayer(nn.Module):
-    def __init__(self, config, use_implicit=False):
+    def __init__(self, config):
         super(SpatialBertLayer, self).__init__()
         from pytorch_transformers.modeling_bert import BertIntermediate, BertOutput
-        self.attention = SpatialBertAttention(config, use_implicit)
+        self.attention = SpatialBertAttention(config)
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
 
@@ -640,95 +622,41 @@ class BertSpatialEncoder(nn.Module):
         self.output_hidden_states = config.output_hidden_states
         from pytorch_transformers.modeling_bert import BertLayer
 
+        logger.info(f"Num Spatial Layers: {config.num_spatial_layers}")
+        logger.info(f"Num Normal Layers: {config.num_hidden_layers}")
 
-        # backward compatibility
-        if config.layer_type_list is None:
-            logger.info("layer_type_list not passed, generating it!")
-            self.layer_type_list = ["n"]*config.num_hidden_layers
-
-            if hasattr(config, "num_implicit_relations") and config.num_implicit_relations != 0:
-                spatial_type = ["i"]
-            else:
-                spatial_type = ["s"]
-
-            if config.spatial_type == "bottom":
-                self.layer_type_list = spatial_type*config.num_spatial_layers + self.layer_type_list
-            if config.spatial_type == "top":
-                self.layer_type_list = self.layer_type_list + spatial_type*config.num_spatial_layers
-        else:
-            self.layer_type_list = config.layer_type_list
-
-        logger.info(f"Layers type list is: {self.layer_type_list}")
-        counter = Counter(self.layer_type_list)
-
-        self.num_spatial_layers = counter["s"]
-        self.num_normal_layers = counter["n"]
-        self.num_implicit_layers = counter["i"]
-
-        logger.info(f"Num Spatial Layers: {self.num_spatial_layers}")
-        logger.info(f"Num Normal Layers: {self.num_normal_layers}")
-        logger.info(f"Num Implicit Layers: {self.num_implicit_layers}")
-
-
-        self.normal_layers = nn.ModuleList([BertLayer(config) for _ in range(self.num_normal_layers)])
-        self.spatial_layers = nn.ModuleList([SpatialBertLayer(config) for _ in range(self.num_spatial_layers)])
-        self.implicit_layers = nn.ModuleList([SpatialBertLayer(config, True) for _ in range(self.num_implicit_layers)])
+        self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
+        self.spatial_layer = nn.ModuleList([SpatialBertLayer(config) for _ in range(config.num_spatial_layers)])
+        self.spatial_type = config.spatial_type
 
     def forward(self, hidden_states, attention_mask, spatial_adj_matrix, head_mask=None):
         all_hidden_states = ()
         all_attentions = ()
 
-        normal_iter = iter(self.normal_layers)
-        spatial_iter = iter(self.spatial_layers)
-        implicit_iter = iter(self.implicit_layers)
+        # re-arrange spatial-layers if needed
+        layers = [("normal", self.layer), ("spatial", self.spatial_layer)]
+        if self.spatial_type == "bottom":
+            layers = [layers[1], layers[0]]
+        else:
+            assert self.spatial_type == "top"
 
-        for layer_type in self.layer_type_list:
-            if self.output_hidden_states:
-                all_hidden_states = all_hidden_states + (hidden_states,)
-            if layer_type == "n":
-                layer_module = next(normal_iter)
-                layer_outputs = layer_module(hidden_states, attention_mask)
-            elif layer_type == "s":
-                layer_module = next(spatial_iter)
-                layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
-            elif layer_type == "i":
-                layer_module = next(implicit_iter)
-                layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
-            else:
-                raise ValueError
+        # Run through layers
+        for layer_type, layers_set in layers:
+            for i, layer_module in enumerate(layers_set):
+                if self.output_hidden_states:
+                    all_hidden_states = all_hidden_states + (hidden_states,)
 
-            hidden_states = layer_outputs[0]
-            if self.output_attentions:
-                all_attentions = all_attentions + (layer_outputs[1],)
+                if layer_type == "normal":
+                    layer_outputs = layer_module(hidden_states, attention_mask, head_mask[i])
+                elif layer_type == "spatial":
+                    layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
+                else:
+                    raise ValueError
 
-        assert next(normal_iter, None) is None
-        assert next(spatial_iter, None) is None
-        assert next(implicit_iter, None) is None
+                hidden_states = layer_outputs[0]
 
-        # # re-arrange spatial-layers if needed
-        # layers = [("normal", self.layer), ("spatial", self.spatial_layer)]
-        # if self.spatial_type == "bottom":
-        #     layers = [layers[1], layers[0]]
-        # else:
-        #     assert self.spatial_type == "top"
-        #
-        # # Run through layers
-        # for layer_type, layers_set in layers:
-        #     for i, layer_module in enumerate(layers_set):
-        #         if self.output_hidden_states:
-        #             all_hidden_states = all_hidden_states + (hidden_states,)
-        #
-        #         if layer_type == "normal":
-        #             layer_outputs = layer_module(hidden_states, attention_mask, head_mask[i])
-        #         elif layer_type == "spatial":
-        #             layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
-        #         else:
-        #             raise ValueError
-        #
-        #         hidden_states = layer_outputs[0]
-        #
-        #         if self.output_attentions:
-        #             all_attentions = all_attentions + (layer_outputs[1],)
+                if self.output_attentions:
+                    all_attentions = all_attentions + (layer_outputs[1],)
 
         # Add last layer
         if self.output_hidden_states:
