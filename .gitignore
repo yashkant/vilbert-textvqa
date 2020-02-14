@@ -47,7 +47,4 @@ checkpoints/
 # IPython Notebook
 .ipynb_checkpoints
 
-# virtualenv
-venv/
-ENV/
-datasets/
+
