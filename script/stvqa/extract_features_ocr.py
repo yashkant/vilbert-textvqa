@@ -22,12 +22,27 @@ from maskrcnn_benchmark.utils.model_serialization import load_state_dict
 from tqdm import tqdm
 
 
-image_path_pattern = {
-    'train': '/srv/share/ykant3/pythia/dataset_images/train_images/%s.jpg',
-    'val': '/srv/share/ykant3/pythia/dataset_images/train_images/%s.jpg',
-    'test': '/srv/share/ykant3/pythia/dataset_images/test_images/%s.jpg',
-}
+IMDB_SCENETEXT_RESPONSE_FIXED = [
+    "/srv/share/ykant3/scene-text/train/imdb/train_task_response_meta_fixed.npy",
+    "/srv/share/ykant3/scene-text/test/imdb/test_task1_response_meta_fixed.npy",
+    "/srv/share/ykant3/scene-text/test/imdb/test_task2_response_meta_fixed.npy",
+    "/srv/share/ykant3/scene-text/test/imdb/test_task3_response_meta_fixed.npy",
+]
 
+OCR_FEATURES_SCENETEXT = [
+    "/srv/share/ykant3/scene-text/features/ocr/train/train_task/",
+    "/srv/share/ykant3/scene-text/features/ocr/test/test_task1/",
+    "/srv/share/ykant3/scene-text/features/ocr/test/test_task2/",
+    "/srv/share/ykant3/scene-text/features/ocr/test/test_task3/"
+]
+
+# image_folders
+IMAGES_SCENETEXT = [
+    "/srv/share/ykant3/scene-text/train/train_task/",
+    "/srv/share/ykant3/scene-text/test/test_task1/",
+    "/srv/share/ykant3/scene-text/test/test_task2/",
+    "/srv/share/ykant3/scene-text/test/test_task3/"
+]
 
 def preprocess_ocr_tokens(info, prefix, suffix):
     """CRUX: given an entry return list of bboxes [x1,y1,x2,y2] and tokens"""
@@ -57,15 +72,13 @@ class FeatureExtractor:
         self.args = self.get_parser().parse_args()
         self.detection_model = self._build_detection_model()
 
-        os.makedirs(self.args.output_folder, exist_ok=True)
-
     def get_parser(self):
         parser = argparse.ArgumentParser()
         parser.add_argument(
-            "--model_file", default="../data/detectron_model.pth", type=str, help="Detectron model file"
+            "--model_file", default="../../data/detectron_model.pth", type=str, help="Detectron model file"
         )
         parser.add_argument(
-            "--config_file", default="../data/detectron_config.yaml", type=str, help="Detectron config file"
+            "--config_file", default="../../data/detectron_config.yaml", type=str, help="Detectron config file"
         )
         parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
         parser.add_argument(
@@ -74,9 +87,9 @@ class FeatureExtractor:
             default=100,
             help="Number of features to extract.",
         )
-        parser.add_argument(
-            "--output_folder", type=str, default="/srv/share/ykant3/vilbert-mt/features/ocr/train/", help="Output folder"
-        )
+        # parser.add_argument(
+        #     "--output_folder", type=str, default="/srv/share/ykant3/vilbert-mt/features/ocr/train/", help="Output folder"
+        # )
 
         # parser.add_argument(
         #     "--output_folder", type=str, default="/srv/share/ykant3/vilbert-mt/features/ocr/test/", help="Output folder"
@@ -92,10 +105,10 @@ class FeatureExtractor:
         #                     default="/nethome/ykant3/pythia/data/imdb/textvqa_0.5/imdb_google_det_bbox_textvqa_multidec_sa_info_ascii_train.npy",
         #                     help="Image directory or file")
 
-        parser.add_argument("--imdb_file",
-                            type=str,
-                            default="/nethome/ykant3/pythia/data/imdb/textvqa_0.5/imdb_google_det_bbox_textvqa_multidec_sa_info_ascii_val.npy",
-                            help="Image directory or file")
+        # parser.add_argument("--imdb_file",
+        #                     type=str,
+        #                     default="/nethome/ykant3/pythia/data/imdb/textvqa_0.5/imdb_google_det_bbox_textvqa_multidec_sa_info_ascii_val.npy",
+        #                     help="Image directory or file")
 
         parser.add_argument(
             "--feature_name",
@@ -208,14 +221,13 @@ class FeatureExtractor:
         for i in range(0, len(array), chunk_size):
             yield array[i : i + chunk_size]
 
-    def extract_features(self):
-        imdb_data = np.load(self.args.imdb_file, allow_pickle=True)
-        split = imdb_data[0]["dataset_type"]
-        image_path_holder = image_path_pattern[split]
+    def extract_features(self, imdb_data, save_dir, image_dir):
+        # split = imdb_data[0]["dataset_type"]
         prefix, suffix = "google_", "_filtered"
-
         for instance in tqdm(imdb_data[1:]):
-            image_path = image_path_holder % instance["image_id"]
+            image_path = instance["image_path"]
+            image_w, image_h = Image.open(image_path).size
+            instance["image_width"], instance["image_height"] = image_w, image_h
             assert os.path.exists(image_path)
             ocr_boxes, ocr_tokens = preprocess_ocr_tokens(instance, prefix, suffix)
             try:
@@ -225,25 +237,31 @@ class FeatureExtractor:
                     extracted_feat = np.zeros((0, 2048), np.float32)
 
                 assert len(extracted_feat) == len(ocr_boxes)
-
-                # image_height, image_width
                 save_data = {
-                    "image_id": instance["image_id"],
                     "ocr_boxes": ocr_boxes,
                     "ocr_tokens": ocr_tokens,
                     "features": extracted_feat
                 }
+                save_path = image_path.replace(image_dir, save_dir).split(".")[0]
+                save_path = save_path + ".npy"
 
-                out_path = os.path.join(self.args.output_folder, "{}.npy".format(instance["image_id"]))
+                _save_dir = os.path.split(save_path)[0]
+                if not os.path.exists(_save_dir):
+                    os.makedirs(_save_dir)
+                    print(f"Creating Dir: {_save_dir}")
 
                 np.save(
-                    out_path,
+                    save_path,
                     save_data
                 )
             except BaseException:
-                print("Couldn't extract from: ", instance["image_id"])
+                print("Couldn't extract from: ", instance["image_path"])
 
 
 if __name__ == "__main__":
     feature_extractor = FeatureExtractor()
-    feature_extractor.extract_features()
+    for imdb_file, save_dir, image_dir in zip(IMDB_SCENETEXT_RESPONSE_FIXED, OCR_FEATURES_SCENETEXT, IMAGES_SCENETEXT):
+        print(f"Reading from: {imdb_file} \nSaving to: {save_dir}")
+        imdb_data = np.load(imdb_file, allow_pickle=True)
+        feature_extractor.extract_features(imdb_data, save_dir, image_dir)
+        np.save(imdb_file, imdb_data)

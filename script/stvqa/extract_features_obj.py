@@ -22,6 +22,22 @@ from maskrcnn_benchmark.utils.model_serialization import load_state_dict
 from tqdm import tqdm
 
 
+# image_folders
+IMAGES_SCENETEXT = [
+    "/srv/share/ykant3/scene-text/train/train_task/",
+    "/srv/share/ykant3/scene-text/test/test_task1/",
+    "/srv/share/ykant3/scene-text/test/test_task2/",
+    "/srv/share/ykant3/scene-text/test/test_task3/"
+]
+
+OBJ_FEATURES_SCENETEXT = [
+    "/srv/share/ykant3/scene-text/features/obj/train/train_task/",
+    "/srv/share/ykant3/scene-text/features/obj/test/test_task1/",
+    "/srv/share/ykant3/scene-text/features/obj/test/test_task2/",
+    "/srv/share/ykant3/scene-text/features/obj/test/test_task3/"
+]
+
+
 class FeatureExtractor:
     MAX_SIZE = 1333
     MIN_SIZE = 800
@@ -35,10 +51,10 @@ class FeatureExtractor:
     def get_parser(self):
         parser = argparse.ArgumentParser()
         parser.add_argument(
-            "--model_file", default="../data/detectron_model.pth", type=str, help="Detectron model file"
+            "--model_file", default="../../data/detectron_model.pth", type=str, help="Detectron model file"
         )
         parser.add_argument(
-            "--config_file", default="../data/detectron_config.yaml", type=str, help="Detectron config file"
+            "--config_file", default="../../data/detectron_config.yaml", type=str, help="Detectron config file"
         )
         parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
         parser.add_argument(
@@ -51,7 +67,9 @@ class FeatureExtractor:
             "--output_folder", type=str, default="/srv/share/ykant3/", help="Output folder"
         )
 
-        parser.add_argument("--image_dir", type=str, default="/srv/share/ykant3/pythia/dataset_images/test_images/", help="Image directory or file")
+        parser.add_argument(
+            "--image_dir", type=str, default=None
+        )
 
         parser.add_argument(
             "--feature_name",
@@ -204,37 +222,39 @@ class FeatureExtractor:
 
         return feat_list
 
-    def _chunks(self, array, chunk_size):
-        for i in range(0, len(array), chunk_size):
-            yield array[i : i + chunk_size]
-
-    def _save_feature(self, file_name, feature, info):
-        file_base_name = os.path.basename(file_name)
-        file_base_name = file_base_name.split(".")[0]
-        info["image_id"] = file_base_name
-        info["features"] = feature.cpu().numpy()
+    def _save_feature(self, save_path, feature, info):
+        file_base_name = save_path.split(".")[0]
+        info["image_id"] = os.path.split(file_base_name)[-1]
         file_base_name = file_base_name + ".npy"
+        info["features"] = feature.cpu().numpy()
+        np.save(file_base_name, info)
 
-        np.save(os.path.join(self.args.output_folder, file_base_name), info)
+    def extract_features(self, image_dir, save_dir):
 
-    def extract_features(self):
-        image_dir = self.args.image_dir
-        if os.path.isfile(image_dir):
-            features, infos = self.get_detectron_features([image_dir])
-            self._save_feature(image_dir, features[0], infos[0])
-        else:
-            files = glob.glob(os.path.join(image_dir, "*"))
-            assert os.path.exists(image_dir)
-            assert len(files) > 0
-            for chunk in tqdm(self._chunks(files, self.args.batch_size), total=len(files)):
-                try:
-                    features, infos = self.get_detectron_features(chunk)
-                    for idx, file_name in enumerate(chunk):
-                        self._save_feature(file_name, features[idx], infos[idx])
-                except BaseException:
-                    print("Couldn't extract from: ", chunk)
+        # paths to all the items image_fol
+        abs_paths = glob.glob(image_dir + "/**", recursive=True)
+        files = [path for path in abs_paths if path.endswith((".jpg", ".JPEG"))]
+
+        assert os.path.exists(image_dir)
+        assert len(files) > 0
+        for file in tqdm(files):
+            try:
+                features, infos = self.get_detectron_features([file])
+                save_path = file.replace(image_dir, save_dir)
+                _save_dir = os.path.split(save_path)[0]
+                if not os.path.exists(_save_dir):
+                    os.makedirs(_save_dir)
+                    print(f"Creating Dir: {_save_dir}")
+                self._save_feature(save_path, features[0], infos[0])
+            except BaseException:
+                print("Couldn't extract from: ", file)
 
 
 if __name__ == "__main__":
     feature_extractor = FeatureExtractor()
-    feature_extractor.extract_features()
+    IMAGES_SCENETEXT = IMAGES_SCENETEXT[1:]
+    OBJ_FEATURES_SCENETEXT = OBJ_FEATURES_SCENETEXT[1:]
+    # Todo: Store fc7 weights from here.
+    for image_dir, feature_dir in zip(IMAGES_SCENETEXT, OBJ_FEATURES_SCENETEXT):
+        print(f"Extracting from: {image_dir} \nSaving to: {feature_dir}")
+        feature_extractor.extract_features(image_dir, feature_dir)
