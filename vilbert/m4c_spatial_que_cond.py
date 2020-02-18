@@ -203,8 +203,6 @@ class M4C(nn.Module):
         self.spatial_classifier = nn.Linear(32, 12)
 
     def forward(self, batch_dict):
-        # import pdb
-        # pdb.set_trace()
         # fwd_results holds intermediate forward pass results
         # TODO possibly replace it with another sample list
         # self._forward_txt_encoding(batch_dict)
@@ -463,16 +461,6 @@ class SpatialBertSelfAttention(nn.Module):
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
 
-        if hasattr(config, "no_drop") and config.no_drop:
-            logger.info("not using dropout")
-            self.dropout = nn.Dropout(0.0)
-
-        self.use_bias = False
-        if hasattr(config, "use_bias") and config.use_bias:
-            self.use_bias = True
-            logger.info("using head biases")
-            self.biases = torch.nn.Embedding(1, config.hidden_size)
-
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
         x = x.view(*new_x_shape)
@@ -493,9 +481,16 @@ class SpatialBertSelfAttention(nn.Module):
         spatial_adj_matrix has 0s across the diagonal terms, attaching an identity matrix for this
 
         """
+
         # build attention-mask from spatial_adj_matrix
         batch_size, ocr_obj_num, _, num_spatial_heads = spatial_adj_matrix.shape
         num_features = hidden_states.size(1)
+
+        # # basically mask everything
+        # if -1 in self.mask_quadrants:
+        # spatial_attention_mask = attention_mask.new_zeros((batch_size, num_features, num_features, num_spatial_heads))
+        # else:
+        # spatial_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, num_spatial_heads))
 
         # Removing masking all quadrants
         spatial_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, num_spatial_heads))
@@ -544,7 +539,7 @@ class SpatialBertSelfAttention(nn.Module):
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
 
-        # Prevent imbalanced masking
+        # Prevent unbalanced masking
         combined_mask = torch.min(attention_mask, spatial_attention_mask)
         assert len(torch.unique(combined_mask)) == 2
 
@@ -574,9 +569,6 @@ class SpatialBertSelfAttention(nn.Module):
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
         context_layer = context_layer.view(*new_context_layer_shape)
-        
-        if self.use_bias:
-            context_layer = context_layer + self.biases(context_layer.new_zeros(1).long())
 
         outputs = (context_layer, attention_probs) if self.output_attentions else (context_layer,)
         return outputs
@@ -589,6 +581,18 @@ class SpatialBertAttention(nn.Module):
         from pytorch_transformers.modeling_bert import BertSelfOutput
         self.output = BertSelfOutput(config)
         self.pruned_heads = set()
+
+        if config.cond_type == "linear":
+            self.que_image_cond = nn.Linear(2*config.hidden_size, config.hidden_size)
+        if config.cond_type == "attend":
+            self.que_image_cond = nn.Linear(config.hidden_size, 12)
+        else:
+            assert config.cond_type == "mul"
+
+        logger.info(f"Conditioning type: {config.cond_type}")
+
+        # Add question-based conditioning
+        self.cond_type = config.cond_type
 
     def prune_heads(self, heads):
         if len(heads) == 0:
@@ -615,6 +619,18 @@ class SpatialBertAttention(nn.Module):
 
     def forward(self, input_tensor, attention_mask, spatial_adj_matrix, head_mask=None):
         self_outputs = self.self(input_tensor, attention_mask, spatial_adj_matrix, head_mask)
+
+        # Detach question-aggregate embedding from computation graph
+        question_aggregate = input_tensor[:, :1]
+        if self.cond_type == "mul":
+            input_tensor[:, 20:170, :] = input_tensor[:, 20:170, :] * question_aggregate
+        elif self.cond_type == "linear":
+            question_aggregate = question_aggregate.expand_as(input_tensor[:, 20:170, :])
+            input_tensor[:, 20:170, :] = self.que_image_cond(torch.cat([input_tensor[:, 20:170, :],  question_aggregate], dim=-1))
+        elif self.cond_type == "attend":
+            question_attention_weights = F.softmax(self.que_image_cond(question_aggregate), dim=-1).unsqueeze(-1).repeat((1,150,1,64))
+            self_outputs[0][:, 20:170, :] = (self_outputs[0][:, 20:170, :].clone())*question_attention_weights.view_as(self_outputs[0][:, 20:170, :])
+
         attention_output = self.output(self_outputs[0], input_tensor)
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
         return outputs

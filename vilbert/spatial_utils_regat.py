@@ -40,7 +40,7 @@ def bb_intersection_over_union(boxA, boxB):
     return iou
 
 
-def build_graph_using_normalized_boxes(bbox, label_num=11):
+def build_graph_using_normalized_boxes(bbox, label_num=11, distance_threshold=0.5):
     """ Build spatial graph
     Args:
         bbox: [num_boxes, 4]
@@ -98,7 +98,7 @@ def build_graph_using_normalized_boxes(bbox, label_num=11):
                     y_diff = center_y[i] - center_y[j]
                     x_diff = center_x[i] - center_x[j]
                     diag = math.sqrt((y_diff) ** 2 + (x_diff) ** 2)
-                    if diag < 0.5 * image_diag:
+                    if diag < distance_threshold * image_diag:
                         sin_ij = y_diff / diag
                         cos_ij = x_diff / diag
                         # first quadrant
@@ -117,7 +117,7 @@ def build_graph_using_normalized_boxes(bbox, label_num=11):
                         else:
                             label_i = 2 * math.pi - np.arccos(cos_ij)
                             label_j = label_i - math.pi
-                        # goes from [0-8] + 3 -> [4-11]
+                        # goes from [1-8] + 3 -> [4-11]
                         # if (adj_matrix[i, j] > 0):
                         adj_matrix[i, j] = int(np.ceil(label_i / (math.pi / 4))) + 3
                         adj_matrix[j, i] = int(np.ceil(label_j / (math.pi / 4))) + 3

@@ -813,7 +813,8 @@ class CopyProcessor(BaseProcessor):
 
 
 def SpatialProcessor(pad_obj_ocr_bboxes):
-    adj_matrix = build_graph_using_normalized_boxes(pad_obj_ocr_bboxes).astype(np.int8)
+    adj_matrix = build_graph_using_normalized_boxes(pad_obj_ocr_bboxes,
+                                                    distance_threshold=registry.distance_threshold).astype(np.int8)
     return adj_matrix
 
 

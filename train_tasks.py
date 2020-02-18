@@ -266,6 +266,9 @@ def main():
     elif model_type == "m4c_spatial":
         logger.info("Using M4C-Spatial model")
         from vilbert.m4c_spatial import BertConfig, M4C
+    elif model_type == "m4c_spatial_que_cond":
+        logger.info("Using M4C-Spatial Question Cond. model")
+        from vilbert.m4c_spatial_que_cond import BertConfig, M4C
     else:
         raise ValueError
 
@@ -415,11 +418,20 @@ def main():
                     default_gpu=default_gpu,
                 )
             else:
-                if model_type == "m4c_spatial":
+                if "m4c_spatial" in model_type:
                     assert "attention_mask_quadrants" in task_cfg["TASK19"]
                     # assert "spatial_type" in task_cfg["TASK19"]
                     # Transfer keys from config to BertConfig
-                    transfer_keys = ["attention_mask_quadrants", "hidden_size", "num_implicit_relations", "spatial_type", "num_hidden_layers", "num_spatial_layers", "layer_type_list"]
+                    transfer_keys = ["attention_mask_quadrants",
+                                     "hidden_size",
+                                     "num_implicit_relations",
+                                     "spatial_type",
+                                     "num_hidden_layers",
+                                     "num_spatial_layers",
+                                     "layer_type_list",
+                                     "cond_type",
+                                     "use_bias",
+                                     "no_drop"]
                 elif model_type == "m4c" or model_type == "m4c_rd":
                     # Transfer keys from config to BertConfig
                     transfer_keys = ["num_hidden_layers"]
@@ -759,5 +771,9 @@ def evaluate(
 
 
 if __name__ == "__main__":
-
-    main()
+    try:
+        main()
+    finally:
+        # don't let the session quit!
+        import os
+        os.system("watch -n 1 nvidia-smi")
