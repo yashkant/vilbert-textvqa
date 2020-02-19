@@ -37,7 +37,7 @@ def _load_dataset(dataroot, name, clean_datasets, debug):
         the splits, and return entries.
     """
 
-    if name == "train" or name == "val" or name == "test":
+    if name == "train" or name == "val" or name =="test":
         imdb_holder = "imdb_google_det_bbox_textvqa_multidec_sa_info_ascii_{}.npy"
         if name == "test":
             imdb_holder = "imdb_google_det_bbox_textvqa_info_{}.npy"
@@ -45,8 +45,8 @@ def _load_dataset(dataroot, name, clean_datasets, debug):
         if debug:
             imdb_holder = "debug_" + imdb_holder
 
-        imdb_path = os.path.join(dataroot, "imdb/textvqa_0.5/", imdb_holder.format(name))
-        logger.info(f"Loading IMDB for {    name}" if not debug else f"Loading IMDB for {name} in debug mode")
+        imdb_path = os.path.join(dataroot, "imdb/textvqa_0.5/",imdb_holder.format(name))
+        logger.info(f"Loading IMDB for {name}" if not debug else f"Loading IMDB for {name} in debug mode")
         imdb_data = ImageDatabase(imdb_path)
     else:
         assert False, "data split is not recognized."
@@ -74,21 +74,21 @@ def _load_dataset(dataroot, name, clean_datasets, debug):
 
 class TextVQADataset(Dataset):
     def __init__(
-            self,
-            task,
-            dataroot,
-            annotations_jsonpath,
-            split,
-            image_features_reader,
-            gt_image_features_reader,
-            tokenizer,
-            bert_model,
-            clean_datasets,
-            padding_index=0,
-            max_seq_length=16,
-            max_region_num=101,
-            processing_threads=32,
-            extra_args=None
+        self,
+        task,
+        dataroot,
+        annotations_jsonpath,
+        split,
+        image_features_reader,
+        gt_image_features_reader,
+        tokenizer,
+        bert_model,
+        clean_datasets,
+        padding_index=0,
+        max_seq_length=16,
+        max_region_num=101,
+        processing_threads=32,
+        extra_args=None
     ):
         """
         (YK): Builds self.entries by reading questions and answers and caches them.
@@ -333,16 +333,16 @@ class TextVQADataset(Dataset):
         # add object-features and bounding boxes
         obj_features, obj_num_boxes, obj_bboxes, _ = self.obj_features_reader[image_id]
         # remove avg-features
-        obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes - 1, obj_bboxes[1:]
-        pad_obj_features, pad_obj_mask, pad_obj_bboxes = self._pad_features(
+        obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes-1, obj_bboxes[1:]
+        pad_obj_features, pad_obj_mask, pad_obj_bboxes= self._pad_features(
             obj_features, obj_bboxes, obj_num_boxes, self.max_obj_num
         )
 
         # add ocr-features and bounding boxes
         ocr_features, ocr_num_boxes, ocr_bboxes, _ = self.ocr_features_reader[image_id]
         # remove avg-features
-        ocr_features, ocr_num_boxes, ocr_bboxes = ocr_features[1:], ocr_num_boxes - 1, ocr_bboxes[1:]
-        pad_ocr_features, pad_ocr_mask, pad_ocr_bboxes = self._pad_features(
+        ocr_features, ocr_num_boxes, ocr_bboxes = ocr_features[1:], ocr_num_boxes-1, ocr_bboxes[1:]
+        pad_ocr_features, pad_ocr_mask, pad_ocr_bboxes= self._pad_features(
             ocr_features, ocr_bboxes, ocr_num_boxes, self.max_ocr_num
         )
 
@@ -363,7 +363,7 @@ class TextVQADataset(Dataset):
         item["co_attention_mask"] = co_attention_mask
 
         # process answers (dynamic sampling)
-        cleaned_answers = entry["answers"]
+        cleaned_answers = [Processors.word_cleaner(word) for word in entry["answers"]]
         cleaned_ocr_tokens = entry["cleaned_ocr_tokens"]
         processed_answers = self.processors.answer_processor({
             "answers": cleaned_answers,
