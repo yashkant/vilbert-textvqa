@@ -173,27 +173,8 @@ class M4C(nn.Module):
     def _build_output(self):
         # dynamic OCR-copying scores with pointer network
         self.ocr_ptr_net = OcrPtrNet(hidden_size=self.mmt_config.hidden_size, query_key_size=self.mmt_config.ptr_query_size)
-
-        if registry.vocab_type == "5k":
-            num_outputs = 5000
-        else:
-            num_outputs = 3998
-
+        num_outputs = len(registry.answer_vocab)
         self.classifier = nn.Linear(self.mmt_config.hidden_size, num_outputs)
-        # fixed answer vocabulary scores
-        # num_choices = registry.get(self._datasets[0] + "_num_final_outputs")
-        # # remove the OCR copying dimensions in LoRRA's classifier output
-        # # (OCR copying will be handled separately)
-        # num_choices -= self.config.classifier.ocr_max_num
-        # self.classifier = ClassifierLayer(
-        #     self.config["classifier"]["type"],
-        #     in_dim=self.mmt_config.hidden_size,
-        #     out_dim=num_choices,
-        #     **self.config["classifier"]["params"]
-        # )
-        # self.answer_processor = registry.get(
-        #     self._datasets[0] + "_answer_processor"
-        # )
 
     def _build_aux_heads(self):
         from vilbert.vilbert import SimpleClassifier
@@ -675,12 +656,18 @@ class BertSpatialEncoder(nn.Module):
         logger.info(f"Num Normal Layers: {self.num_normal_layers}")
         logger.info(f"Num Implicit Layers: {self.num_implicit_layers}")
 
+        if config.mix_list is None:
+            self.mix_list = ["none"]*len(self.layer_type_list)
+        else:
+            self.mix_list = config.mix_list
+        assert len(self.mix_list) == len(self.layer_type_list)
+        logger.info(f"Mix list: {self.mix_list}")
 
         self.normal_layers = nn.ModuleList([BertLayer(config) for _ in range(self.num_normal_layers)])
         self.spatial_layers = nn.ModuleList([SpatialBertLayer(config) for _ in range(self.num_spatial_layers)])
         self.implicit_layers = nn.ModuleList([SpatialBertLayer(config, True) for _ in range(self.num_implicit_layers)])
 
-    def forward(self, hidden_states, attention_mask, spatial_adj_matrix, head_mask=None):
+    def forward(self, hidden_states, attention_mask, batch_dict, head_mask=None):
         all_hidden_states = ()
         all_attentions = ()
 
@@ -688,7 +675,7 @@ class BertSpatialEncoder(nn.Module):
         spatial_iter = iter(self.spatial_layers)
         implicit_iter = iter(self.implicit_layers)
 
-        for layer_type in self.layer_type_list:
+        for layer_type, mix_type in zip(self.layer_type_list, self.mix_list):
             if self.output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
             if layer_type == "n":
@@ -696,13 +683,24 @@ class BertSpatialEncoder(nn.Module):
                 layer_outputs = layer_module(hidden_states, attention_mask)
             elif layer_type == "s":
                 layer_module = next(spatial_iter)
+                if mix_type == "share3":
+                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_share3"]
+                elif mix_type == "quad4":
+                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_quad4"]
+                else:
+                    spatial_adj_matrix = batch_dict["spatial_adj_matrix"]
                 layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
             elif layer_type == "i":
                 layer_module = next(implicit_iter)
+                if mix_type == "share3":
+                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_share3"]
+                elif mix_type == "quad4":
+                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_quad4"]
+                else:
+                    spatial_adj_matrix = batch_dict["spatial_adj_matrix"]
                 layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
             else:
                 raise ValueError
-
             hidden_states = layer_outputs[0]
             if self.output_attentions:
                 all_attentions = all_attentions + (layer_outputs[1],)
@@ -818,7 +816,7 @@ class MMT(BertPreTrainedModel):
         encoder_outputs = self.encoder(
             encoder_inputs,
             extended_attention_mask,
-            batch_dict["spatial_adj_matrix"],
+            batch_dict,
             head_mask=head_mask
         )
 

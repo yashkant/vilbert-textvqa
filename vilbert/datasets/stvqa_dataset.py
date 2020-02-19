@@ -38,18 +38,18 @@ def _load_dataset(dataroot, name, clean_datasets, debug):
     """
 
     if name == "train" or name == "val" or name == "test":
-        imdb_holder = "imdb_google_det_bbox_textvqa_multidec_sa_info_ascii_{}.npy"
+        imdb_path = f"/srv/share/ykant3/scene-text/train/imdb/train_task_response_meta_fixed_processed_{name}.npy"
         if name == "test":
-            imdb_holder = "imdb_google_det_bbox_textvqa_info_{}.npy"
-
-        if debug:
-            imdb_holder = "debug_" + imdb_holder
-
-        imdb_path = os.path.join(dataroot, "imdb/textvqa_0.5/", imdb_holder.format(name))
+            imdb_path = "/srv/share/ykant3/scene-text/test/imdb/test_task3_response_meta_fixed_processed.npy"
+        # if debug:
+        #     imdb_holder = "debug_" + imdb_holder
         logger.info(f"Loading IMDB for {name}" if not debug else f"Loading IMDB for {name} in debug mode")
         imdb_data = ImageDatabase(imdb_path)
     else:
         assert False, "data split is not recognized."
+
+    import pdb
+    pdb.set_trace()
 
     # build entries with only the essential keys
     entries = []
@@ -72,7 +72,7 @@ def _load_dataset(dataroot, name, clean_datasets, debug):
     return entries, imdb_data.metadata
 
 
-class TextVQADataset(Dataset):
+class STVQADataset(Dataset):
     def __init__(
             self,
             task,
@@ -130,7 +130,7 @@ class TextVQADataset(Dataset):
             cache_path = os.path.join(
                 dataroot,
                 "cache",
-                task
+                "stvqa"
                 + "_"
                 + split
                 + "_"
@@ -144,7 +144,7 @@ class TextVQADataset(Dataset):
             cache_path = os.path.join(
                 dataroot,
                 "cache",
-                task + "_" + split + "_" + str(max_seq_length) + clean_train + f"_vocab_type{self.vocab_type}"
+                "stvqa" + "_" + split + "_" + str(max_seq_length) + clean_train + f"_vocab_type{self.vocab_type}"
                 + f"_dynamic_{self.dynamic_sampling}" + ".pkl",
             )
         logger.info(f"Cache Name:  {cache_path}")

@@ -23,6 +23,7 @@ import sys
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
+from tools.registry import registry
 
 from vilbert.task_utils import (
     LoadDatasets,
@@ -597,10 +598,21 @@ def main():
             first_task = True
             for task_id in task_ids:
                 is_forward = True
-                # if (not task_stop_controller[task_id].in_stop) or (
-                #     iterId % args.train_iter_gap == 0
-                # ):
-                #     is_forward = True
+                if iterId >= task_cfg["TASK19"]["textvqa_loss_start"]:
+                    registry.spatial_loss_weight = 1.0
+                else:
+                    registry.textvqa_loss_weight = 0.0
+
+                if iterId < task_cfg["TASK19"]["aux_loss_end"]:
+                    if task_cfg["TASK19"]["aux_loss_type"] == "step":
+                        registry.spatial_loss_weight = 1.0
+                    elif task_cfg["TASK19"]["aux_loss_type"] == "linear_decay":
+                        registry.spatial_loss_weight = 1.0 - float(iterId/task_cfg["TASK19"]["aux_loss_end"])
+                    else:
+                        raise ValueError
+                else:
+                    registry.spatial_loss_weight = 0.0
+
 
                 if is_forward:
                     loss, score = ForwardModelsTrain(

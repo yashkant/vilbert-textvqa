@@ -79,6 +79,8 @@ class M4CandSpatialLoss(nn.Module):
 
         # spatial loss
         assert "spatial_scores" in batch_dict
+        assert "spatial_loss_weight" in registry
+        assert "textvqa_loss_weight" in registry
         spa_loss_mask = batch_dict["spatial_loss_mask"].float()
         # Todo: When all the relations are 0, argmax will return an arbitrary number between 0-11 (check it is masked)
         spa_targets = batch_dict["spatial_adj_matrix"].argmax(dim=-1).view(-1)
@@ -88,12 +90,14 @@ class M4CandSpatialLoss(nn.Module):
         spa_losses *= spa_loss_mask
         spa_count = torch.max(torch.sum(spa_loss_mask), self.one.to(spa_losses.device))
         spa_loss = torch.sum(spa_losses) / spa_count
-        total_loss = loss + spa_loss
+        total_loss = loss*(registry["textvqa_loss_weight"]) + spa_loss*(registry["spatial_loss_weight"])
 
         if self.print_count % 20 == 0:
             round_print = lambda x: round(float(x), 4)
             logger.info(f"Spatial Loss: {round_print(spa_loss)}, "
                         f"TextVQA Loss: {round_print(loss)}, "
+                        f"Spatial Loss weight: {round_print(batch_dict['spatial_loss_weight'])}, "
+                        f"TextVQA Loss weight: {round_print(batch_dict['textvqa_loss_weight'])}, "
                         f"Total Loss: {round_print(total_loss)}")
 
         return total_loss
@@ -211,101 +215,16 @@ MetricsMap = {
 }
 
 
-def ForwardModelsVal(args, task_cfg, device, task_id, batch_dict, model, task_losses):
-    # batch = tuple(t.cuda(device=device, non_blocking=True) for t in batch)
-
-    # import pdb
-    # pdb.set_trace()
-
+def ForwardModelsVal(args,
+                     task_cfg,
+                     device,
+                     task_id,
+                     batch_dict,
+                     model,
+                     task_losses):
     for key, value in batch_dict.items():
         if isinstance(value, torch.Tensor):
             batch_dict[key] = value.cuda(device=device, non_blocking=True)
-    # if task_id == "TASK4" or task_id == "TASK17":
-    #     features, spatials, image_mask, question, target, input_mask, segment_ids, multiple_choice_ids, co_attention_mask, question_id = (
-    #         batch
-    #     )
-    # else:
-    #     features, spatials, image_mask, question, target, input_mask, segment_ids, co_attention_mask, image_id, question_id = (
-    #         batch
-    #     )
-    #
-    # batch_size = features.size(0)
-    # if task_cfg[task_id]["process"] in ["expand"]:
-    #     max_num_bbox = features.size(1)
-    #     num_options = question.size(1)
-    #     features = (
-    #         features.unsqueeze(1)
-    #         .expand(batch_size, num_options, max_num_bbox, 2048)
-    #         .contiguous()
-    #         .view(-1, max_num_bbox, 2048)
-    #     )
-    #     spatials = (
-    #         spatials.unsqueeze(1)
-    #         .expand(batch_size, num_options, max_num_bbox, 5)
-    #         .contiguous()
-    #         .view(-1, max_num_bbox, 5)
-    #     )
-    #     image_mask = (
-    #         image_mask.unsqueeze(1)
-    #         .expand(batch_size, num_options, max_num_bbox)
-    #         .contiguous()
-    #         .view(-1, max_num_bbox)
-    #     )
-    #     question = question.view(-1, question.size(2))
-    #     input_mask = input_mask.view(-1, input_mask.size(2))
-    #     segment_ids = segment_ids.view(-1, segment_ids.size(2))
-    #     co_attention_mask = co_attention_mask.view(
-    #         -1, co_attention_mask.size(2), co_attention_mask.size(3)
-    #     )
-    #
-    # elif task_cfg[task_id]["process"] in ["retrieval"]:
-    #     max_num_bbox = features.size(1)
-    #     num_options = question.size(1)
-    #     features = features.view(-1, features.size(2), features.size(3))
-    #     spatials = spatials.view(-1, spatials.size(2), spatials.size(3))
-    #     image_mask = image_mask.view(-1, image_mask.size(2))
-    #     question = question.view(-1, question.size(2))
-    #     input_mask = input_mask.view(-1, input_mask.size(2))
-    #     segment_ids = segment_ids.view(-1, segment_ids.size(2))
-    #     co_attention_mask = co_attention_mask.view(
-    #         -1, co_attention_mask.size(2), co_attention_mask.size(3)
-    #     )
-    #
-    # elif task_cfg[task_id]["process"] in ["nlvr"]:
-    #     batch_size = features.size(0)
-    #     max_num_bbox = features.size(1)
-    #     num_options = question.size(1)
-    #     features = features.view(
-    #         batch_size * 2, int(features.size(1) / 2), features.size(2)
-    #     )
-    #     spatials = spatials.view(
-    #         batch_size * 2, int(spatials.size(1) / 2), spatials.size(2)
-    #     )
-    #     image_mask = image_mask.view(batch_size * 2, int(image_mask.size(1) / 2))
-    #     question = question.repeat(1, 2)
-    #     question = question.view(batch_size * 2, int(question.size(1) / 2))
-    #     input_mask = input_mask.repeat(1, 2)
-    #     input_mask = input_mask.view(batch_size * 2, int(input_mask.size(1) / 2))
-    #     segment_ids = segment_ids.repeat(1, 2)
-    #     segment_ids = segment_ids.view(batch_size * 2, int(segment_ids.size(1) / 2))
-    #     co_attention_mask = co_attention_mask.view(
-    #         batch_size * 2,
-    #         int(co_attention_mask.size(1) / 2),
-    #         co_attention_mask.size(2),
-    #     )
-
-    # task_tokens = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
-    #
-    # vil_prediction, vil_prediction_gqa, vil_logit, vil_binary_prediction, vil_tri_prediction, vision_prediction, vision_logit, linguisic_prediction, linguisic_logit, _ = model(
-    #     question,
-    #     features,
-    #     spatials,
-    #     segment_ids,
-    #     input_mask,
-    #     image_mask,
-    #     co_attention_mask,
-    #     task_tokens,
-    # )
 
     question = batch_dict["question_indices"]
     batch_size = len(batch_dict["question_id"])
@@ -321,49 +240,6 @@ def ForwardModelsVal(args, task_cfg, device, task_id, batch_dict, model, task_lo
     textvqa_metric = MetricsMap["TextVQA"]
     batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, batch_dict["textvqa_scores"])
 
-    # if task_cfg[task_id]["type"] == "VL-classifier":
-    #     loss = task_losses[task_id](vil_prediction, target)
-    #     loss = loss.mean() * target.size(1)
-    #     batch_score = compute_score_with_logits(vil_prediction, target).sum()
-    #
-    # if task_cfg[task_id]["type"] == "VL-classifier-GQA":
-    #     loss = task_losses[task_id](vil_prediction_gqa, target)
-    #     loss = loss.mean() * target.size(1)
-    #     batch_score = compute_score_with_logits(vil_prediction_gqa, target).sum()
-    #
-    # elif task_cfg[task_id]["type"] == "VL-logit":
-    #     vil_logit = vil_logit.view(batch_size, num_options)
-    #     loss = task_losses[task_id](vil_logit, target)
-    #     _, preds = torch.max(vil_logit, 1)
-    #     batch_score = (preds == target).sum()
-    #
-    # elif task_cfg[task_id]["type"] == "V-logit":
-    #     loss = task_losses[task_id](vision_logit, target)
-    #     loss = loss.mean() * target.size(1)
-    #     _, select_idx = torch.max(vision_logit, dim=1)
-    #     select_target = target.squeeze(2).gather(1, select_idx.view(-1, 1))
-    #     batch_score = torch.sum(select_target > 0.5).item()
-    #
-    # elif task_cfg[task_id]["type"] == "V-logit-mc":
-    #     vision_logit = vision_logit[:, 101:]
-    #     vision_logit = vision_logit.squeeze(2).gather(1, multiple_choice_ids)
-    #     vision_logit = vision_logit.unsqueeze(2)
-    #     loss = task_losses[task_id](vision_logit, target)
-    #     loss = loss.mean() * target.size(1)
-    #     _, preds = torch.max(vision_logit, dim=1)
-    #     _, target = torch.max(target, dim=1)
-    #     batch_score = (preds == target).sum()
-    #
-    # elif task_cfg[task_id]["type"] == "VL-binary-classifier":
-    #     loss = task_losses[task_id](vil_binary_prediction, target)
-    #     loss = loss.mean()
-    #     batch_score = compute_score_with_logits(vil_binary_prediction, target).sum()
-    #
-    # elif task_cfg[task_id]["type"] == "VL-tri-classifier":
-    #     loss = task_losses[task_id](vil_tri_prediction, target)
-    #     loss = loss.mean()
-    #     batch_score = compute_score_with_logits(vil_tri_prediction, target).sum()
-
     return float(loss), float(batch_acc), batch_size
 
 
@@ -378,10 +254,6 @@ def ForwardModelsTrain(
         model,
         task_losses,
 ):
-    # given the current task, decided whether to forward the model and forward with specific loss.
-
-    # import pdb
-    # pdb.set_trace()
 
     # reset the task iteration when needed.
     if task_count[task_id] % len(task_dataloader_train[task_id]) == 0:
@@ -393,130 +265,6 @@ def ForwardModelsTrain(
     for key, value in batch_dict.items():
         if isinstance(value, torch.Tensor):
             batch_dict[key] = value.cuda(device=device, non_blocking=True)
-    # batch_dict = tuple(t.cuda(device=device, non_blocking=True) for t in batch if isinstance(t, torch.Tensor))
-    # if task_id == "TASK4" or task_id == "TASK17":
-    #     features, spatials, image_mask, question, target, input_mask, segment_ids, multiple_choice_ids, co_attention_mask, question_id = (
-    #         batch
-    #     )
-    # else:
-    #     features, spatials, image_mask, question, target, input_mask, segment_ids, co_attention_mask, image_id, question_id = (
-    #         batch
-    #     )
-
-    # batch_size = batch_dict["pad_obj_features"].size(0)
-    # target = batch_dict["targets"]
-    # if task_cfg[task_id]["process"] in ["dialog"]:
-    #     max_num_bbox = features.size(1)
-    #     nround = question.size(1)
-    #     num_options = question.size(2)
-    #     rbatch_size = batch_size * nround
-    #     question = question.view(rbatch_size, question.size(2), question.size(3))
-    #     target = target.view(-1)
-    #     input_mask = input_mask.view(
-    #         rbatch_size, input_mask.size(2), input_mask.size(3)
-    #     )
-    #     segment_ids = segment_ids.view(
-    #         rbatch_size, segment_ids.size(2), segment_ids.size(3)
-    #     )
-    #     co_attention_mask = co_attention_mask.view(
-    #         rbatch_size,
-    #         co_attention_mask.size(2),
-    #         co_attention_mask.size(3),
-    #         co_attention_mask.size(4),
-    #     )
-    #
-    #     features = (
-    #         features.unsqueeze(1)
-    #         .unsqueeze(1)
-    #         .expand(batch_size, nround, num_options, max_num_bbox, 2048)
-    #         .contiguous()
-    #         .view(-1, max_num_bbox, 2048)
-    #     )
-    #     spatials = (
-    #         spatials.unsqueeze(1)
-    #         .unsqueeze(1)
-    #         .expand(batch_size, nround, num_options, max_num_bbox, 5)
-    #         .contiguous()
-    #         .view(-1, max_num_bbox, 5)
-    #     )
-    #     image_mask = (
-    #         image_mask.unsqueeze(1)
-    #         .expand(batch_size, nround, num_options, max_num_bbox)
-    #         .contiguous()
-    #         .view(-1, max_num_bbox)
-    #     )
-    #
-    #     question = question.view(-1, question.size(2))
-    #     input_mask = input_mask.view(-1, input_mask.size(2))
-    #     segment_ids = segment_ids.view(-1, segment_ids.size(2))
-    #     co_attention_mask = co_attention_mask.view(
-    #         -1, co_attention_mask.size(2), co_attention_mask.size(3)
-    #     )
-    #     batch_size = rbatch_size
-    #
-    # elif task_cfg[task_id]["process"] in ["expand"]:
-    #     max_num_bbox = features.size(1)
-    #     num_options = question.size(1)
-    #     features = (
-    #         features.unsqueeze(1)
-    #         .expand(batch_size, num_options, max_num_bbox, 2048)
-    #         .contiguous()
-    #         .view(-1, max_num_bbox, 2048)
-    #     )
-    #     spatials = (
-    #         spatials.unsqueeze(1)
-    #         .expand(batch_size, num_options, max_num_bbox, 5)
-    #         .contiguous()
-    #         .view(-1, max_num_bbox, 5)
-    #     )
-    #     image_mask = (
-    #         image_mask.unsqueeze(1)
-    #         .expand(batch_size, num_options, max_num_bbox)
-    #         .contiguous()
-    #         .view(-1, max_num_bbox)
-    #     )
-    #     question = question.view(-1, question.size(2))
-    #     input_mask = input_mask.view(-1, input_mask.size(2))
-    #     segment_ids = segment_ids.view(-1, segment_ids.size(2))
-    #     co_attention_mask = co_attention_mask.view(
-    #         -1, co_attention_mask.size(2), co_attention_mask.size(3)
-    #     )
-    #
-    # elif task_cfg[task_id]["process"] in ["retrieval"]:
-    #     max_num_bbox = features.size(1)
-    #     num_options = question.size(1)
-    #     features = features.view(-1, features.size(2), features.size(3))
-    #     spatials = spatials.view(-1, spatials.size(2), spatials.size(3))
-    #     image_mask = image_mask.view(-1, image_mask.size(2))
-    #     question = question.view(-1, question.size(2))
-    #     input_mask = input_mask.view(-1, input_mask.size(2))
-    #     segment_ids = segment_ids.view(-1, segment_ids.size(2))
-    #     co_attention_mask = co_attention_mask.view(
-    #         -1, co_attention_mask.size(2), co_attention_mask.size(3)
-    #     )
-    #
-    # elif task_cfg[task_id]["process"] in ["nlvr"]:
-    #     batch_size = features.size(0)
-    #     max_num_bbox = features.size(1)
-    #     num_options = question.size(1)
-    #     features = features.view(
-    #         batch_size * 2, int(features.size(1) / 2), features.size(2)
-    #     )
-    #     spatials = spatials.view(
-    #         batch_size * 2, int(spatials.size(1) / 2), spatials.size(2)
-    #     )
-    #     image_mask = image_mask.view(batch_size * 2, int(image_mask.size(1) / 2))
-    #     question = question.repeat(1, 2)
-    #     question = question.view(batch_size * 2, int(question.size(1) / 2))
-    #     input_mask = input_mask.repeat(1, 2)
-    #     input_mask = input_mask.view(batch_size * 2, int(input_mask.size(1) / 2))
-    #     segment_ids = segment_ids.repeat(1, 2)
-    #     segment_ids = segment_ids.view(batch_size * 2, int(segment_ids.size(1) / 2))
-    #     co_attention_mask = co_attention_mask.view(
-    #         batch_size * 2,
-    #         int(co_attention_mask.size(1) / 2),
-    #         co_attention_mask.size(2),
-    #     )
     question = batch_dict["question_indices"]
     batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
 
@@ -529,58 +277,6 @@ def ForwardModelsTrain(
 
     textvqa_metric = MetricsMap["TextVQA"]
     batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, batch_dict["textvqa_scores"])
-
-    # # for different task, we use different output to calculate the loss.
-    # if task_cfg[task_id]["type"] == "VL-classifier":
-    #     loss = task_losses[task_id](vil_prediction, target)
-    #     loss = loss.mean() * target.size(1)
-    #     batch_score = compute_score_with_logits(vil_prediction, target).sum() / float(
-    #         batch_size
-    #     )
-    #
-    # elif task_cfg[task_id]["type"] == "VL-classifier-GQA":
-    #     loss = task_losses[task_id](vil_prediction_gqa, target)
-    #     loss = loss.mean() * target.size(1)
-    #     batch_score = compute_score_with_logits(
-    #         vil_prediction_gqa, target
-    #     ).sum() / float(batch_size)
-    #
-    # elif task_cfg[task_id]["type"] == "VL-logit":
-    #     vil_logit = vil_logit.view(batch_size, num_options)
-    #     loss = task_losses[task_id](vil_logit, target)
-    #     _, preds = torch.max(vil_logit, 1)
-    #     batch_score = float((preds == target).sum()) / float(batch_size)
-    #
-    # elif task_cfg[task_id]["type"] == "V-logit":
-    #     loss = task_losses[task_id](vision_logit, target)
-    #     loss = loss.mean() * target.size(1)
-    #     _, select_idx = torch.max(vision_logit, dim=1)
-    #     select_target = target.squeeze(2).gather(1, select_idx.view(-1, 1))
-    #     batch_score = float(torch.sum(select_target > 0.5)) / batch_size
-    #
-    # elif task_cfg[task_id]["type"] == "V-logit-mc":
-    #     vision_logit = vision_logit[:, 101:]
-    #     vision_logit = vision_logit.squeeze(2).gather(1, multiple_choice_ids)
-    #     vision_logit = vision_logit.unsqueeze(2)
-    #     loss = task_losses[task_id](vision_logit, target)
-    #     loss = loss.mean() * target.size(1)
-    #     _, preds = torch.max(vision_logit, dim=1)
-    #     _, target = torch.max(target, dim=1)
-    #     batch_score = float((preds == target).sum()) / float(batch_size)
-    #
-    # elif task_cfg[task_id]["type"] == "VL-binary-classifier":
-    #     loss = task_losses[task_id](vil_binary_prediction, target)
-    #     loss = loss.mean()
-    #     batch_score = compute_score_with_logits(
-    #         vil_binary_prediction, target
-    #     ).sum() / float(batch_size)
-    #
-    # elif task_cfg[task_id]["type"] == "VL-tri-classifier":
-    #     loss = task_losses[task_id](vil_tri_prediction, target)
-    #     loss = loss.mean()
-    #     batch_score = compute_score_with_logits(
-    #         vil_tri_prediction, target
-    #     ).sum() / float(batch_size)
 
     return loss, batch_acc
 
@@ -631,6 +327,9 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
     #     task_feature_reader2.pop(features_h5path)
     #     if features_h5path != "":
     #         task_feature_reader2[features_h5path.format("trainval")] = None
+    
+    # import pdb
+    # pdb.set_trace()
 
     # initilzie the feature reader
     for features_h5path in task_feature_reader1.keys():
@@ -643,6 +342,9 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
             task_feature_reader2[features_h5path] = ImageFeaturesH5Reader(
                 features_h5path, args.in_memory
             )
+
+    # import pdb
+    # pdb.set_trace()
 
     task_datasets_train = {}
     task_datasets_val = {}

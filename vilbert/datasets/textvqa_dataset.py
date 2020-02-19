@@ -46,7 +46,7 @@ def _load_dataset(dataroot, name, clean_datasets, debug):
             imdb_holder = "debug_" + imdb_holder
 
         imdb_path = os.path.join(dataroot, "imdb/textvqa_0.5/", imdb_holder.format(name))
-        logger.info(f"Loading IMDB for {name}" if not debug else f"Loading IMDB for {name} in debug mode")
+        logger.info(f"Loading IMDB for {    name}" if not debug else f"Loading IMDB for {name} in debug mode")
         imdb_data = ImageDatabase(imdb_path)
     else:
         assert False, "data split is not recognized."
@@ -87,7 +87,7 @@ class TextVQADataset(Dataset):
             padding_index=0,
             max_seq_length=16,
             max_region_num=101,
-            processing_threads=64,
+            processing_threads=32,
             extra_args=None
     ):
         """
@@ -147,6 +147,15 @@ class TextVQADataset(Dataset):
                 task + "_" + split + "_" + str(max_seq_length) + clean_train + f"_vocab_type{self.vocab_type}"
                 + f"_dynamic_{self.dynamic_sampling}" + ".pkl",
             )
+
+        if self.distance_threshold != 0.5:
+            cache_path = cache_path.split(".")[0]
+            cache_path = cache_path + f"_threshold_{self.distance_threshold}" + ".pkl"
+
+        if self.heads_type != "none":
+            cache_path = cache_path.split(".")[0]
+            cache_path = cache_path + f"_heads_new" + ".pkl"
+
         logger.info(f"Cache Name:  {cache_path}")
 
         if not os.path.exists(cache_path) or self.debug:
@@ -157,52 +166,30 @@ class TextVQADataset(Dataset):
             self.process()
             self.process_spatials()
             if self.heads_type != "none":
-                raise ValueError
+                self.process_spatial_extras()
             if not self.debug:
                 cPickle.dump(self.entries, open(cache_path, "wb"))
         else:
             self.processors = Processors(self._tokenizer, only_registry=True,
                                          vocab_type=self.vocab_type)  # only initialize the M4C processor (for registry)
+            # otherwise load cache!
             logger.info("Loading from %s" % cache_path)
             self.entries = cPickle.load(open(cache_path, "rb"))
 
-            # If the distance-threshold is not same, process-spatials
-            if self.distance_threshold != 0.5:
-                cache_path = cache_path.split(".")[0]
-                cache_path = cache_path + f"_threshold_{self.distance_threshold}" + ".pkl"
-                if os.path.exists(cache_path):
-                    logger.info(f"New Cache Name:  {cache_path}, exists!")
-                    self.entries = cPickle.load(open(cache_path, "rb"))
-                else:
-                    logger.info(f"New Cache Name:  {cache_path}, creating!")
-                    self.process_spatials()
-                    if not self.debug:
-                        cPickle.dump(self.entries, open(cache_path, "wb"))
-
-            if self.heads_type != "none":
-                cache_path = cache_path.split(".")[0]
-                cache_path = cache_path + f"_heads_new" + ".pkl"
-                if os.path.exists(cache_path):
-                    logger.info(f"New Cache Name:  {cache_path}, exists!")
-                    self.entries = cPickle.load(open(cache_path, "rb"))
-                else:
-                    logger.info(f"New Cache Name:  {cache_path}, creating!")
-                    logger.info(f"Processsing Quadrant Spatial Relations with {self.processing_threads} threads")
-                    mp_input = [entry["spatial_adj_matrix"] for entry in self.entries]
-                    sp_pool = mp.Pool(self.processing_threads)
-                    # map is synchronous (ordered)
-                    result_list = sp_pool.map(TextVQADataset.process_four_quadrant_spatials, mp_input)
-                    sp_pool.close()
-                    sp_pool.join()
-                    logger.info(f"Done Processsing Quadrant Spatial Relations with {self.processing_threads} threads")
-                    assert len(result_list) == len(mp_input)
-
-                    for entry, (quad4, share3_1, share3_2) in zip(self.entries, result_list):
-                        entry["spatial_adj_matrix_quad4"] = quad4
-                        entry["spatial_adj_matrix_share3_1"] = share3_1
-                        entry["spatial_adj_matrix_share3_2"] = share3_2
-                    if not self.debug:
-                        cPickle.dump(self.entries, open(cache_path, "wb"))
+    def process_spatial_extras(self):
+        logger.info(f"Processsing Quadrant Spatial Relations with {self.processing_threads} threads")
+        mp_input = [entry["spatial_adj_matrix"] for entry in self.entries]
+        sp_pool = mp.Pool(self.processing_threads)
+        # map is synchronous (ordered)
+        result_list = sp_pool.map(TextVQADataset.process_four_quadrant_spatials, mp_input)
+        sp_pool.close()
+        sp_pool.join()
+        logger.info(f"Done Processsing Quadrant Spatial Relations with {self.processing_threads} threads")
+        assert len(result_list) == len(mp_input)
+        for entry, (quad4, share3_1, share3_2) in zip(self.entries, result_list):
+            entry["spatial_adj_matrix_quad4"] = quad4
+            entry["spatial_adj_matrix_share3_1"] = share3_1
+            entry["spatial_adj_matrix_share3_2"] = share3_2
 
     def process(self):
         # Fill the boxes from readers
@@ -419,6 +406,24 @@ class TextVQADataset(Dataset):
                 )
                 entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_1)
                 entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_2)
+
+            if self.heads_type == "mix":
+                spatial_adj_matrix_quad4 = torch_broadcast_adj_matrix(
+                    torch.from_numpy(entry["spatial_adj_matrix_quad4"]),
+                    label_num=12
+                )
+                entry["spatial_adj_matrix_quad4"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_quad4)
+
+                spatial_adj_matrix_share3_1 = torch_broadcast_adj_matrix(
+                    torch.from_numpy(entry["spatial_adj_matrix_share3_1"]),
+                    label_num=12
+                )
+                spatial_adj_matrix_share3_2 = torch_broadcast_adj_matrix(
+                    torch.from_numpy(entry["spatial_adj_matrix_share3_2"]),
+                    label_num=12
+                )
+                entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_1)
+                entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_2)
         else:
             try:
                 assert len(entry["spatial_adj_matrix"].shape) == 3
@@ -431,8 +436,7 @@ class TextVQADataset(Dataset):
         item.update(entry)
 
         # remove unwanted keys
-        unwanted_keys = ['spatial_adj_matrix_quad4',
-                         'spatial_adj_matrix_share3_1',
+        unwanted_keys = ['spatial_adj_matrix_share3_1',
                          'spatial_adj_matrix_share3_2',
                          'cleaned_ocr_tokens']
 
