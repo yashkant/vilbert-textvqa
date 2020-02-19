@@ -43,3 +43,4 @@ TASK19:
   num_hidden_layers: 2
   num_spatial_layers: 4
   spatial_type: top
+  num_spatial_relations: 12

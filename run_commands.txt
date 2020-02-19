@@ -1,0 +1,10 @@
+# Evaluation
+python train_tasks_evaluate.py \
+--task_file sweeps/m4c-spatial-mask-1-2-layers-4.yml \
+--from_scratch \
+--resume_file /srv/share/ykant3/vilbert-mt/backup-checkpoints/TextVQA_spatial_m4c_mmt_textvqa-finetune_from_multi_task_model-local-spatial-4layers-mask-1-2/pytorch_ckpt_latest.tar \
+--config_file config/spatial_m4c_mmt_textvqa.json \
+--tasks 19 \
+--train_iter_gap 4 \
+--save_name fine_from_multi_task_model \
+--tag "debug"
