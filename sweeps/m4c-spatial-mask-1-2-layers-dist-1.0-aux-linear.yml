@@ -1,7 +1,7 @@
 TASK19:
   name: TextVQA
   type: V-logit
-  loss: TextVQALoss
+  loss: TextVQAandSpatialLoss
   process: normal
   task_id: 19
   dataroot: datasets/textvqa
@@ -35,7 +35,8 @@ TASK19:
 #  7 | 8 | 9
   lr_scheduler: pythia_warmup_decay
   optim: Adam
-  lr_decay_iters: [14000, 19000]
+  # ahead by 3k
+  lr_decay_iters: [17000, 22000]
   lr_decay: 0.1
   warmup_factor: 0.2
   warmup_iters: 1000
@@ -44,5 +45,9 @@ TASK19:
   num_spatial_layers: 4
   distance_threshold: 1.0
   heads_type: mix
-  layer_type_list: [s, s, s, s, n, n]
-  mix_list: [none, none, share3, quad4, none, none,]
+  layer_type_list: [n, n, s, s, s, s]
+  aux_spatial_fusion: mul
+  use_aux_heads: true
+  aux_loss_type: linear_decay
+  aux_loss_end: 5000
+  textvqa_loss_start: 0

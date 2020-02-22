@@ -27,7 +27,7 @@ def assert_eq(real, expected):
     assert real == expected, "%s (true) vs %s (expected)" % (real, expected)
 
 
-def _load_dataset(dataroot, name, clean_datasets, debug):
+def _load_dataset(dataroot, name, debug):
     """Load entries from Imdb
 
     dataroot: root path of dataset
@@ -75,15 +75,10 @@ def _load_dataset(dataroot, name, clean_datasets, debug):
 class TextVQADataset(Dataset):
     def __init__(
         self,
-        task,
-        dataroot,
-        annotations_jsonpath,
         split,
-        image_features_reader,
-        gt_image_features_reader,
         tokenizer,
         bert_model,
-        clean_datasets,
+        task="TextVQA",
         padding_index=0,
         max_seq_length=16,
         max_region_num=101,
@@ -94,17 +89,15 @@ class TextVQADataset(Dataset):
         (YK): Builds self.entries by reading questions and answers and caches them.
         """
         super().__init__()
+        dataroot = extra_args["dataroot"]
         self.split = split
-        # Todo: What are these?
-        # ans2label_path = os.path.join(dataroot, "cache", "trainval_ans2label.pkl")
-        # label2ans_path = os.path.join(dataroot, "cache", "trainval_label2ans.pkl")
-        # self.ans2label = cPickle.load(open(ans2label_path, "rb"))
-        # self.label2ans = cPickle.load(open(label2ans_path, "rb"))
-        # self.num_labels = len(self.ans2label)
-        # self._max_region_num = max_region_num
         self._max_seq_length = max_seq_length
-        self.obj_features_reader = image_features_reader
-        self.ocr_features_reader = gt_image_features_reader
+        self.obj_features_reader = ImageFeaturesH5Reader(
+            features_path=extra_args["features_h5path1"], in_memory=True
+        )
+        self.ocr_features_reader = ImageFeaturesH5Reader(
+            features_path=extra_args["features_h5path2"], in_memory=True
+        )
         self._tokenizer = tokenizer
         self._padding_index = padding_index
         self.max_obj_num = extra_args["max_obj_num"]
@@ -124,7 +117,7 @@ class TextVQADataset(Dataset):
         logger.info(f"distance_threshold is {self.distance_threshold}")
         logger.info(f"heads_type: {self.heads_type}")
 
-        clean_train = "_cleaned" if clean_datasets else ""
+        clean_train = ""
 
         if "roberta" in bert_model:
             cache_path = os.path.join(
@@ -160,8 +153,14 @@ class TextVQADataset(Dataset):
 
         if not os.path.exists(cache_path) or self.debug:
             # Initialize Processors
-            self.processors = Processors(self._tokenizer, vocab_type=self.vocab_type)
-            self.entries, _ = _load_dataset(dataroot, split, clean_datasets, self.debug)
+
+            if "processors" not in registry:
+                self.processors = Processors(self._tokenizer, vocab_type=self.vocab_type)
+                registry.processors = self.processors
+            else:
+                self.processors = registry.processors
+
+            self.entries, _ = _load_dataset(dataroot, split, self.debug)
             # convert questions to tokens, create masks, segment_ids
             self.process()
             self.process_spatials()
@@ -170,8 +169,17 @@ class TextVQADataset(Dataset):
             if not self.debug:
                 cPickle.dump(self.entries, open(cache_path, "wb"))
         else:
-            self.processors = Processors(self._tokenizer, only_registry=True,
-                                         vocab_type=self.vocab_type)  # only initialize the M4C processor (for registry)
+            if "processors_only_registry" not in registry:
+                self.processors = Processors(
+                    self._tokenizer,
+                    only_registry=True,
+                    vocab_type=self.vocab_type
+                )  # only initialize the M4C processor (for registry)
+                registry.processors_only_registry = self.processors
+            else:
+                self.processors = registry.processors_only_registry
+
+
             # otherwise load cache!
             logger.info("Loading from %s" % cache_path)
             self.entries = cPickle.load(open(cache_path, "rb"))
@@ -219,15 +227,6 @@ class TextVQADataset(Dataset):
             phoc_processed_tokens = self.processors.phoc_processor({"tokens": cleaned_ocr_tokens})
             entry["ocr_phoc"] = phoc_processed_tokens["padded_phoc_features"]
 
-            # # process answers
-            # cleaned_answers = [Processors.word_cleaner(word) for word in entry["answers"]]
-            # processed_answers = self.processors.answer_processor({
-            #     "answers": cleaned_answers,
-            #     "context_tokens": cleaned_ocr_tokens,
-            # })
-            #
-            # entry.update(processed_answers)
-
             # biggest keys are: ocr_phoc, ocr_fasttext and targets (that goes into caching)
             remove_keys = ["sampled_idx_seq", "google_ocr_info_filtered", "google_ocr_tokens_filtered"]
             for key in remove_keys:
@@ -235,7 +234,7 @@ class TextVQADataset(Dataset):
 
     def process_spatials(self):
         pad_obj_ocr_bboxes_list = []
-        for entry in self.entries:
+        for entry in tqdm(self.entries, desc="Reading Entries"):
             # Adding spatial graph matrix
             obj_features, obj_num_boxes, obj_bboxes, _ = self.obj_features_reader[entry["image_id"]]
             obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes - 1, obj_bboxes[1:]
@@ -438,7 +437,12 @@ class TextVQADataset(Dataset):
         # remove unwanted keys
         unwanted_keys = ['spatial_adj_matrix_share3_1',
                          'spatial_adj_matrix_share3_2',
-                         'cleaned_ocr_tokens']
+                         'cleaned_ocr_tokens',
+                         'image_id',
+                         'image_path']
+
+        if self.heads_type == "share3":
+            unwanted_keys.append("spatial_adj_matrix_quad4")
 
         for key in unwanted_keys:
             if key in item:
@@ -471,6 +475,7 @@ class Processors:
         answer_config.max_ocr_tokens = 50
         answer_config.vocab_type = vocab_type
         self.answer_processor = M4CAnswerProcessor(answer_config)
+        self.only_registry = only_registry
 
         # Attach bert-tokenizer
         registry["bert_tokenizer"] = bert_tokenizer

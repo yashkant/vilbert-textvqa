@@ -1,12 +1,12 @@
 TASK19:
-  name: STVQA
+  name: TextVQA
   type: V-logit
   loss: TextVQALoss
   process: normal
   task_id: 19
-  dataroot: datasets/stvqa
-  features_h5path1: "/srv/share/ykant3/scene-text/features/obj/lmdbs/train_task.lmdb" # object features
-  features_h5path2: "/srv/share/ykant3/scene-text/features/ocr/lmdbs/train_task.lmdb" # ocr features
+  dataroot: datasets/textvqa
+  features_h5path1: "/srv/share/ykant3/vilbert-mt/features/obj/trainval_obj.lmdb" # obj-features (use holder to different splits)
+  features_h5path2: "/srv/share/ykant3/vilbert-mt/features/ocr/trainval_ocr.lmdb" # ocr-features
 #  features_h5path2: "" # ocr-features
   train_annotations_jsonpath: ''
   val_annotations_jsonpath: ''
@@ -26,20 +26,14 @@ TASK19:
   model_type: m4c_spatial
   # allowed quadrants to mask are 1,2,4
   attention_mask_quadrants: [1,2]
-#  Quadrants (QUE + OCR and OBJ + DEC)
-#
-#  1 | 2 | 3
-#  ---------
-#  4 | 5 | 6
-#  ---------
-#  7 | 8 | 9
   lr_scheduler: pythia_warmup_decay
   optim: Adam
   lr_decay_iters: [14000, 19000]
   lr_decay: 0.1
   warmup_factor: 0.2
   warmup_iters: 1000
-  vocab_type: 5k
+  vocab_type: 4k_latest
   num_hidden_layers: 2
   num_spatial_layers: 4
   spatial_type: top
+  distance_threshold: 1.0

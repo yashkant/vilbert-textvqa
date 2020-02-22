@@ -15,35 +15,42 @@ import tqdm
 MAP_SIZE = 1099511627776
 
 OCR_LMDB_SCENETEXT = [
-    "/srv/share/ykant3/scene-text/features/ocr/lmdbs/train_task.lmdb",
-    "/srv/share/ykant3/scene-text/features/ocr/lmdbs/test_task1.lmdb",
-    "/srv/share/ykant3/scene-text/features/ocr/lmdbs/test_task2.lmdb",
-    "/srv/share/ykant3/scene-text/features/ocr/lmdbs/test_task3.lmdb"
+    "/srv/share/ykant3/scene-text/features/ocr/lmdbs/train_task_fixed2.lmdb",
+    "/srv/share/ykant3/scene-text/features/ocr/lmdbs/test_task3_fixed2.lmdb"
 ]
 
 OCR_FEATURES_SCENETEXT = [
     "/srv/share/ykant3/scene-text/features/ocr/train/train_task/",
-    "/srv/share/ykant3/scene-text/features/ocr/test/test_task1/",
-    "/srv/share/ykant3/scene-text/features/ocr/test/test_task2/",
     "/srv/share/ykant3/scene-text/features/ocr/test/test_task3/"
 ]
 
-IMDB_SCENETEXT_RESPONSE_FIXED = [
-    "/srv/share/ykant3/scene-text/train/imdb/train_task_response_meta_fixed.npy",
-    "/srv/share/ykant3/scene-text/test/imdb/test_task1_response_meta_fixed.npy",
-    "/srv/share/ykant3/scene-text/test/imdb/test_task2_response_meta_fixed.npy",
-    "/srv/share/ykant3/scene-text/test/imdb/test_task3_response_meta_fixed.npy",
+IMDB_SCENETEXT_RESPONSE_FIXED_PROCESSED_SPLIT = [
+    ["/srv/share/ykant3/scene-text/train/imdb/train_task_response_meta_fixed_processed_train.npy",
+    "/srv/share/ykant3/scene-text/train/imdb/train_task_response_meta_fixed_processed_val.npy"],
+    ["/srv/share/ykant3/scene-text/test/imdb/test_task3_response_meta_fixed_processed.npy"],
+]
+
+IMDB_M4C = [
+    ["/srv/share/ykant3/m4c-release/data/imdb/m4c_stvqa/imdb_subtrain.npy",
+    "/srv/share/ykant3/m4c-release/data/imdb/m4c_stvqa/imdb_subval.npy"],
+    "/srv/share/ykant3/m4c-release/data/imdb/m4c_stvqa/imdb_test_task3.npy",
 ]
 
 
+# NOTE: Some of the images that are present in the dataset are not annotated and do not exist in provided json file.
+
 if __name__ == "__main__":
-    for feature_dir, lmdb_file, imdb_file in zip(OCR_FEATURES_SCENETEXT, OCR_LMDB_SCENETEXT, IMDB_SCENETEXT_RESPONSE_FIXED):
-        print(f"Reading from: {feature_dir} and {imdb_file}")
+    for feature_dir, lmdb_file, imdb_files in zip(OCR_FEATURES_SCENETEXT, OCR_LMDB_SCENETEXT, IMDB_SCENETEXT_RESPONSE_FIXED_PROCESSED_SPLIT):
+        print(f"Reading from: {feature_dir} and {imdb_files}")
         print(f"Storing to: {lmdb_file}")
         imdb_dict = {}
-        imdb_data = np.load(imdb_file, allow_pickle=True)
+        imdb_data = []
 
-        for instance in imdb_data[1:]:
+        for imdb_file in imdb_files:
+            _data = np.load(imdb_file, allow_pickle=True)
+            imdb_data.extend(_data[1:])
+
+        for instance in imdb_data:
             imdb_dict[instance["image_path"].split(".")[0]] = instance
 
         feature_files = glob.glob(feature_dir + "/**", recursive=True)
@@ -60,9 +67,7 @@ if __name__ == "__main__":
                     image_path_key = infile.replace("features/ocr/", "").split(".")[0]
                     instance = imdb_dict[image_path_key]
                 except:
-                    import pdb
-                    pdb.set_trace()
-                    print(f"Image id not found in imdb: {item['image_id']}")
+                    print(f"Image path not found in imdb: {image_path_key}")
                     continue
                 try:
                     # assert that ocr-boxes are consistent

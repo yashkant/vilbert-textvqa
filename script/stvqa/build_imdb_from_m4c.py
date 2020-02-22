@@ -22,7 +22,7 @@ IMDB_SCENETEXT_RESPONSE_FIXED = [
 IMDB_SCENETEXT_RESPONSE_FIXED_PROCESSED_SPLIT = [
     ["/srv/share/ykant3/scene-text/train/imdb/train_task_response_meta_fixed_processed_train.npy",
     "/srv/share/ykant3/scene-text/train/imdb/train_task_response_meta_fixed_processed_val.npy"],
-    ["/srv/share/ykant3/scene-text/test/imdb/test_task3_response_meta_fixed_processed.npy"],
+    "/srv/share/ykant3/scene-text/test/imdb/test_task3_response_meta_fixed_processed.npy",
 ]
 
 IMDB_M4C = [
@@ -50,7 +50,8 @@ IMDB_COCOTEXT = "/srv/share/ykant3/coco-text/cocotext_processed.npy"
 
 if __name__ == "__main__":
 
-    imdb_train_val = np.load(IMDB_SCENETEXT_RESPONSE_FIXED[-1], allow_pickle=True)
+    import copy
+    imdb_train_val = np.load(IMDB_SCENETEXT_RESPONSE_FIXED[0], allow_pickle=True)
     imdb_coco_text = np.load(IMDB_COCOTEXT, allow_pickle=True)
 
     train_val_path_instance = {}
@@ -62,19 +63,23 @@ if __name__ == "__main__":
     for instance in imdb_coco_text[1:]:
         cocotext_train_val_path_instance[instance["file_name"]] = instance
 
-    for m4c_imdb_path, save_imdb_path in zip(IMDB_M4C[-1:], IMDB_SCENETEXT_RESPONSE_FIXED_PROCESSED_SPLIT[-1:]):
+    for m4c_imdb_path, save_imdb_path in zip(IMDB_M4C[0], IMDB_SCENETEXT_RESPONSE_FIXED_PROCESSED_SPLIT[0]):
 
         m4c_imdb = np.load(m4c_imdb_path, allow_pickle=True)
         save_imdb = [m4c_imdb[0]]
 
         count_replace = []
+
+        question_ids = []
         for instance in tqdm.tqdm(m4c_imdb[1:]):
-            # assert instance['answers'] == instance['valid_answers']
-            train_val_key = "/srv/share/ykant3/scene-text/test/test_task3/" + instance["image_path"]
+            assert instance['answers'] == instance['valid_answers']
+
+            train_val_key = "/srv/share/ykant3/scene-text/train/train_task/" + instance["image_path"]
             assert train_val_key in train_val_path_instance
-            train_val_instance = train_val_path_instance[train_val_key]
+            train_val_instance = copy.deepcopy(train_val_path_instance[train_val_key])
+
             train_val_instance.update({
-                # "answers": instance["answers"],
+                "answers": instance["answers"],
                 "question": instance["question"],
                 "question_id": instance["question_id"],
             })
@@ -102,11 +107,14 @@ if __name__ == "__main__":
                     train_val_instance[key] = coco_instance[key]
                 train_val_instance["replaced"] = True
             # append to imdb
+
+            question_ids.append(train_val_instance["question_id"])
             save_imdb.append(train_val_instance)
 
-        save_imdb[0]["replaced_paths"] = list(set(count_replace))
         import pdb
         pdb.set_trace()
+        print("Lens: ", len(set(question_ids)), len(question_ids))
+        save_imdb[0]["replaced_paths"] = list(set(count_replace))
         print(f"Save path: {save_imdb_path}")
-        # np.save(save_imdb_path, save_imdb)
+        np.save(save_imdb_path, save_imdb)
 

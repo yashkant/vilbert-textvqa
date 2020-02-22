@@ -25,17 +25,15 @@ from tqdm import tqdm
 # image_folders
 IMAGES_SCENETEXT = [
     "/srv/share/ykant3/scene-text/train/train_task/",
-    "/srv/share/ykant3/scene-text/test/test_task1/",
-    "/srv/share/ykant3/scene-text/test/test_task2/",
     "/srv/share/ykant3/scene-text/test/test_task3/"
 ]
 
 OBJ_FEATURES_SCENETEXT = [
-    "/srv/share/ykant3/scene-text/features/obj/train/train_task/",
-    "/srv/share/ykant3/scene-text/features/obj/test/test_task1/",
-    "/srv/share/ykant3/scene-text/features/obj/test/test_task2/",
-    "/srv/share/ykant3/scene-text/features/obj/test/test_task3/"
+    "/srv/share/ykant3/scene-text/features/obj-run2/train/train_task/",
+    "/srv/share/ykant3/scene-text/features/obj-run2/test/test_task3/"
 ]
+
+IMAGES_COCOTEXT = "/srv/share/datasets/coco/train2014"
 
 
 class FeatureExtractor:
@@ -227,7 +225,19 @@ class FeatureExtractor:
         info["image_id"] = os.path.split(file_base_name)[-1]
         file_base_name = file_base_name + ".npy"
         info["features"] = feature.cpu().numpy()
-        np.save(file_base_name, info)
+
+        try:
+            load_file_name = file_base_name.replace("obj-run2",  "obj")
+            saved_feature = np.load(load_file_name, allow_pickle=True).item()
+            assert info.keys() == saved_feature.keys()
+            for key in saved_feature.keys():
+                if not isinstance(info[key], np.ndarray):
+                    assert (info[key] == saved_feature[key])
+                else:
+                    assert (info[key] == saved_feature[key]).all()
+        except:
+            print(f"Replacing file: {load_file_name}")
+            np.save(load_file_name, info)
 
     def extract_features(self, image_dir, save_dir):
         # paths to all the items image_fol
@@ -238,7 +248,14 @@ class FeatureExtractor:
         assert len(files) > 0
         for file in tqdm(files):
             try:
-                features, infos = self.get_detectron_features([file])
+                if "coco-text" in file:
+                    image_name = os.path.split(file)[-1]
+                    file_path = os.path.join(IMAGES_COCOTEXT, image_name)
+                    assert os.path.exists(file_path)
+                else:
+                    continue
+
+                features, infos = self.get_detectron_features([file_path])
                 save_path = file.replace(image_dir, save_dir)
                 _save_dir = os.path.split(save_path)[0]
                 if not os.path.exists(_save_dir):

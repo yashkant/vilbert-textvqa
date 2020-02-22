@@ -380,24 +380,12 @@ def main():
             * args.train_iter_multiplier
             / args.num_train_epochs
         )
-        # task_stop_controller[task_id] = utils.MultiTaskStopOnPlateau(
-        #     mode="max",
-        #     patience=1,
-        #     continue_threshold=0.005,
-        #     cooldown=1,
-        #     threshold=0.001,
-        # )
 
     task_ave_iter_list = sorted(task_ave_iter.values())
     median_num_iter = task_ave_iter_list[-1]
     num_train_optimization_steps = (
         median_num_iter * args.num_train_epochs // args.gradient_accumulation_steps
     )
-
-    # if args.dynamic_attention:
-    #     config.dynamic_attention = True
-    # if "roberta" in args.bert_model:
-    #     config.model = "roberta"
 
     # LOAD PRETRAINED VILBERT
     if args.baseline:
@@ -470,54 +458,15 @@ def main():
     # LOAD LOSSES
     task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
 
-    no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
-
-    # if args.freeze != -1:
-    #     bert_weight_name_filtered = []
-    #     for name in bert_weight_name:
-    #         if "embeddings" in name:
-    #             bert_weight_name_filtered.append(name)
-    #         elif "encoder" in name:
-    #             layer_num = name.split(".")[2]
-    #             if int(layer_num) <= args.freeze:
-    #                 bert_weight_name_filtered.append(name)
-    #
-    #     optimizer_grouped_parameters = []
-    #     for key, value in dict(model.named_parameters()).items():
-    #         if key[12:] in bert_weight_name_filtered:
-    #             value.requires_grad = False
-    #
-    #     if default_gpu:
-    #         print("filtered weight")
-    #         print(bert_weight_name_filtered)
-
     # Turned of weight-decay and fine-tune stuff in ViLBERT!
     if "m4c" not in model_type:
         optimizer_grouped_parameters = []
         for key, value in dict(model.named_parameters()).items():
             if value.requires_grad:
-                # if "vil_" in key:
-                #     lr = 1e-4
-                # else:
-                #     if args.vision_scratch:
-                #         if key[12:] in bert_weight_name:
-                #             lr = base_lr
-                #         else:
-                #             lr = 1e-4
-                #     else:
-                #         lr = base_lr
                 lr = base_lr
                 optimizer_grouped_parameters += [
                     {"params": [value], "lr": lr, "weight_decay": 0.0}
                 ]
-                # if any(nd in key for nd in no_decay):
-                #     optimizer_grouped_parameters += [
-                #         {"params": [value], "lr": lr, "weight_decay": 0.0}
-                #     ]
-                # if not any(nd in key for nd in no_decay):
-                #     optimizer_grouped_parameters += [
-                #         {"params": [value], "lr": lr, "weight_decay": 0.01}
-                #     ]
     else:
         optimizer_grouped_parameters = model.get_optimizer_parameters(base_lr)
 
@@ -595,13 +544,19 @@ def main():
         for step in tqdm(range(median_num_iter), desc="Iters"):
             iterId = startIterID + step + (epochId * median_num_iter)
             first_task = True
+
+            # # Todo: Handle steps between datasets! (Generate Random Sampler and plug into dataloader)
+            # if "step_datasets" in task_cfg["TASK19"]:
+            #     assert len(task_cfg["TASK19"]["step_datasets"]) == len(task_datasets_train["separate_datasets"])
+            #     removed_idx = []
+            #     for idx, (step, dataset) in enumerate(zip(task_cfg["TASK19"]["step_datasets"],
+            #                              task_datasets_train["separate_datasets"])):
+            #         if iterId == step:
+            #             logger.info(f"Turning off Dataset: {dataset}")
+            #             removed_idx.append(idx)
+
             for task_id in task_ids:
                 is_forward = True
-                # if (not task_stop_controller[task_id].in_stop) or (
-                #     iterId % args.train_iter_gap == 0
-                # ):
-                #     is_forward = True
-
                 if is_forward:
                     loss, score = ForwardModelsTrain(
                         args,
@@ -615,23 +570,12 @@ def main():
                         task_losses,
                     )
 
-                    # loss = loss * loss_scale[task_id]
-                    # if args.gradient_accumulation_steps > 1:
-                    #     loss = loss / args.gradient_accumulation_steps
-
                     loss.backward()
 
                     if task_cfg["TASK19"]["grad_clip_mode"] == "all":
                         clip_gradients(model, task_cfg["TASK19"]["max_grad_norm"], task_cfg["TASK19"]["grad_clip_mode"])
 
                     if (step + 1) % args.gradient_accumulation_steps == 0:
-                        # if args.fp16:
-                        #     lr_this_step = args.learning_rate * warmup_linear(
-                        #         global_step / num_train_optimization_steps,
-                        #         args.warmup_proportion,
-                        #     )
-                        #     for param_group in optimizer.param_groups:
-                        #         param_group["lr"] = lr_this_step
                         optimizer.step()
 
                         if first_task and (
@@ -729,11 +673,6 @@ def main():
         elif lr_scheduler_config == "mannul":
             lr_scheduler.step()
 
-        # if epochId in lr_reduce_list:
-        #     for task_id in task_ids:
-        #         # reset the task_stop_controller once the lr drop
-        #         task_stop_controller[task_id]._reset()
-
     tbLogger.txt_close()
 
 
@@ -763,9 +702,6 @@ def evaluate(
             sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
             sys.stdout.flush()
 
-    # update the multi-task scheduler.
-    # task_stop_controller[task_id].step(tbLogger.getValScore(task_id))
-
     score = tbLogger.showLossVal(task_id, task_stop_controller=None)
     model.train()
     return score
@@ -775,6 +711,5 @@ if __name__ == "__main__":
     try:
         main()
     finally:
-        # don't let the session quit!
         import os
-        os.system("watch -n 1 nvidia-smi")
+        os.system("watch -n 1 session-quit-error")

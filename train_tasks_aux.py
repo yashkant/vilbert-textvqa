@@ -598,11 +598,15 @@ def main():
             first_task = True
             for task_id in task_ids:
                 is_forward = True
+
+                # Add Textvqa loss weight
                 if iterId >= task_cfg["TASK19"]["textvqa_loss_start"]:
-                    registry.spatial_loss_weight = 1.0
+                    registry.textvqa_loss_weight = 1.0
                 else:
                     registry.textvqa_loss_weight = 0.0
 
+
+                # Add Spatial loss weight
                 if iterId < task_cfg["TASK19"]["aux_loss_end"]:
                     if task_cfg["TASK19"]["aux_loss_type"] == "step":
                         registry.spatial_loss_weight = 1.0
@@ -647,9 +651,9 @@ def main():
                         optimizer.step()
 
                         if first_task and (
-                            global_step < warmpu_steps
-                            or lr_scheduler_config == "warmup_linear"
-                            or lr_scheduler_config == "pythia_warmup_decay"
+                                global_step < warmpu_steps
+                                or lr_scheduler_config == "warmup_linear"
+                                or lr_scheduler_config == "pythia_warmup_decay"
                         ):
                             warmup_scheduler.step()
 
@@ -789,4 +793,4 @@ if __name__ == "__main__":
     finally:
         # don't let the session quit!
         import os
-        os.system("watch -n 1 nvidia-smi")
+        os.system("watch -n 1 session-quit-error")
