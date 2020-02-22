@@ -120,7 +120,7 @@ def load_model():
     # Adding blank keys that could be dynamically replaced later
     config_dict["layer_type_list"] = None
     config_dict["beam_size"] = args.beam_size 
-    
+
     # Replace keys
     for key in transfer_keys:
         if key in task_config["TASK19"]:
@@ -190,7 +190,7 @@ def evaluate(
     
     with torch.no_grad():
         for i, batch in enumerate(task_dataloader_val[task_id]):
-            batch_dict = ForwardModelsVal(
+            _, _, batch_dict = ForwardModelsVal(
                 args, task_cfg, device, task_id, batch, model, task_losses
             )
 
@@ -338,8 +338,6 @@ def main():
     ).tolist()
     curr_val_score['topkscores'] = np.concatenate(curr_val_score['topkscores'], axis=0).tolist()
     curr_val_score['question_id'] = np.concatenate(curr_val_score['question_id'], axis=0).tolist()
-    curr_val_score['question_id'] = np.repeat(
-        np.expand_dims(curr_val_score['question_id'], axis=1), 5, axis=1).reshape(-1).tolist()
     
     # Compute VQA Accuracies
     results_df = pd.DataFrame.from_dict(curr_val_score, orient='columns')

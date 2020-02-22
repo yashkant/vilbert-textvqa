@@ -61,7 +61,7 @@ class BeamSearch():
         batch_dict['ocr_mmt_in'] = batch_dict['ocr_mmt_in'].repeat_interleave(self._decode_size, dim=0)
         batch_dict['obj_mmt_in'] = batch_dict['obj_mmt_in'].repeat_interleave(self._decode_size, dim=0)
 
-        batch_dict['quesion_id'] = batch_dict['question_id'].repeat_interleave(self._decode_size, dim=0)
+        batch_dict['question_id'] = batch_dict['question_id'].repeat_interleave(self._decode_size, dim=0)
         
         batch_dict['train_prev_inds'] = batch_dict['train_prev_inds'].repeat_interleave(self._decode_size, dim=0)
         return batch_dict
@@ -130,13 +130,14 @@ class BeamSearch():
             # no beam got completed! 
             self.completed_ids = torch.arange(batch_dict['train_prev_inds'].shape[0])
 
-        # Save completed sequences!
-        batch_dict['complete_seqs'] = batch_dict['train_prev_inds'][self.completed_ids, :]
+        
 
         finish = False
         if (
             len(self.completed_ids) == self._batch_size * self._decode_size
         ) or (batch_dict['train_prev_inds'].shape[1] == t+1):
+            # Save completed sequences!
+            batch_dict['complete_seqs'] = batch_dict['train_prev_inds'][self.completed_ids, :]
             finish = True
 
         return finish, batch_dict, 0

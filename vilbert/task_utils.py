@@ -226,13 +226,12 @@ def ForwardModelsVal(args, task_cfg, device, task_id, batch_dict, model, task_lo
     batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
 
     results_dict = model(batch_dict)
+    batch_dict.update(results_dict)
     
     # TODO: Fix this ugly hack! 
     if registry.get("is_running_validation", False):
-        return results_dict
+        return None, None, batch_dict
 
-    batch_dict.update(results_dict)
-    
     if task_cfg[task_id]["loss"] == "TextVQAandSpatialLoss":
         loss = task_losses[task_id](batch_dict)
     else:
