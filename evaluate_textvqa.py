@@ -354,7 +354,7 @@ def main():
     logger.info("VQA Accuracy: {} for {} questions".format(accuracies['vqa_accuracy'], accuracies['accuracies_df'].shape))
     
     if len(args.save_file) != 0:
-        accuracies['accuracies_df'].to_json(arg.save_file)
+        accuracies['accuracies_df'].to_json(args.save_file)
 
 if __name__ == "__main__":
     main()
