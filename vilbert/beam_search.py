@@ -68,7 +68,7 @@ class BeamSearch():
 
     def decode(self, batch_dict, t):
         vocab_size = batch_dict['scores'].shape[-1]
-        current_scores = torch.sigmoid(batch_dict["scores"][:, t, :])
+        current_scores = torch.log(torch.sigmoid(batch_dict["scores"][:, t, :]))
         
         current_scores += batch_dict['topkscores'].expand_as(current_scores)
 
