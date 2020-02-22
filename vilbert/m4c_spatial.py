@@ -9,6 +9,8 @@ from pytorch_transformers.modeling_bert import (
     BertLayerNorm, BertEmbeddings, BertEncoder, BertConfig,
     BertPreTrainedModel
 )
+
+from vilbert.beam_search import BeamSearch
 from tools.registry import registry
 from vilbert.textvqa_encoders import ImageEncoder
 
@@ -51,6 +53,11 @@ class M4C(nn.Module):
         # type of spatial-layers
         self.spatial_type = getattr(self.mmt_config, "spatial_type", "top")
         logger.info(f"Using {self.spatial_type} type spatial layers")
+
+        self.beam_size = self.mmt_config.beam_size
+        self.is_running_validation = registry.get("is_running_validation", False)
+
+        self.bsdecoder = BeamSearch(self.beam_size)
 
         # build the models
         self.build()
@@ -208,7 +215,13 @@ class M4C(nn.Module):
         # self._forward_txt_encoding(batch_dict)
         self._forward_obj_encoding(batch_dict)
         self._forward_ocr_encoding(batch_dict)
-        self._forward_mmt_and_output(batch_dict)
+        
+        if self.training or not self.is_running_validation:
+            self._forward_mmt_and_output(batch_dict)
+        else:
+            # self._forward_mmt_and_output(batch_dict)
+            self._forward_beam_search(batch_dict)
+        
         if self.use_aux_heads:
             self._forward_aux(batch_dict)
 
@@ -216,6 +229,11 @@ class M4C(nn.Module):
             "textvqa_scores": batch_dict["scores"],
             "spatial_scores": None if not self.use_aux_heads else batch_dict["spatial_head_out"]
         }
+
+        if 'complete_seqs' in batch_dict:
+            results_dict['complete_seqs'] = batch_dict['complete_seqs'].cpu().detach().numpy()
+            results_dict['topkscores'] = batch_dict['topkscores'].cpu().detach().numpy()
+            results_dict['question_id'] = batch_dict['question_id'].cpu().detach().numpy()
 
         return results_dict
 
@@ -347,6 +365,19 @@ class M4C(nn.Module):
                 # decoding
                 argmax_inds = batch_dict["scores"].argmax(dim=-1)
                 batch_dict['train_prev_inds'][:, 1:] = argmax_inds[:, :-1]
+
+    def _forward_beam_search(self, batch_dict):
+        dec_step_num = batch_dict["train_prev_inds"].size(1)
+        # Decoding with beam search
+        batch_dict = self.bsdecoder.init_batch(batch_dict)
+
+        for t in range(dec_step_num):
+            self._forward_mmt(batch_dict)
+            self._forward_output(batch_dict)
+
+            finish, batch_dict, batch_size_t = self.bsdecoder.decode(batch_dict, t)
+            if finish:
+                break
 
     def _forward_aux(self, batch_dict):
         txt_max_num = batch_dict["question_mask"].size(-1)
@@ -670,7 +701,7 @@ class BertSpatialEncoder(nn.Module):
         return outputs  # last-layer hidden state, (all hidden states), (all attentions)
 
 
-class MMT(BertPreTrainedModel):
+class MMT(BertPreTrainedModel): 
     def __init__(self, config):
         super().__init__(config)
 
@@ -839,6 +870,7 @@ class PrevPredEmbeddings(nn.Module):
         )
         position_ids = position_ids.unsqueeze(0).expand(batch_size, seq_length)
         position_embeddings = self.position_embeddings(position_ids)
+        
         # Token type ids: 0 -- vocab; 1 -- OCR
         token_type_ids = prev_inds.ge(ans_num).long()
         token_type_embeddings = self.token_type_embeddings(token_type_ids)

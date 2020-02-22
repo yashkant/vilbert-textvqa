@@ -20,3 +20,12 @@ python train_tasks.py \
 --tasks 19 \
 --train_iter_gap 4 --save_name finetune_from_multi_task_model \
 --tag "m4c-spatial-mask-1-2-7-layers-4"
+
+
+python evaluate_textvqa.py \
+--task_file sweeps/m4c-spatial-mask-1-2-layers-4.yml \
+--config_file config/spatial_m4c_mmt_textvqa.json \
+--vocab_file /srv/share3/hagrawal9/project/m4c/data/m4c_vocabs/textvqa/fixed_answer_vocab_textvqa_5k.txt \
+--batch_size 96 \
+--model_ckpt save/TextVQA_spatial_m4c_mmt_textvqa-finetune_from_multi_task_model-local-spatial-4layers-mask-1-2/pytorch_ckpt_latest.tar \
+--beam_size 1
