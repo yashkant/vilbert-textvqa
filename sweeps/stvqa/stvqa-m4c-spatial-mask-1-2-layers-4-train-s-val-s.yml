@@ -37,7 +37,7 @@ TASK19:
   lr_decay: 0.1
   warmup_factor: 0.2
   warmup_iters: 1000
-  vocab_type: 5k
+  vocab_type: 5k_stvqa
   num_hidden_layers: 2
   num_spatial_layers: 4
   spatial_type: top

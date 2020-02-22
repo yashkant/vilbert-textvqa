@@ -37,11 +37,8 @@ TASK19:
   lr_decay: 0.1
   warmup_factor: 0.2
   warmup_iters: 1000
-  vocab_type: 5k_stvqa
-  num_hidden_layers: 2
-  num_spatial_layers: 4
-  spatial_type: top
+  vocab_type: 5k
+  layer_type_list: [n, n, n, n, n, n]
 
-  use_datasets: ["stvqa", "textvqa"]
-  val_on: ["textvqa"]
-  step_datasets: [5000, -1]
+  use_datasets: ["stvqa"]
+  val_on: ["stvqa"]
