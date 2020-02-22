@@ -84,6 +84,10 @@ def parse_args():
     parser.add_argument(
         "--save_file", default="", type=str, help="Path to save the results (if you want to save it)"
     )
+    parser.add_argument(
+        "--short_eval", default=False, type=bool, help="Run only three iterations of val "
+    )
+    
     command_args = parser.parse_args()
 
     # if default value is going to change, add those in command line arguments.
@@ -201,8 +205,8 @@ def evaluate(
             sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
             sys.stdout.flush()
         
-            if i == 3:
-                break
+            # if args.short_eval and i == 3:
+            #     break
     
     return predictions
 
@@ -214,8 +218,9 @@ def calculate(batch_dict):
     answer_space_size = len(registry["vocab"])
 
     predictions = []
-
-    for idx, question_id in enumerate(batch_dict["question_id"]):
+    
+    #TODO: This is a single list - remove for loop
+    for idx, question_id in enumerate([batch_dict["question_id"]]):
         context_tokens = ocr_tokens_enc[idx]
         answer_words = []
         belongs_to = []
@@ -258,7 +263,7 @@ def evaluate_predictions(eval_df, results_df):
     predictions = []
     for i in range(results_df.shape[0]):
         r = results_df.iloc[i]
-        question_id = r.question_id[0]
+        question_id = r.question_id
         vd = eval_df[eval_df['question_id']==question_id].iloc[0]
 
         batch = {
@@ -269,7 +274,7 @@ def evaluate_predictions(eval_df, results_df):
             'pred_answers': np.array([r.complete_seqs[1:]])
         }
 
-        predictions.append(calculate(registry, batch))
+        predictions.append(calculate(batch))
 
     accuracies_df = pd.DataFrame(predictions)
     oracle_accuracies = 0.0
@@ -345,10 +350,11 @@ def main():
 
     accuracies = evaluate_predictions(eval_df, results_df)
     
-    logger.info("VQA Accuracy: {}".format(accuracies['vqa_accuracies']))
+    #  if not args.short_eval: 
+    logger.info("VQA Accuracy: {} for {} questions".format(accuracies['vqa_accuracy'], accuracies['accuracies_df'].shape))
     
     if len(args.save_file) != 0:
-        pd.to_json(accuracies['accuracies_df'])
+        accuracies['accuracies_df'].to_json(arg.save_file)
 
 if __name__ == "__main__":
     main()

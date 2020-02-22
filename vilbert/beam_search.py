@@ -70,11 +70,11 @@ class BeamSearch():
         vocab_size = batch_dict['scores'].shape[-1]
         current_scores = torch.log(torch.sigmoid(batch_dict["scores"][:, t, :]))
         
-        current_scores += batch_dict['topkscores'].expand_as(current_scores)
-
         if self.completed_ids is not None:
             current_scores[self.completed_ids, :] = -float("Inf")
-            current_scores[self.completed_ids, self._EOS_IDX] = 0
+            current_scores[self.completed_ids, self._EOS_IDX] = 0 # make EOS probability highest. 
+        
+        current_scores += batch_dict['topkscores'].expand_as(current_scores)
 
         # If time is zero, then need to look into only one beam for one image
         if t == 0:

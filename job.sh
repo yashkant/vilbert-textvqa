@@ -28,4 +28,5 @@ python evaluate_textvqa.py \
 --vocab_file /srv/share3/hagrawal9/project/m4c/data/m4c_vocabs/textvqa/fixed_answer_vocab_textvqa_5k.txt \
 --batch_size 96 \
 --model_ckpt save/TextVQA_spatial_m4c_mmt_textvqa-finetune_from_multi_task_model-local-spatial-4layers-mask-1-2/pytorch_ckpt_latest.tar \
---beam_size 1
+--beam_size 1 \
+--save_file results_bs=1.df
