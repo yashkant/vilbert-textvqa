@@ -220,10 +220,6 @@ def ForwardModelsVal(args, task_cfg, device, task_id, batch_dict, model, task_lo
     for key, value in batch_dict.items():
         if isinstance(value, torch.Tensor):
             batch_dict[key] = value.cuda(device=device, non_blocking=True)
-<<<<<<< HEAD
-=======
-    
->>>>>>> a70b660f8eaa649a7c2e21f030c389fe545f4144
     question = batch_dict["question_indices"]
     batch_size = len(batch_dict["question_id"])
     batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
@@ -290,12 +286,7 @@ def ForwardModelsVal(args, task_cfg, device, task_id, batch_dict, model, task_lo
         """
     )
 
-<<<<<<< HEAD
     return float(loss), float(batch_acc), batch_size
-=======
-    return float(loss), float(batch_acc), batch_size, batch_dict,
-
->>>>>>> a70b660f8eaa649a7c2e21f030c389fe545f4144
 
 
 def ForwardModelsTrain(
