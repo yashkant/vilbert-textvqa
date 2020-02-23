@@ -1,0 +1,8 @@
+Extracting from: /srv/share/ykant3/scene-text/train/train_task/ 
+Saving to: /srv/share/ykant3/scene-text/features/obj/train/train_task/
+Creating Dir: /srv/share/ykant3/scene-text/features/obj/train/train_task/IIIT_text
+Creating Dir: /srv/share/ykant3/scene-text/features/obj/train/train_task/coco-text
+Creating Dir: /srv/share/ykant3/scene-text/features/obj/train/train_task/vizwiz
+Creating Dir: /srv/share/ykant3/scene-text/features/obj/train/train_task/VisualGenome/2
+Creating Dir: /srv/share/ykant3/scene-text/features/obj/train/train_task/VisualGenome/1
+Creating Dir: /srv/share/ykant3/scene-text/features/obj/train/train_task/icdar

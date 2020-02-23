@@ -194,7 +194,7 @@ def evaluate(
     
     with torch.no_grad():
         for i, batch in enumerate(task_dataloader_val[task_id]):
-            _, _, batch_dict = ForwardModelsVal(
+            _, _, _, batch_dict = ForwardModelsVal(
                 args, task_cfg, device, task_id, batch, model, task_losses
             )
 

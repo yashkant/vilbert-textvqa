@@ -230,7 +230,7 @@ def ForwardModelsVal(args, task_cfg, device, task_id, batch_dict, model, task_lo
     
     # TODO: Fix this ugly hack! 
     if registry.get("is_running_validation", False):
-        return None, None, batch_dict
+        return None, None, None, batch_dict
 
     if task_cfg[task_id]["loss"] == "TextVQAandSpatialLoss":
         loss = task_losses[task_id](batch_dict)
@@ -288,6 +288,7 @@ def ForwardModelsVal(args, task_cfg, device, task_id, batch_dict, model, task_lo
     )
 
     return float(loss), float(batch_acc), batch_size, batch_dict,
+
 
 
 def ForwardModelsTrain(

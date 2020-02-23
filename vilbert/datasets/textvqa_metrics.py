@@ -399,3 +399,4 @@ class STVQAANLSEvaluator:
 
         accuracy = sum(pred_scores) / len(pred_scores)
         return accuracy
+
