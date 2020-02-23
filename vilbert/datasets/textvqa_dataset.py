@@ -27,7 +27,7 @@ def assert_eq(real, expected):
     assert real == expected, "%s (true) vs %s (expected)" % (real, expected)
 
 
-def _load_dataset(dataroot, name, clean_datasets, debug):
+def _load_dataset(dataroot, name, debug):
     """Load entries from Imdb
 
     dataroot: root path of dataset
@@ -37,7 +37,7 @@ def _load_dataset(dataroot, name, clean_datasets, debug):
         the splits, and return entries.
     """
 
-    if name == "train" or name == "val" or name == "test":
+    if name == "train" or name == "val" or name =="test":
         imdb_holder = "imdb_google_det_bbox_textvqa_multidec_sa_info_ascii_{}.npy"
         if name == "test":
             imdb_holder = "imdb_google_det_bbox_textvqa_info_{}.npy"
@@ -45,7 +45,7 @@ def _load_dataset(dataroot, name, clean_datasets, debug):
         if debug:
             imdb_holder = "debug_" + imdb_holder
 
-        imdb_path = os.path.join(dataroot, "imdb/textvqa_0.5/", imdb_holder.format(name))
+        imdb_path = os.path.join(dataroot, "imdb/textvqa_0.5/",imdb_holder.format(name))
         logger.info(f"Loading IMDB for {name}" if not debug else f"Loading IMDB for {name} in debug mode")
         imdb_data = ImageDatabase(imdb_path)
     else:
@@ -74,37 +74,30 @@ def _load_dataset(dataroot, name, clean_datasets, debug):
 
 class TextVQADataset(Dataset):
     def __init__(
-            self,
-            task,
-            dataroot,
-            annotations_jsonpath,
-            split,
-            image_features_reader,
-            gt_image_features_reader,
-            tokenizer,
-            bert_model,
-            clean_datasets,
-            padding_index=0,
-            max_seq_length=16,
-            max_region_num=101,
-            processing_threads=64,
-            extra_args=None
+        self,
+        split,
+        tokenizer,
+        bert_model,
+        task="TextVQA",
+        padding_index=0,
+        max_seq_length=16,
+        max_region_num=101,
+        processing_threads=32,
+        extra_args=None
     ):
         """
         (YK): Builds self.entries by reading questions and answers and caches them.
         """
         super().__init__()
+        dataroot = extra_args["dataroot"]
         self.split = split
-        # Todo: What are these?
-        # ans2label_path = os.path.join(dataroot, "cache", "trainval_ans2label.pkl")
-        # label2ans_path = os.path.join(dataroot, "cache", "trainval_label2ans.pkl")
-        # self.ans2label = cPickle.load(open(ans2label_path, "rb"))
-        # self.label2ans = cPickle.load(open(label2ans_path, "rb"))
-        # self.num_labels = len(self.ans2label)
-        # self._max_region_num = max_region_num
         self._max_seq_length = max_seq_length
-        self.obj_features_reader = image_features_reader
-        self.ocr_features_reader = gt_image_features_reader
+        self.obj_features_reader = ImageFeaturesH5Reader(
+            features_path=extra_args["features_h5path1"], in_memory=True
+        )
+        self.ocr_features_reader = ImageFeaturesH5Reader(
+            features_path=extra_args["features_h5path2"], in_memory=True
+        )
         self._tokenizer = tokenizer
         self._padding_index = padding_index
         self.max_obj_num = extra_args["max_obj_num"]
@@ -124,7 +117,7 @@ class TextVQADataset(Dataset):
         logger.info(f"distance_threshold is {self.distance_threshold}")
         logger.info(f"heads_type: {self.heads_type}")
 
-        clean_train = "_cleaned" if clean_datasets else ""
+        clean_train = ""
 
         if "roberta" in bert_model:
             cache_path = os.path.join(
@@ -147,62 +140,64 @@ class TextVQADataset(Dataset):
                 task + "_" + split + "_" + str(max_seq_length) + clean_train + f"_vocab_type{self.vocab_type}"
                 + f"_dynamic_{self.dynamic_sampling}" + ".pkl",
             )
+
+        if self.distance_threshold != 0.5:
+            cache_path = cache_path.split(".")[0]
+            cache_path = cache_path + f"_threshold_{self.distance_threshold}" + ".pkl"
+
+        if self.heads_type != "none":
+            cache_path = cache_path.split(".")[0]
+            cache_path = cache_path + f"_heads_new" + ".pkl"
+
         logger.info(f"Cache Name:  {cache_path}")
 
         if not os.path.exists(cache_path) or self.debug:
             # Initialize Processors
-            self.processors = Processors(self._tokenizer, vocab_type=self.vocab_type)
-            self.entries, _ = _load_dataset(dataroot, split, clean_datasets, self.debug)
+
+            if "processors" not in registry:
+                self.processors = Processors(self._tokenizer, vocab_type=self.vocab_type)
+                registry.processors = self.processors
+            else:
+                self.processors = registry.processors
+
+            self.entries, _ = _load_dataset(dataroot, split, self.debug)
             # convert questions to tokens, create masks, segment_ids
             self.process()
             self.process_spatials()
             if self.heads_type != "none":
-                raise ValueError
+                self.process_spatial_extras()
             if not self.debug:
                 cPickle.dump(self.entries, open(cache_path, "wb"))
         else:
-            self.processors = Processors(self._tokenizer, only_registry=True,
-                                         vocab_type=self.vocab_type)  # only initialize the M4C processor (for registry)
+            if "processors_only_registry" not in registry:
+                self.processors = Processors(
+                    self._tokenizer,
+                    only_registry=True,
+                    vocab_type=self.vocab_type
+                )  # only initialize the M4C processor (for registry)
+                registry.processors_only_registry = self.processors
+            else:
+                self.processors = registry.processors_only_registry
+
+
+            # otherwise load cache!
             logger.info("Loading from %s" % cache_path)
             self.entries = cPickle.load(open(cache_path, "rb"))
 
-            # If the distance-threshold is not same, process-spatials
-            if self.distance_threshold != 0.5:
-                cache_path = cache_path.split(".")[0]
-                cache_path = cache_path + f"_threshold_{self.distance_threshold}" + ".pkl"
-                if os.path.exists(cache_path):
-                    logger.info(f"New Cache Name:  {cache_path}, exists!")
-                    self.entries = cPickle.load(open(cache_path, "rb"))
-                else:
-                    logger.info(f"New Cache Name:  {cache_path}, creating!")
-                    self.process_spatials()
-                    if not self.debug:
-                        cPickle.dump(self.entries, open(cache_path, "wb"))
-
-            if self.heads_type != "none":
-                cache_path = cache_path.split(".")[0]
-                cache_path = cache_path + f"_heads_new" + ".pkl"
-                if os.path.exists(cache_path):
-                    logger.info(f"New Cache Name:  {cache_path}, exists!")
-                    self.entries = cPickle.load(open(cache_path, "rb"))
-                else:
-                    logger.info(f"New Cache Name:  {cache_path}, creating!")
-                    logger.info(f"Processsing Quadrant Spatial Relations with {self.processing_threads} threads")
-                    mp_input = [entry["spatial_adj_matrix"] for entry in self.entries]
-                    sp_pool = mp.Pool(self.processing_threads)
-                    # map is synchronous (ordered)
-                    result_list = sp_pool.map(TextVQADataset.process_four_quadrant_spatials, mp_input)
-                    sp_pool.close()
-                    sp_pool.join()
-                    logger.info(f"Done Processsing Quadrant Spatial Relations with {self.processing_threads} threads")
-                    assert len(result_list) == len(mp_input)
-
-                    for entry, (quad4, share3_1, share3_2) in zip(self.entries, result_list):
-                        entry["spatial_adj_matrix_quad4"] = quad4
-                        entry["spatial_adj_matrix_share3_1"] = share3_1
-                        entry["spatial_adj_matrix_share3_2"] = share3_2
-                    if not self.debug:
-                        cPickle.dump(self.entries, open(cache_path, "wb"))
+    def process_spatial_extras(self):
+        logger.info(f"Processsing Quadrant Spatial Relations with {self.processing_threads} threads")
+        mp_input = [entry["spatial_adj_matrix"] for entry in self.entries]
+        sp_pool = mp.Pool(self.processing_threads)
+        # map is synchronous (ordered)
+        result_list = sp_pool.map(TextVQADataset.process_four_quadrant_spatials, mp_input)
+        sp_pool.close()
+        sp_pool.join()
+        logger.info(f"Done Processsing Quadrant Spatial Relations with {self.processing_threads} threads")
+        assert len(result_list) == len(mp_input)
+        for entry, (quad4, share3_1, share3_2) in zip(self.entries, result_list):
+            entry["spatial_adj_matrix_quad4"] = quad4
+            entry["spatial_adj_matrix_share3_1"] = share3_1
+            entry["spatial_adj_matrix_share3_2"] = share3_2
 
     def process(self):
         # Fill the boxes from readers
@@ -232,15 +227,6 @@ class TextVQADataset(Dataset):
             phoc_processed_tokens = self.processors.phoc_processor({"tokens": cleaned_ocr_tokens})
             entry["ocr_phoc"] = phoc_processed_tokens["padded_phoc_features"]
 
-            # # process answers
-            # cleaned_answers = [Processors.word_cleaner(word) for word in entry["answers"]]
-            # processed_answers = self.processors.answer_processor({
-            #     "answers": cleaned_answers,
-            #     "context_tokens": cleaned_ocr_tokens,
-            # })
-            #
-            # entry.update(processed_answers)
-
             # biggest keys are: ocr_phoc, ocr_fasttext and targets (that goes into caching)
             remove_keys = ["sampled_idx_seq", "google_ocr_info_filtered", "google_ocr_tokens_filtered"]
             for key in remove_keys:
@@ -248,7 +234,7 @@ class TextVQADataset(Dataset):
 
     def process_spatials(self):
         pad_obj_ocr_bboxes_list = []
-        for entry in self.entries:
+        for entry in tqdm(self.entries, desc="Reading Entries"):
             # Adding spatial graph matrix
             obj_features, obj_num_boxes, obj_bboxes, _ = self.obj_features_reader[entry["image_id"]]
             obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes - 1, obj_bboxes[1:]
@@ -346,16 +332,16 @@ class TextVQADataset(Dataset):
         # add object-features and bounding boxes
         obj_features, obj_num_boxes, obj_bboxes, _ = self.obj_features_reader[image_id]
         # remove avg-features
-        obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes - 1, obj_bboxes[1:]
-        pad_obj_features, pad_obj_mask, pad_obj_bboxes = self._pad_features(
+        obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes-1, obj_bboxes[1:]
+        pad_obj_features, pad_obj_mask, pad_obj_bboxes= self._pad_features(
             obj_features, obj_bboxes, obj_num_boxes, self.max_obj_num
         )
 
         # add ocr-features and bounding boxes
         ocr_features, ocr_num_boxes, ocr_bboxes, _ = self.ocr_features_reader[image_id]
         # remove avg-features
-        ocr_features, ocr_num_boxes, ocr_bboxes = ocr_features[1:], ocr_num_boxes - 1, ocr_bboxes[1:]
-        pad_ocr_features, pad_ocr_mask, pad_ocr_bboxes = self._pad_features(
+        ocr_features, ocr_num_boxes, ocr_bboxes = ocr_features[1:], ocr_num_boxes-1, ocr_bboxes[1:]
+        pad_ocr_features, pad_ocr_mask, pad_ocr_bboxes= self._pad_features(
             ocr_features, ocr_bboxes, ocr_num_boxes, self.max_ocr_num
         )
 
@@ -376,7 +362,7 @@ class TextVQADataset(Dataset):
         item["co_attention_mask"] = co_attention_mask
 
         # process answers (dynamic sampling)
-        cleaned_answers = entry["answers"]
+        cleaned_answers = [Processors.word_cleaner(word) for word in entry["answers"]]
         cleaned_ocr_tokens = entry["cleaned_ocr_tokens"]
         processed_answers = self.processors.answer_processor({
             "answers": cleaned_answers,
@@ -419,6 +405,24 @@ class TextVQADataset(Dataset):
                 )
                 entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_1)
                 entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_2)
+
+            if self.heads_type == "mix":
+                spatial_adj_matrix_quad4 = torch_broadcast_adj_matrix(
+                    torch.from_numpy(entry["spatial_adj_matrix_quad4"]),
+                    label_num=12
+                )
+                entry["spatial_adj_matrix_quad4"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_quad4)
+
+                spatial_adj_matrix_share3_1 = torch_broadcast_adj_matrix(
+                    torch.from_numpy(entry["spatial_adj_matrix_share3_1"]),
+                    label_num=12
+                )
+                spatial_adj_matrix_share3_2 = torch_broadcast_adj_matrix(
+                    torch.from_numpy(entry["spatial_adj_matrix_share3_2"]),
+                    label_num=12
+                )
+                entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_1)
+                entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_2)
         else:
             try:
                 assert len(entry["spatial_adj_matrix"].shape) == 3
@@ -431,10 +435,14 @@ class TextVQADataset(Dataset):
         item.update(entry)
 
         # remove unwanted keys
-        unwanted_keys = ['spatial_adj_matrix_quad4',
-                         'spatial_adj_matrix_share3_1',
+        unwanted_keys = ['spatial_adj_matrix_share3_1',
                          'spatial_adj_matrix_share3_2',
-                         'cleaned_ocr_tokens']
+                         'cleaned_ocr_tokens',
+                         'image_id',
+                         'image_path']
+
+        if self.heads_type == "share3":
+            unwanted_keys.append("spatial_adj_matrix_quad4")
 
         for key in unwanted_keys:
             if key in item:
@@ -467,6 +475,7 @@ class Processors:
         answer_config.max_ocr_tokens = 50
         answer_config.vocab_type = vocab_type
         self.answer_processor = M4CAnswerProcessor(answer_config)
+        self.only_registry = only_registry
 
         # Attach bert-tokenizer
         registry["bert_tokenizer"] = bert_tokenizer

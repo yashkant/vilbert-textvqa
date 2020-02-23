@@ -15,7 +15,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 import torch.distributed as dist
 from torch.optim import Adam
-from torch.utils.data import DataLoader, Dataset, RandomSampler
+from torch.utils.data import DataLoader, Dataset, RandomSampler, ConcatDataset
 from torch.utils.data.distributed import DistributedSampler
 from pytorch_transformers.tokenization_bert import BertTokenizer
 from pytorch_transformers.tokenization_roberta import RobertaTokenizer
@@ -23,7 +23,6 @@ from vilbert.datasets import DatasetMapTrain, DatasetMapEval
 from vilbert.datasets._image_features_reader import ImageFeaturesH5Reader
 from vilbert.datasets.textvqa_metrics import TextVQAAccuracy
 import pdb
-from tools.registry import registry
 from torch.optim.lr_scheduler import (
     LambdaLR,
     ReduceLROnPlateau,
@@ -36,6 +35,7 @@ from pytorch_transformers.optimization import (
     WarmupLinearSchedule,
 )
 from vilbert.optimization import RAdam
+from tools.registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,8 @@ class M4CandSpatialLoss(nn.Module):
 
         # spatial loss
         assert "spatial_scores" in batch_dict
+        assert "spatial_loss_weight" in registry
+        assert "textvqa_loss_weight" in registry
         spa_loss_mask = batch_dict["spatial_loss_mask"].float()
         # Todo: When all the relations are 0, argmax will return an arbitrary number between 0-11 (check it is masked)
         spa_targets = batch_dict["spatial_adj_matrix"].argmax(dim=-1).view(-1)
@@ -88,12 +90,14 @@ class M4CandSpatialLoss(nn.Module):
         spa_losses *= spa_loss_mask
         spa_count = torch.max(torch.sum(spa_loss_mask), self.one.to(spa_losses.device))
         spa_loss = torch.sum(spa_losses) / spa_count
-        total_loss = loss + spa_loss
+        total_loss = loss*(registry["textvqa_loss_weight"]) + spa_loss*(registry["spatial_loss_weight"])
 
         if self.print_count % 20 == 0:
             round_print = lambda x: round(float(x), 4)
             logger.info(f"Spatial Loss: {round_print(spa_loss)}, "
                         f"TextVQA Loss: {round_print(loss)}, "
+                        f"Spatial Loss weight: {round_print(registry['spatial_loss_weight'])}, "
+                        f"TextVQA Loss weight: {round_print(registry['textvqa_loss_weight'])}, "
                         f"Total Loss: {round_print(total_loss)}")
 
         return total_loss
@@ -211,16 +215,16 @@ MetricsMap = {
 }
 
 
-def ForwardModelsVal(args, task_cfg, device, task_id, batch_dict, model, task_losses):
-    # batch = tuple(t.cuda(device=device, non_blocking=True) for t in batch)
-
-    # import pdb
-    # pdb.set_trace()
-
+def ForwardModelsVal(args,
+                     task_cfg,
+                     device,
+                     task_id,
+                     batch_dict,
+                     model,
+                     task_losses):
     for key, value in batch_dict.items():
         if isinstance(value, torch.Tensor):
             batch_dict[key] = value.cuda(device=device, non_blocking=True)
-    
     question = batch_dict["question_indices"]
     batch_size = len(batch_dict["question_id"])
     batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
@@ -230,7 +234,7 @@ def ForwardModelsVal(args, task_cfg, device, task_id, batch_dict, model, task_lo
     
     # TODO: Fix this ugly hack! 
     if registry.get("is_running_validation", False):
-        return None, None, None, batch_dict
+        return None, None, None
 
     if task_cfg[task_id]["loss"] == "TextVQAandSpatialLoss":
         loss = task_losses[task_id](batch_dict)
@@ -287,8 +291,7 @@ def ForwardModelsVal(args, task_cfg, device, task_id, batch_dict, model, task_lo
         """
     )
 
-    return float(loss), float(batch_acc), batch_size, batch_dict,
-
+    return float(loss), float(batch_acc), batch_size
 
 
 def ForwardModelsTrain(
@@ -302,10 +305,6 @@ def ForwardModelsTrain(
         model,
         task_losses,
 ):
-    # given the current task, decided whether to forward the model and forward with specific loss.
-
-    # import pdb
-    # pdb.set_trace()
 
     # reset the task iteration when needed.
     if task_count[task_id] % len(task_dataloader_train[task_id]) == 0:
@@ -317,137 +316,6 @@ def ForwardModelsTrain(
     for key, value in batch_dict.items():
         if isinstance(value, torch.Tensor):
             batch_dict[key] = value.cuda(device=device, non_blocking=True)
-    
-    # Whole bunch of commented code. 
-    (
-        """
-        # batch_dict = tuple(t.cuda(device=device, non_blocking=True) for t in batch if isinstance(t, torch.Tensor))
-        # if task_id == "TASK4" or task_id == "TASK17":
-        #     features, spatials, image_mask, question, target, input_mask, segment_ids, multiple_choice_ids, co_attention_mask, question_id = (
-        #         batch
-        #     )
-        # else:
-        #     features, spatials, image_mask, question, target, input_mask, segment_ids, co_attention_mask, image_id, question_id = (
-        #         batch
-        #     )
-
-        # batch_size = batch_dict["pad_obj_features"].size(0)
-        # target = batch_dict["targets"]
-        # if task_cfg[task_id]["process"] in ["dialog"]:
-        #     max_num_bbox = features.size(1)
-        #     nround = question.size(1)
-        #     num_options = question.size(2)
-        #     rbatch_size = batch_size * nround
-        #     question = question.view(rbatch_size, question.size(2), question.size(3))
-        #     target = target.view(-1)
-        #     input_mask = input_mask.view(
-        #         rbatch_size, input_mask.size(2), input_mask.size(3)
-        #     )
-        #     segment_ids = segment_ids.view(
-        #         rbatch_size, segment_ids.size(2), segment_ids.size(3)
-        #     )
-        #     co_attention_mask = co_attention_mask.view(
-        #         rbatch_size,
-        #         co_attention_mask.size(2),
-        #         co_attention_mask.size(3),
-        #         co_attention_mask.size(4),
-        #     )
-        #
-        #     features = (
-        #         features.unsqueeze(1)
-        #         .unsqueeze(1)
-        #         .expand(batch_size, nround, num_options, max_num_bbox, 2048)
-        #         .contiguous()
-        #         .view(-1, max_num_bbox, 2048)
-        #     )
-        #     spatials = (
-        #         spatials.unsqueeze(1)
-        #         .unsqueeze(1)
-        #         .expand(batch_size, nround, num_options, max_num_bbox, 5)
-        #         .contiguous()
-        #         .view(-1, max_num_bbox, 5)
-        #     )
-        #     image_mask = (
-        #         image_mask.unsqueeze(1)
-        #         .expand(batch_size, nround, num_options, max_num_bbox)
-        #         .contiguous()
-        #         .view(-1, max_num_bbox)
-        #     )
-        #
-        #     question = question.view(-1, question.size(2))
-        #     input_mask = input_mask.view(-1, input_mask.size(2))
-        #     segment_ids = segment_ids.view(-1, segment_ids.size(2))
-        #     co_attention_mask = co_attention_mask.view(
-        #         -1, co_attention_mask.size(2), co_attention_mask.size(3)
-        #     )
-        #     batch_size = rbatch_size
-        #
-        # elif task_cfg[task_id]["process"] in ["expand"]:
-        #     max_num_bbox = features.size(1)
-        #     num_options = question.size(1)
-        #     features = (
-        #         features.unsqueeze(1)
-        #         .expand(batch_size, num_options, max_num_bbox, 2048)
-        #         .contiguous()
-        #         .view(-1, max_num_bbox, 2048)
-        #     )
-        #     spatials = (
-        #         spatials.unsqueeze(1)
-        #         .expand(batch_size, num_options, max_num_bbox, 5)
-        #         .contiguous()
-        #         .view(-1, max_num_bbox, 5)
-        #     )
-        #     image_mask = (
-        #         image_mask.unsqueeze(1)
-        #         .expand(batch_size, num_options, max_num_bbox)
-        #         .contiguous()
-        #         .view(-1, max_num_bbox)
-        #     )
-        #     question = question.view(-1, question.size(2))
-        #     input_mask = input_mask.view(-1, input_mask.size(2))
-        #     segment_ids = segment_ids.view(-1, segment_ids.size(2))
-        #     co_attention_mask = co_attention_mask.view(
-        #         -1, co_attention_mask.size(2), co_attention_mask.size(3)
-        #     )
-        #
-        # elif task_cfg[task_id]["process"] in ["retrieval"]:
-        #     max_num_bbox = features.size(1)
-        #     num_options = question.size(1)
-        #     features = features.view(-1, features.size(2), features.size(3))
-        #     spatials = spatials.view(-1, spatials.size(2), spatials.size(3))
-        #     image_mask = image_mask.view(-1, image_mask.size(2))
-        #     question = question.view(-1, question.size(2))
-        #     input_mask = input_mask.view(-1, input_mask.size(2))
-        #     segment_ids = segment_ids.view(-1, segment_ids.size(2))
-        #     co_attention_mask = co_attention_mask.view(
-        #         -1, co_attention_mask.size(2), co_attention_mask.size(3)
-        #     )
-        #
-        # elif task_cfg[task_id]["process"] in ["nlvr"]:
-        #     batch_size = features.size(0)
-        #     max_num_bbox = features.size(1)
-        #     num_options = question.size(1)
-        #     features = features.view(
-        #         batch_size * 2, int(features.size(1) / 2), features.size(2)
-        #     )
-        #     spatials = spatials.view(
-        #         batch_size * 2, int(spatials.size(1) / 2), spatials.size(2)
-        #     )
-        #     image_mask = image_mask.view(batch_size * 2, int(image_mask.size(1) / 2))
-        #     question = question.repeat(1, 2)
-        #     question = question.view(batch_size * 2, int(question.size(1) / 2))
-        #     input_mask = input_mask.repeat(1, 2)
-        #     input_mask = input_mask.view(batch_size * 2, int(input_mask.size(1) / 2))
-        #     segment_ids = segment_ids.repeat(1, 2)
-        #     segment_ids = segment_ids.view(batch_size * 2, int(segment_ids.size(1) / 2))
-        #     co_attention_mask = co_attention_mask.view(
-        #         batch_size * 2,
-        #         int(co_attention_mask.size(1) / 2),
-        #         co_attention_mask.size(2),
-        #     )
-        """
-    )
-
     question = batch_dict["question_indices"]
     batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
 
@@ -461,61 +329,6 @@ def ForwardModelsTrain(
     textvqa_metric = MetricsMap["TextVQA"]
     batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, batch_dict["textvqa_scores"])
 
-    # Whole bunch of commented code. 
-    (
-        # # for different task, we use different output to calculate the loss.
-        # if task_cfg[task_id]["type"] == "VL-classifier":
-        #     loss = task_losses[task_id](vil_prediction, target)
-        #     loss = loss.mean() * target.size(1)
-        #     batch_score = compute_score_with_logits(vil_prediction, target).sum() / float(
-        #         batch_size
-        #     )
-        #
-        # elif task_cfg[task_id]["type"] == "VL-classifier-GQA":
-        #     loss = task_losses[task_id](vil_prediction_gqa, target)
-        #     loss = loss.mean() * target.size(1)
-        #     batch_score = compute_score_with_logits(
-        #         vil_prediction_gqa, target
-        #     ).sum() / float(batch_size)
-        #
-        # elif task_cfg[task_id]["type"] == "VL-logit":
-        #     vil_logit = vil_logit.view(batch_size, num_options)
-        #     loss = task_losses[task_id](vil_logit, target)
-        #     _, preds = torch.max(vil_logit, 1)
-        #     batch_score = float((preds == target).sum()) / float(batch_size)
-        #
-        # elif task_cfg[task_id]["type"] == "V-logit":
-        #     loss = task_losses[task_id](vision_logit, target)
-        #     loss = loss.mean() * target.size(1)
-        #     _, select_idx = torch.max(vision_logit, dim=1)
-        #     select_target = target.squeeze(2).gather(1, select_idx.view(-1, 1))
-        #     batch_score = float(torch.sum(select_target > 0.5)) / batch_size
-        #
-        # elif task_cfg[task_id]["type"] == "V-logit-mc":
-        #     vision_logit = vision_logit[:, 101:]
-        #     vision_logit = vision_logit.squeeze(2).gather(1, multiple_choice_ids)
-        #     vision_logit = vision_logit.unsqueeze(2)
-        #     loss = task_losses[task_id](vision_logit, target)
-        #     loss = loss.mean() * target.size(1)
-        #     _, preds = torch.max(vision_logit, dim=1)
-        #     _, target = torch.max(target, dim=1)
-        #     batch_score = float((preds == target).sum()) / float(batch_size)
-        #
-        # elif task_cfg[task_id]["type"] == "VL-binary-classifier":
-        #     loss = task_losses[task_id](vil_binary_prediction, target)
-        #     loss = loss.mean()
-        #     batch_score = compute_score_with_logits(
-        #         vil_binary_prediction, target
-        #     ).sum() / float(batch_size)
-        #
-        # elif task_cfg[task_id]["type"] == "VL-tri-classifier":
-        #     loss = task_losses[task_id](vil_tri_prediction, target)
-        #     loss = loss.mean()
-        #     batch_score = compute_score_with_logits(
-        #         vil_tri_prediction, target
-        #     ).sum() / float(batch_size)
-    )
-    
     return loss, batch_acc
 
 
@@ -543,40 +356,6 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
             args.bert_model, do_lower_case=args.do_lower_case
         )
 
-    task_feature_reader1 = {}
-    task_feature_reader2 = {}
-    for i, task_id in enumerate(ids):
-        task = "TASK" + task_id
-        if task_cfg[task]["features_h5path1"] not in task_feature_reader1:
-            task_feature_reader1[task_cfg[task]["features_h5path1"]] = None
-        if task_cfg[task]["features_h5path2"] not in task_feature_reader2:
-            task_feature_reader2[task_cfg[task]["features_h5path2"]] = None
-
-    # (YK): Use with test split
-    # import pdb
-    # pdb.set_trace()
-    #
-    # for features_h5path in task_feature_reader1.keys():
-    #     task_feature_reader1.pop(features_h5path)
-    #     if features_h5path != "":
-    #         task_feature_reader1[features_h5path.format("trainval")] = None
-    #
-    # for features_h5path in task_feature_reader2.keys():
-    #     task_feature_reader2.pop(features_h5path)
-    #     if features_h5path != "":
-    #         task_feature_reader2[features_h5path.format("trainval")] = None
-
-    # initilzie the feature reader
-    for features_h5path in task_feature_reader1.keys():
-        if features_h5path != "":
-            task_feature_reader1[features_h5path] = ImageFeaturesH5Reader(
-                features_h5path, args.in_memory
-            )
-    for features_h5path in task_feature_reader2.keys():
-        if features_h5path != "":
-            task_feature_reader2[features_h5path] = ImageFeaturesH5Reader(
-                features_h5path, args.in_memory
-            )
 
     task_datasets_train = {}
     task_datasets_val = {}
@@ -586,87 +365,75 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
     task_batch_size = {}
     task_num_iters = {}
 
-    for i, task_id in enumerate(ids):
-        task = "TASK" + task_id
-        task_name = task_cfg[task]["name"]
-        task_ids.append(task)
-        batch_size = task_cfg[task]["batch_size"] // args.gradient_accumulation_steps
-        num_workers = args.num_workers
-        if args.local_rank != -1:
-            batch_size = int(batch_size / dist.get_world_size())
-            num_workers = int(num_workers / dist.get_world_size())
+    task_id = "19"
+    task = "TASK" + task_id
+    task_ids.append(task)
+    batch_size = task_cfg[task]["batch_size"] // args.gradient_accumulation_steps
+    num_workers = args.num_workers
+    if args.local_rank != -1:
+        batch_size = int(batch_size / dist.get_world_size())
+        num_workers = int(num_workers / dist.get_world_size())
 
-        # num_workers = int(num_workers / len(ids))
-        logger.info(
-            "Loading %s Dataset with batch size %d"
-            % (task_cfg[task]["name"], batch_size)
+    if "use_datasets" not in task_cfg[task]:
+        task_cfg[task]['use_datasets'] = ["textvqa"]
+        logger.info("Did not find `use_datasets` key in task configuration, generating it!")
+
+    logger.info(
+        f"Loading Train Dataset(s) {task_cfg[task]['use_datasets']}  with batch size {batch_size}"
+    )
+
+
+    key_map = {
+        "textvqa": "TextVQA",
+        "stvqa": "STVQA"
+    }
+
+    train_datasets = []
+    for entry in task_cfg[task]["use_datasets"]:
+        dataset = DatasetMapTrain[key_map[entry]](
+            split="train",
+            tokenizer=tokenizer,
+            bert_model=args.bert_model,
+            padding_index=0,
+            max_seq_length=task_cfg[task]["max_seq_length"],
+            max_region_num=task_cfg[task]["max_region_num"],
+            extra_args=task_cfg[task]
         )
+        train_datasets.append(dataset)
 
-        task_datasets_train[task] = None
-        if "train" in split:
-            task_datasets_train[task] = DatasetMapTrain[task_name](
-                task=task_cfg[task]["name"],
-                dataroot=task_cfg[task]["dataroot"],
-                annotations_jsonpath=task_cfg[task]["train_annotations_jsonpath"],
-                split=task_cfg[task]["train_split"],
-                image_features_reader=task_feature_reader1[
-                    task_cfg[task]["features_h5path1"]
-                ],
-                gt_image_features_reader=task_feature_reader2[
-                    task_cfg[task]["features_h5path2"]
-                ],
-                tokenizer=tokenizer,
-                bert_model=args.bert_model,
-                clean_datasets=args.clean_train_sets,
-                padding_index=0,
-                max_seq_length=task_cfg[task]["max_seq_length"],
-                max_region_num=task_cfg[task]["max_region_num"],
-                extra_args=task_cfg[task]
-            )
+    task_datasets_train["separate_datasets"] = train_datasets
+    task_datasets_train[task] = ConcatDataset(train_datasets)
 
-        task_datasets_val[task] = None
-        if "val" in split:
-            task_datasets_val[task] = DatasetMapTrain[task_name](
-                task=task_cfg[task]["name"],
-                dataroot=task_cfg[task]["dataroot"],
-                annotations_jsonpath=task_cfg[task]["val_annotations_jsonpath"],
-                split=task_cfg[task]["val_split"],
-                image_features_reader=task_feature_reader1[
-                    task_cfg[task]["features_h5path1"]
-                ],
-                gt_image_features_reader=task_feature_reader2[
-                    task_cfg[task]["features_h5path2"]
-                ],
-                tokenizer=tokenizer,
-                bert_model=args.bert_model,
-                clean_datasets=args.clean_train_sets,
-                padding_index=0,
-                max_seq_length=task_cfg[task]["max_seq_length"],
-                max_region_num=task_cfg[task]["max_region_num"],
-                extra_args=task_cfg[task]
-            )
+    if "val_on" not in task_cfg[task]:
+        task_cfg[task]['val_on'] = ["textvqa"]
+        logger.info("Did not find `val_on` key in task configuration, generating it!")
 
-        task_num_iters[task] = 0
-        task_batch_size[task] = 0
-        if "train" in split:
-            if args.local_rank == -1:
-                train_sampler = RandomSampler(task_datasets_train[task])
-            else:
-                # TODO: check if this works with current data generator from disk that relies on next(file)
-                # (it doesn't return item back by index)
-                train_sampler = DistributedSampler(task_datasets_train[task])
+    assert len(task_cfg[task]['val_on']) == 1
+    logger.info(
+        f"Loading Val Dataset {task_cfg[task]['val_on']}  with batch size {batch_size}"
+    )
+    val_task_name = key_map[task_cfg[task]['val_on'][0]]
+    task_datasets_val[task] = DatasetMapTrain[val_task_name](
+        split="val",
+        tokenizer=tokenizer,
+        bert_model=args.bert_model,
+        padding_index=0,
+        max_seq_length=task_cfg[task]["max_seq_length"],
+        max_region_num=task_cfg[task]["max_region_num"],
+        extra_args=task_cfg[task]
+    )
 
-            task_dataloader_train[task] = DataLoader(
-                task_datasets_train[task],
-                sampler=train_sampler,
-                batch_size=batch_size,
-                num_workers=num_workers,
-                pin_memory=True,
-            )
+    task_num_iters[task] = 0
+    task_batch_size[task] = 0
+    if "train" in split:
+        if args.local_rank == -1:
+            train_sampler = RandomSampler(task_datasets_train[task])
+        else:
+            # TODO: check if this works with current data generator from disk that relies on next(file)
+            # (it doesn't return item back by index)
+            train_sampler = DistributedSampler(task_datasets_train[task])
 
-            task_num_iters[task] = len(task_dataloader_train[task])
-            task_batch_size[task] = batch_size
-
+<<<<<<< HEAD
         if "val" in split:
             task_dataloader_val[task] = DataLoader(
                 task_datasets_val[task],
@@ -675,6 +442,27 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
                 num_workers=0,
                 pin_memory=True,
             )
+=======
+        task_dataloader_train[task] = DataLoader(
+            task_datasets_train[task],
+            sampler=train_sampler,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            pin_memory=True,
+        )
+
+        task_num_iters[task] = len(task_dataloader_train[task])
+        task_batch_size[task] = batch_size
+
+    if "val" in split:
+        task_dataloader_val[task] = DataLoader(
+            task_datasets_val[task],
+            shuffle=False,
+            batch_size=32,
+            num_workers=2,
+            pin_memory=True,
+        )
+>>>>>>> 502c0698fcb2d1b71c4337877347b2b8e9eb05ec
 
     return (
         task_batch_size,

@@ -15,35 +15,18 @@ import tqdm
 MAP_SIZE = 1099511627776
 
 
-def get_parser():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--features_dir", default="/srv/share/ykant3/vilbert-mt/features/obj/train/", type=str, help="Path to extracted features file"
-    )
-    parser.add_argument(
-        "--lmdb_file", default="/srv/share/ykant3/vilbert-mt/features/obj/trainval_obj.lmdb", type=str, help="Path to generated LMDB file"
-    )
-    return parser
-
-
 OBJ_FEATURES_SCENETEXT = [
     "/srv/share/ykant3/scene-text/features/obj/train/train_task/",
-    "/srv/share/ykant3/scene-text/features/obj/test/test_task1/",
-    "/srv/share/ykant3/scene-text/features/obj/test/test_task2/",
     "/srv/share/ykant3/scene-text/features/obj/test/test_task3/"
 ]
 
 OBJ_LMDB_SCENETEXT = [
-    "/srv/share/ykant3/scene-text/features/obj/lmdbs/train_task.lmdb",
-    "/srv/share/ykant3/scene-text/features/obj/lmdbs/test_task1.lmdb",
-    "/srv/share/ykant3/scene-text/features/obj/lmdbs/test_task2.lmdb",
-    "/srv/share/ykant3/scene-text/features/obj/lmdbs/test_task3.lmdb"
+    "/srv/share/ykant3/scene-text/features/obj/lmdbs/train_task_fixed2.lmdb",
+    "/srv/share/ykant3/scene-text/features/obj/lmdbs/test_task3_fixed2.lmdb"
 ]
 
 IMAGES_SCENETEXT = [
     "/srv/share/ykant3/scene-text/train/train_task/",
-    "/srv/share/ykant3/scene-text/test/test_task1/",
-    "/srv/share/ykant3/scene-text/test/test_task2/",
     "/srv/share/ykant3/scene-text/test/test_task3/"
 ]
 
@@ -65,6 +48,11 @@ if __name__ == "__main__":
                     item = {}
                     id = str(infile).encode()
                     id_list.append(id)
+
+                    if os.path.split(infile)[-1] == "COCO_train2014_000000084731.npy":
+                        import pdb
+                        pdb.set_trace()
+
                     # Image-ids collide for VisualGenomes!
                     # Using feature-paths as indices instead!
                     item["image_id"] = reader.get("image_id")

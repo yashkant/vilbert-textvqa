@@ -856,11 +856,25 @@ class M4CAnswerProcessor:
     def __init__(self, config, *args, **kwargs):
         vocab5k = "/srv/share/ykant3/m4c-release/data/m4c_vocabs/textvqa/fixed_answer_vocab_textvqa_5k.txt"
         vocab4k = "/srv/share/ykant3/pythia/vocabs/answers_textvqa_more_than_1_m4c_no_dups.txt"
+        vocab4k_filtered = "/srv/share/ykant3/pythia/vocabs/answers_textvqa_more_than_1_m4c_no_dups_filtered.txt"
+        vocab_none = "/srv/share/ykant3/pythia/vocabs/vocab_none.txt"
+        vocab4k_latest = "/srv/share/ykant3/pythia/vocabs/answer_vocab_textvqa_4k_filtered.txt"
+        vocab5k_stvqa = "/srv/share/ykant3/m4c-release/data/m4c_vocabs/stvqa/fixed_answer_vocab_stvqa_5k.txt"
 
         if config.vocab_type == "5k":
             self.answer_vocab = VocabDict(vocab5k, *args, **kwargs)
-        else:
+        elif config.vocab_type == "4k_filtered":
+            self.answer_vocab = VocabDict(vocab4k_filtered, *args, **kwargs)
+        elif config.vocab_type == "4k":
             self.answer_vocab = VocabDict(vocab4k, *args, **kwargs)
+        elif config.vocab_type == "none":
+            self.answer_vocab = VocabDict(vocab_none, *args, **kwargs)
+        elif config.vocab_type == "4k_latest":
+            self.answer_vocab = VocabDict(vocab4k_latest, *args, **kwargs)
+        elif config.vocab_type == "5k_stvqa":
+            self.answer_vocab = VocabDict(vocab5k_stvqa, *args, **kwargs)
+        else:
+            raise ValueError
 
         self.PAD_IDX = self.answer_vocab.word2idx('<pad>')
         self.BOS_IDX = self.answer_vocab.word2idx('<s>')

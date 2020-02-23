@@ -25,17 +25,21 @@ from tqdm import tqdm
 # image_folders
 IMAGES_SCENETEXT = [
     "/srv/share/ykant3/scene-text/train/train_task/",
-    "/srv/share/ykant3/scene-text/test/test_task1/",
-    "/srv/share/ykant3/scene-text/test/test_task2/",
     "/srv/share/ykant3/scene-text/test/test_task3/"
 ]
 
 OBJ_FEATURES_SCENETEXT = [
     "/srv/share/ykant3/scene-text/features/obj/train/train_task/",
-    "/srv/share/ykant3/scene-text/features/obj/test/test_task1/",
-    "/srv/share/ykant3/scene-text/features/obj/test/test_task2/",
     "/srv/share/ykant3/scene-text/features/obj/test/test_task3/"
 ]
+
+IMDB_SCENETEXT_RESPONSE_FIXED_PROCESSED_SPLIT = [
+    ["/srv/share/ykant3/scene-text/train/imdb/train_task_response_meta_fixed_processed_train.npy",
+    "/srv/share/ykant3/scene-text/train/imdb/train_task_response_meta_fixed_processed_val.npy"],
+    ["/srv/share/ykant3/scene-text/test/imdb/test_task3_response_meta_fixed_processed.npy"],
+]
+
+IMAGES_COCOTEXT = "/srv/share/datasets/coco/train2014"
 
 
 class FeatureExtractor:
@@ -229,30 +233,47 @@ class FeatureExtractor:
         info["features"] = feature.cpu().numpy()
         np.save(file_base_name, info)
 
-    def extract_features(self, image_dir, save_dir):
+    def extract_features(self, image_dir, save_dir, imdb_list):
+        # replace_paths
+        replace_paths = []
+        for imdb_file in imdb_list:
+            imdb_data = np.load(imdb_file, allow_pickle=True)
+            replace_paths.extend(imdb_data[0]["replaced_paths"])
+
+
         # paths to all the items image_fol
         abs_paths = glob.glob(image_dir + "/**", recursive=True)
         files = [path for path in abs_paths if path.endswith((".jpg", ".JPEG"))]
 
+        assert len(replace_paths) == len(set(replace_paths).intersection(set(files)))
+
+        # replace paths with actual coco-paths
+        coco_paths = []
+        for path in replace_paths:
+            coco_path = os.path.join(IMAGES_COCOTEXT, os.path.split(path)[-1])
+            assert os.path.exists(coco_path)
+            coco_paths.append(coco_path)
+
         assert os.path.exists(image_dir)
         assert len(files) > 0
-        for file in tqdm(files):
+        for replace_path, coco_path in tqdm(zip(replace_paths, coco_paths), total=len(replace_paths)):
             try:
-                features, infos = self.get_detectron_features([file])
-                save_path = file.replace(image_dir, save_dir)
+                features, infos = self.get_detectron_features([coco_path])
+                save_path = replace_path.replace(image_dir, save_dir)
                 _save_dir = os.path.split(save_path)[0]
                 if not os.path.exists(_save_dir):
                     os.makedirs(_save_dir)
                     print(f"Creating Dir: {_save_dir}")
                 self._save_feature(save_path, features[0], infos[0])
             except BaseException:
-                print("Couldn't extract from: ", file)
+                print("Couldn't extract from: ", coco_path)
 
 
 if __name__ == "__main__":
     feature_extractor = FeatureExtractor()
-    IMAGES_SCENETEXT = IMAGES_SCENETEXT
-    OBJ_FEATURES_SCENETEXT = OBJ_FEATURES_SCENETEXT
-    for image_dir, feature_dir in zip(IMAGES_SCENETEXT, OBJ_FEATURES_SCENETEXT):
+    # Todo: Store fc7 weights from here.
+    for image_dir, feature_dir, imdb_list in zip(IMAGES_SCENETEXT,
+                                                 OBJ_FEATURES_SCENETEXT,
+                                                 IMDB_SCENETEXT_RESPONSE_FIXED_PROCESSED_SPLIT):
         print(f"Extracting from: {image_dir} \nSaving to: {feature_dir}")
-        feature_extractor.extract_features(image_dir, feature_dir)
+        feature_extractor.extract_features(image_dir, feature_dir, imdb_list)

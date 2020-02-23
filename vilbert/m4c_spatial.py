@@ -178,27 +178,8 @@ class M4C(nn.Module):
     def _build_output(self):
         # dynamic OCR-copying scores with pointer network
         self.ocr_ptr_net = OcrPtrNet(hidden_size=self.mmt_config.hidden_size, query_key_size=self.mmt_config.ptr_query_size)
-
-        if registry.vocab_type == "5k":
-            num_outputs = 5000
-        else:
-            num_outputs = 3998
-
+        num_outputs = len(registry.answer_vocab)
         self.classifier = nn.Linear(self.mmt_config.hidden_size, num_outputs)
-        # fixed answer vocabulary scores
-        # num_choices = registry.get(self._datasets[0] + "_num_final_outputs")
-        # # remove the OCR copying dimensions in LoRRA's classifier output
-        # # (OCR copying will be handled separately)
-        # num_choices -= self.config.classifier.ocr_max_num
-        # self.classifier = ClassifierLayer(
-        #     self.config["classifier"]["type"],
-        #     in_dim=self.mmt_config.hidden_size,
-        #     out_dim=num_choices,
-        #     **self.config["classifier"]["params"]
-        # )
-        # self.answer_processor = registry.get(
-        #     self._datasets[0] + "_answer_processor"
-        # )
 
     def _build_aux_heads(self):
         from vilbert.vilbert import SimpleClassifier
@@ -674,34 +655,83 @@ class BertSpatialEncoder(nn.Module):
         self.spatial_layer = nn.ModuleList([SpatialBertLayer(config) for _ in range(config.num_spatial_layers)])
         self.spatial_type = config.spatial_type
 
-    def forward(self, hidden_states, attention_mask, spatial_adj_matrix, head_mask=None):
+        if config.mix_list is None:
+            self.mix_list = ["none"]*len(self.layer_type_list)
+        else:
+            self.mix_list = config.mix_list
+        assert len(self.mix_list) == len(self.layer_type_list)
+        logger.info(f"Mix list: {self.mix_list}")
+
+        self.normal_layers = nn.ModuleList([BertLayer(config) for _ in range(self.num_normal_layers)])
+        self.spatial_layers = nn.ModuleList([SpatialBertLayer(config) for _ in range(self.num_spatial_layers)])
+        self.implicit_layers = nn.ModuleList([SpatialBertLayer(config, True) for _ in range(self.num_implicit_layers)])
+
+    def forward(self, hidden_states, attention_mask, batch_dict, head_mask=None):
         all_hidden_states = ()
         all_attentions = ()
 
-        # re-arrange spatial-layers if needed
-        layers = [("normal", self.layer), ("spatial", self.spatial_layer)]
-        if self.spatial_type == "bottom":
-            layers = [layers[1], layers[0]]
-        else:
-            assert self.spatial_type == "top"
+        normal_iter = iter(self.normal_layers)
+        spatial_iter = iter(self.spatial_layers)
+        implicit_iter = iter(self.implicit_layers)
 
-        # Run through layers
-        for layer_type, layers_set in layers:
-            for i, layer_module in enumerate(layers_set):
-                if self.output_hidden_states:
-                    all_hidden_states = all_hidden_states + (hidden_states,)
-
-                if layer_type == "normal":
-                    layer_outputs = layer_module(hidden_states, attention_mask, head_mask[i])
-                elif layer_type == "spatial":
-                    layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
+        for layer_type, mix_type in zip(self.layer_type_list, self.mix_list):
+            if self.output_hidden_states:
+                all_hidden_states = all_hidden_states + (hidden_states,)
+            if layer_type == "n":
+                layer_module = next(normal_iter)
+                layer_outputs = layer_module(hidden_states, attention_mask)
+            elif layer_type == "s":
+                layer_module = next(spatial_iter)
+                if mix_type == "share3":
+                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_share3"]
+                elif mix_type == "quad4":
+                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_quad4"]
                 else:
-                    raise ValueError
+                    spatial_adj_matrix = batch_dict["spatial_adj_matrix"]
+                layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
+            elif layer_type == "i":
+                layer_module = next(implicit_iter)
+                if mix_type == "share3":
+                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_share3"]
+                elif mix_type == "quad4":
+                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_quad4"]
+                else:
+                    spatial_adj_matrix = batch_dict["spatial_adj_matrix"]
+                layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
+            else:
+                raise ValueError
+            hidden_states = layer_outputs[0]
+            if self.output_attentions:
+                all_attentions = all_attentions + (layer_outputs[1],)
 
-                hidden_states = layer_outputs[0]
+        assert next(normal_iter, None) is None
+        assert next(spatial_iter, None) is None
+        assert next(implicit_iter, None) is None
 
-                if self.output_attentions:
-                    all_attentions = all_attentions + (layer_outputs[1],)
+        # # re-arrange spatial-layers if needed
+        # layers = [("normal", self.layer), ("spatial", self.spatial_layer)]
+        # if self.spatial_type == "bottom":
+        #     layers = [layers[1], layers[0]]
+        # else:
+        #     assert self.spatial_type == "top"
+        #
+        # # Run through layers
+        # for layer_type, layers_set in layers:
+        #     for i, layer_module in enumerate(layers_set):
+        #         if self.output_hidden_states:
+        #             all_hidden_states = all_hidden_states + (hidden_states,)
+        #
+        #         if layer_type == "normal":
+        #             layer_outputs = layer_module(hidden_states, attention_mask, head_mask[i])
+        #         elif layer_type == "spatial":
+        #             layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
+        #         else:
+        #             raise ValueError
+        #
+        #         hidden_states = layer_outputs[0]
+        #
+        #         if self.output_attentions:
+        #             all_attentions = all_attentions + (layer_outputs[1],)
 
         # Add last layer
         if self.output_hidden_states:
@@ -785,7 +815,7 @@ class MMT(BertPreTrainedModel):
         encoder_outputs = self.encoder(
             encoder_inputs,
             extended_attention_mask,
-            batch_dict["spatial_adj_matrix"],
+            batch_dict,
             head_mask=head_mask
         )
 

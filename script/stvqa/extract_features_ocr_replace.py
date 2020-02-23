@@ -22,27 +22,25 @@ from maskrcnn_benchmark.utils.model_serialization import load_state_dict
 from tqdm import tqdm
 
 
-IMDB_SCENETEXT_RESPONSE_FIXED = [
-    "/srv/share/ykant3/scene-text/train/imdb/train_task_response_meta_fixed.npy",
-    "/srv/share/ykant3/scene-text/test/imdb/test_task1_response_meta_fixed.npy",
-    "/srv/share/ykant3/scene-text/test/imdb/test_task2_response_meta_fixed.npy",
-    "/srv/share/ykant3/scene-text/test/imdb/test_task3_response_meta_fixed.npy",
+IMDB_SCENETEXT_RESPONSE_FIXED_PROCESSED_SPLIT = [
+    ["/srv/share/ykant3/scene-text/train/imdb/train_task_response_meta_fixed_processed_train.npy",
+    "/srv/share/ykant3/scene-text/train/imdb/train_task_response_meta_fixed_processed_val.npy"],
+    ["/srv/share/ykant3/scene-text/test/imdb/test_task3_response_meta_fixed_processed.npy"],
 ]
 
 OCR_FEATURES_SCENETEXT = [
     "/srv/share/ykant3/scene-text/features/ocr/train/train_task/",
-    "/srv/share/ykant3/scene-text/features/ocr/test/test_task1/",
-    "/srv/share/ykant3/scene-text/features/ocr/test/test_task2/",
     "/srv/share/ykant3/scene-text/features/ocr/test/test_task3/"
 ]
 
 # image_folders
 IMAGES_SCENETEXT = [
     "/srv/share/ykant3/scene-text/train/train_task/",
-    "/srv/share/ykant3/scene-text/test/test_task1/",
-    "/srv/share/ykant3/scene-text/test/test_task2/",
     "/srv/share/ykant3/scene-text/test/test_task3/"
 ]
+
+IMAGES_COCOTEXT  = "/srv/share/datasets/coco/train2014/"
+
 
 def preprocess_ocr_tokens(info, prefix, suffix):
     """CRUX: given an entry return list of bboxes [x1,y1,x2,y2] and tokens"""
@@ -221,21 +219,26 @@ class FeatureExtractor:
         for i in range(0, len(array), chunk_size):
             yield array[i : i + chunk_size]
 
-    def extract_features(self, imdb_data, save_dir, image_dir):
-        # split = imdb_data[0]["dataset_type"]
+    def extract_features(self, imdb_list, save_dir, image_dir):
+        # replace_paths
+        replace_paths = []
+        imdb_data = []
+        for imdb_file in imdb_list:
+            _data = np.load(imdb_file, allow_pickle=True)
+            imdb_data.extend(_data[1:])
+            replace_paths.extend(_data[0]["replaced_paths"])
+
         prefix, suffix = "google_", "_filtered"
-        for instance in tqdm(imdb_data[1:]):
+        for instance in tqdm(imdb_data):
             image_path = instance["image_path"]
-
-
-
-            image_w, image_h = Image.open(image_path).size
-            instance["image_width"], instance["image_height"] = image_w, image_h
-            assert os.path.exists(image_path)
+            if image_path not in replace_paths:
+                continue
+            coco_path = os.path.join(IMAGES_COCOTEXT, os.path.split(image_path)[-1])
+            assert os.path.exists(coco_path)
             ocr_boxes, ocr_tokens = preprocess_ocr_tokens(instance, prefix, suffix)
             try:
                 if len(ocr_boxes) > 0:
-                    extracted_feat, _ = self.get_detectron_features(image_path, input_boxes=ocr_boxes)
+                    extracted_feat, _ = self.get_detectron_features(coco_path, input_boxes=ocr_boxes)
                 else:
                     extracted_feat = np.zeros((0, 2048), np.float32)
 
@@ -263,8 +266,8 @@ class FeatureExtractor:
 
 if __name__ == "__main__":
     feature_extractor = FeatureExtractor()
-    for imdb_file, save_dir, image_dir in zip(IMDB_SCENETEXT_RESPONSE_FIXED, OCR_FEATURES_SCENETEXT, IMAGES_SCENETEXT):
-        print(f"Reading from: {imdb_file} \nSaving to: {save_dir}")
-        imdb_data = np.load(imdb_file, allow_pickle=True)
-        feature_extractor.extract_features(imdb_data, save_dir, image_dir)
-        # np.save(imdb_file, imdb_data)
+    for imdb_list, save_dir, image_dir in zip(IMDB_SCENETEXT_RESPONSE_FIXED_PROCESSED_SPLIT,
+                                              OCR_FEATURES_SCENETEXT,
+                                              IMAGES_SCENETEXT):
+        print(f"Reading from: {imdb_list} \nSaving to: {save_dir}")
+        feature_extractor.extract_features(imdb_list, save_dir, image_dir)

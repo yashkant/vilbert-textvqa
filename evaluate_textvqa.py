@@ -194,13 +194,13 @@ def evaluate(
     
     with torch.no_grad():
         for i, batch in enumerate(task_dataloader_val[task_id]):
-            _, _, _, batch_dict = ForwardModelsVal(
+            ForwardModelsVal(
                 args, task_cfg, device, task_id, batch, model, task_losses
             )
 
             save_keys = ['question_id', 'topkscores', 'complete_seqs']
             for key in save_keys:
-                predictions[key].append(batch_dict[key])
+                predictions[key].append(batch[key])
 
             sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
             sys.stdout.flush()
