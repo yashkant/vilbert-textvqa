@@ -41,30 +41,55 @@ class BeamSearch():
         batch_dict['topkscores'] = batch_dict['train_prev_inds'].new_full(
             (self._batch_size * self._decode_size, 1), 0.0
         ).detach()
-        # Expand all the features 
-        # Make it [batch_size * beam_size] * ........
-        # each element of batch is repeated beam_size number of time and interleaved. 
-        # a tensor of bs=2 & dim=1 [1, 2] will become [1, 1, 2, 2] of size 4 and dim=1
-        batch_dict['pad_obj_features'] = batch_dict['pad_obj_features'].repeat_interleave(self._decode_size, dim=0)
-        batch_dict['pad_obj_bboxes'] = batch_dict['pad_obj_bboxes'].repeat_interleave(self._decode_size, dim=0)
-        batch_dict['ocr_fasttext'] = batch_dict['ocr_fasttext'].repeat_interleave(self._decode_size, dim=0)
-        batch_dict['ocr_phoc'] = batch_dict['ocr_phoc'].repeat_interleave(self._decode_size, dim=0)
-        batch_dict['pad_ocr_features'] = batch_dict['pad_ocr_features'].repeat_interleave(self._decode_size, dim=0)
-        batch_dict['pad_ocr_bboxes'] = batch_dict['pad_ocr_bboxes'].repeat_interleave(self._decode_size, dim=0)
         
-        batch_dict['question_indices'] = batch_dict['question_indices'].repeat_interleave(self._decode_size, dim=0)
-        batch_dict['question_mask'] = batch_dict['question_mask'].repeat_interleave(self._decode_size, dim=0)
-        batch_dict['pad_obj_mask'] = batch_dict['pad_obj_mask'].repeat_interleave(self._decode_size, dim=0)
-        batch_dict['pad_ocr_mask'] = batch_dict['pad_ocr_mask'].repeat_interleave(self._decode_size, dim=0)
+        self.batch_dict_keys = [
+            'pad_obj_features', 
+            'pad_obj_bboxes', 
+            'ocr_fasttext', 
+            'ocr_phoc',
+            'pad_ocr_features',
+            'pad_ocr_bboxes',
+            'question_indices',
+            'question_mask',
+            'pad_obj_mask',
+            'pad_ocr_mask',
+            'spatial_adj_matrix',
+            'spatial_adj_matrix_share3',
+            'spatial_adj_matrix_quad4',
+            'ocr_mmt_in',
+            'obj_mmt_in', 
+            'question_id',
+        ]
         
-        batch_dict['spatial_adj_matrix_share3'] = batch_dict['spatial_adj_matrix_share3'].repeat_interleave(self._decode_size, dim=0)
-        batch_dict['spatial_adj_matrix_quad4'] = batch_dict['spatial_adj_matrix_quad4'].repeat_interleave(self._decode_size, dim=0)
-        batch_dict['spatial_adj_matrix'] = batch_dict['spatial_adj_matrix'].repeat_interleave(self._decode_size, dim=0)
+        for key in self.batch_dict_keys:
+            if key in batch_dict:
+                batch_dict[key] = batch_dict[key].repeat_interleave(self._decode_size, dim=0)
         
-        batch_dict['ocr_mmt_in'] = batch_dict['ocr_mmt_in'].repeat_interleave(self._decode_size, dim=0)
-        batch_dict['obj_mmt_in'] = batch_dict['obj_mmt_in'].repeat_interleave(self._decode_size, dim=0)
+        # # Expand all the features 
+        # # Make it [batch_size * beam_size] * ........
+        # # each element of batch is repeated beam_size number of time and interleaved. 
+        # # a tensor of bs=2 & dim=1 [1, 2] will become [1, 1, 2, 2] of size 4 and dim=1
+        # batch_dict['pad_obj_features'] = batch_dict['pad_obj_features'].repeat_interleave(self._decode_size, dim=0)
+        # batch_dict['pad_obj_bboxes'] = batch_dict['pad_obj_bboxes'].repeat_interleave(self._decode_size, dim=0)
+        # batch_dict['ocr_fasttext'] = batch_dict['ocr_fasttext'].repeat_interleave(self._decode_size, dim=0)
+        # batch_dict['ocr_phoc'] = batch_dict['ocr_phoc'].repeat_interleave(self._decode_size, dim=0)
+        # batch_dict['pad_ocr_features'] = batch_dict['pad_ocr_features'].repeat_interleave(self._decode_size, dim=0)
+        # batch_dict['pad_ocr_bboxes'] = batch_dict['pad_ocr_bboxes'].repeat_interleave(self._decode_size, dim=0)
+        
+        # batch_dict['question_indices'] = batch_dict['question_indices'].repeat_interleave(self._decode_size, dim=0)
+        # batch_dict['question_mask'] = batch_dict['question_mask'].repeat_interleave(self._decode_size, dim=0)
+        # batch_dict['pad_obj_mask'] = batch_dict['pad_obj_mask'].repeat_interleave(self._decode_size, dim=0)
+        # batch_dict['pad_ocr_mask'] = batch_dict['pad_ocr_mask'].repeat_interleave(self._decode_size, dim=0)
+        
+        # if 'spatial_adj_matrix_share3' in batch_dict:
+        #     batch_dict['spatial_adj_matrix_share3'] = batch_dict['spatial_adj_matrix_share3'].repeat_interleave(self._decode_size, dim=0)
+        # batch_dict['spatial_adj_matrix_quad4'] = batch_dict['spatial_adj_matrix_quad4'].repeat_interleave(self._decode_size, dim=0)
+        # batch_dict['spatial_adj_matrix'] = batch_dict['spatial_adj_matrix'].repeat_interleave(self._decode_size, dim=0)
+        
+        # batch_dict['ocr_mmt_in'] = batch_dict['ocr_mmt_in'].repeat_interleave(self._decode_size, dim=0)
+        # batch_dict['obj_mmt_in'] = batch_dict['obj_mmt_in'].repeat_interleave(self._decode_size, dim=0)
 
-        batch_dict['question_id'] = batch_dict['question_id'].repeat_interleave(self._decode_size, dim=0)
+        # batch_dict['question_id'] = batch_dict['question_id'].repeat_interleave(self._decode_size, dim=0)
         
         batch_dict['train_prev_inds'] = batch_dict['train_prev_inds'].repeat_interleave(self._decode_size, dim=0)
         return batch_dict
@@ -107,24 +132,9 @@ class BeamSearch():
         batch_dict['topkscores'] = batch_dict['topkscores'][prev_position] + value.view(-1).unsqueeze(1)
 
         # Build data for next round
-        batch_dict_keys = [
-            'pad_obj_features', 
-            'pad_obj_bboxes', 
-            'ocr_fasttext', 
-            'ocr_phoc',
-            'pad_ocr_features',
-            'pad_ocr_bboxes',
-            'question_indices',
-            'question_mask',
-            'pad_obj_mask',
-            'pad_ocr_mask',
-            'spatial_adj_matrix',
-            'ocr_mmt_in',
-            'obj_mmt_in'
-        ]
-
-        for key in batch_dict_keys:
-            batch_dict[key] = batch_dict[key][prev_position]
+        for key in self.batch_dict_keys:
+            if key in batch_dict:
+                batch_dict[key] = batch_dict[key][prev_position]
 
         # Find complete sequences for each image in the batch!
         if (t+1 < batch_dict['train_prev_inds'].shape[1]):

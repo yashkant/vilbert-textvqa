@@ -19,7 +19,6 @@ from easydict import EasyDict as edict
 from tools.registry import registry
 
 import vilbert.utils as utils
-from vilbert.m4c_spatial import BertConfig, M4C
 from vilbert.task_utils import (
     LoadDatasets,
     LoadLosses,
@@ -82,9 +81,6 @@ def parse_args():
         "--beam_size", type=int, help="number of beams"
     )
     parser.add_argument(
-        "--save_file", default="", type=str, help="Path to save the results (if you want to save it)"
-    )
-    parser.add_argument(
         "--short_eval", default=False, type=bool, help="Run only three iterations of val "
     )
     parser.add_argument(
@@ -114,20 +110,42 @@ def parse_args():
     return args
 
 def load_model():
+
     args = registry.get("args")
     task_config = registry.get("task_config")
-    
+    model_type = task_config["TASK19"]["model_type"]
+
+    if model_type == "m4c":
+        logger.info("Using M4C model")
+        from vilbert.m4c import BertConfig
+        from vilbert.m4c import M4C
+    elif model_type == "m4c_rd":
+        logger.info("Using M4C-RD model")
+        from vilbert.m4c_decode_rd import BertConfig
+        from vilbert.m4c_decode_rd import M4C
+    elif model_type == "22ss":
+        from vilbert.vilbert_ss import BertConfig, VILBertForVLTasks
+    elif model_type == "m4c_spatial":
+        logger.info("Using M4C-Spatial model")
+        from vilbert.m4c_spatial import BertConfig, M4C
+    elif model_type == "m4c_spatial_que_cond":
+        logger.info("Using M4C-Spatial Question Cond. model")
+        from vilbert.m4c_spatial_que_cond import BertConfig, M4C
+    else:
+        raise ValueError
+
     transfer_keys = ["attention_mask_quadrants",
-                                     "hidden_size",
-                                     "num_implicit_relations",
-                                     "spatial_type",
-                                     "num_hidden_layers",
-                                     "num_spatial_layers",
-                                     "layer_type_list",
-                                     "cond_type",
-                                     "use_bias",
-                                     "no_drop",
-                                     "mix_list"]
+        "hidden_size",
+        "num_implicit_relations",
+        "spatial_type",
+        "num_hidden_layers",
+        "num_spatial_layers",
+        "layer_type_list",
+        "cond_type",
+        "use_bias",
+        "no_drop",
+        "mix_list"
+    ]
     transfer_keys.extend(["aux_spatial_fusion", "use_aux_heads"])
 
     with open(args.config_file, "r") as file:
@@ -219,8 +237,8 @@ def evaluate(
             sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
             sys.stdout.flush()
         
-            # if args.short_eval and i == 3:
-            #     break
+            if args.short_eval and i == 3:
+                break
     
     return predictions
 
@@ -291,16 +309,20 @@ def evaluate_predictions(eval_df, results_df):
         predictions.append(calculate(batch))
 
     accuracies_df = pd.DataFrame(predictions)
+    best_result = []
     oracle_accuracies = 0.0
     for qid, row in accuracies_df.groupby('question_id'):
         idx = np.argmax(row.topkscores) 
         # idx = np.random.randint(row.topkscores.shape[0])
         oracle_accuracies += row.accuracy.tolist()[idx]
+        best_result.append(row.iloc[idx])
     
+    best_result_df = pd.DataFrame(best_result)
     mean_acc = oracle_accuracies / accuracies_df['question_id'].unique().shape[0]
     return {
         "vqa_accuracy": mean_acc,
-        "accuracies_df": accuracies_df
+        "accuracies_df": accuracies_df,
+        "best_result_df": best_result_df
     }
 
 def main():
@@ -368,8 +390,29 @@ def main():
     #  if not args.short_eval: 
     logger.info("VQA Accuracy: {} for {} questions".format(accuracies['vqa_accuracy'], accuracies['accuracies_df'].shape))
     
-    if len(args.save_file) != 0:
-        accuracies['accuracies_df'].to_json(args.save_file)
+    save_file = os.path.join(
+        os.path.dirname(args.model_ckpt),
+        'result_bs={}.df'.format(args.beam_size)
+    )
+
+    evalai_file = os.path.join(
+        os.path.dirname(args.model_ckpt),
+        'evalai_bs={}.json'.format(args.beam_size)
+    )
+
+    # Accuracies DF
+    accuracies['accuracies_df'].to_json(save_file)
+
+    # EvalAI file 
+    answer_dict = []
+    for i, pred in accuracies['best_result_df'].iterrows():
+        answer_dict.append({
+            'question_id': pred['question_id'], 
+            'answer': pred['pred_answer'].strip()
+        })
+    
+    with open(evalai_file, 'w') as f:
+        json.dump(answer_dict, f)
 
 if __name__ == "__main__":
     main()
