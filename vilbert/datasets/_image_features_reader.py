@@ -2,6 +2,7 @@
 
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
+import os
 
 from typing import List
 import csv
@@ -12,6 +13,22 @@ import pickle
 import lmdb  # install lmdb by "pip install lmdb"
 import base64
 import pdb
+
+
+def splitall(path):
+    allparts = []
+    while 1:
+        parts = os.path.split(path)
+        if parts[0] == path:  # sentinel for absolute paths
+            allparts.insert(0, parts[0])
+            break
+        elif parts[1] == path: # sentinel for relative paths
+            allparts.insert(0, parts[1])
+            break
+        else:
+            path = parts[0]
+            allparts.insert(0, parts[1])
+    return allparts
 
 
 class ImageFeaturesH5Reader(object):
@@ -73,6 +90,28 @@ class ImageFeaturesH5Reader(object):
             - if not:
                 - read and generate normalized and un-normalized features and cache them
         """
+
+        # Todo: remove this dirty code
+        if "scene-text" in image_id:
+            sample_id = self._image_ids[0].decode()
+            sample_id = splitall(sample_id)
+            image_id = splitall(image_id)
+            # create new image-id
+            new_image_id = []
+            # join initial paths from sample
+            for part in sample_id:
+                if "task" in part:
+                    break
+                new_image_id.append(part)
+            # join the tail
+            append = False
+            for part in image_id:
+                if "task" in part or append:
+                    append = True
+                    new_image_id.append(part)
+            # weave all
+            image_id = os.path.join(*new_image_id)
+
         image_id = str(image_id).encode()
         index = self._image_ids.index(image_id)
         if self._in_memory:
@@ -86,7 +125,7 @@ class ImageFeaturesH5Reader(object):
             else:
                 with self.env.begin(write=False) as txn:
                     item = pickle.loads(txn.get(image_id))
-                    image_id = item["image_id"]
+                    # image_id = item["image_id"]
                     image_h = int(item["image_h"])
                     image_w = int(item["image_w"])
                     # num_boxes = int(item['num_boxes'])

@@ -23,19 +23,8 @@ from tqdm import tqdm
 
 
 # image_folders
-IMAGES_SCENETEXT = [
-    "/srv/share/ykant3/scene-text/train/train_task/",
-    "/srv/share/ykant3/scene-text/test/test_task1/",
-    "/srv/share/ykant3/scene-text/test/test_task2/",
-    "/srv/share/ykant3/scene-text/test/test_task3/"
-]
-
-OBJ_FEATURES_SCENETEXT = [
-    "/srv/share/ykant3/scene-text/features/obj/train/train_task/",
-    "/srv/share/ykant3/scene-text/features/obj/test/test_task1/",
-    "/srv/share/ykant3/scene-text/features/obj/test/test_task2/",
-    "/srv/share/ykant3/scene-text/features/obj/test/test_task3/"
-]
+IMAGES_OCRVQA = "/srv/share/ykant3/ocr-vqa/images/"
+OBJ_FEATURES_OCRVQA = "/srv/share/ykant3/ocr-vqa/features/"
 
 
 class FeatureExtractor:
@@ -230,20 +219,24 @@ class FeatureExtractor:
         np.save(file_base_name, info)
 
     def extract_features(self, image_dir, save_dir):
-        # paths to all the items image_fol
-        abs_paths = glob.glob(image_dir + "/**", recursive=True)
-        files = [path for path in abs_paths if path.endswith((".jpg", ".JPEG"))]
+        # paths to all the items images
+        files = glob.glob(image_dir + "/*", recursive=True)
+
+        # find remaining files that are extracted yet!
+        remain_files = []
+        for file in tqdm(files, desc="Counting files"):
+            feature_file = os.path.join(save_dir, os.path.split(file)[-1]).split(".")[0] + ".npy"
+            if not os.path.exists(feature_file):
+                remain_files.append(file)
 
         assert os.path.exists(image_dir)
         assert len(files) > 0
-        for file in tqdm(files):
+        for file in tqdm(remain_files):
             try:
                 features, infos = self.get_detectron_features([file])
                 save_path = file.replace(image_dir, save_dir)
                 _save_dir = os.path.split(save_path)[0]
-                if not os.path.exists(_save_dir):
-                    os.makedirs(_save_dir)
-                    print(f"Creating Dir: {_save_dir}")
+                assert os.path.exists(_save_dir)
                 self._save_feature(save_path, features[0], infos[0])
             except BaseException:
                 print("Couldn't extract from: ", file)
@@ -251,8 +244,6 @@ class FeatureExtractor:
 
 if __name__ == "__main__":
     feature_extractor = FeatureExtractor()
-    IMAGES_SCENETEXT = IMAGES_SCENETEXT
-    OBJ_FEATURES_SCENETEXT = OBJ_FEATURES_SCENETEXT
-    for image_dir, feature_dir in zip(IMAGES_SCENETEXT, OBJ_FEATURES_SCENETEXT):
-        print(f"Extracting from: {image_dir} \nSaving to: {feature_dir}")
-        feature_extractor.extract_features(image_dir, feature_dir)
+    # Todo: Store fc7 weights from here.
+    print(f"Extracting from: {IMAGES_OCRVQA} \nSaving to: {OBJ_FEATURES_OCRVQA}")
+    feature_extractor.extract_features(IMAGES_OCRVQA, OBJ_FEATURES_OCRVQA)
