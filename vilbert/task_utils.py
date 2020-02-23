@@ -433,16 +433,6 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
             # (it doesn't return item back by index)
             train_sampler = DistributedSampler(task_datasets_train[task])
 
-<<<<<<< HEAD
-        if "val" in split:
-            task_dataloader_val[task] = DataLoader(
-                task_datasets_val[task],
-                shuffle=False,
-                batch_size=32,
-                num_workers=0,
-                pin_memory=True,
-            )
-=======
         task_dataloader_train[task] = DataLoader(
             task_datasets_train[task],
             sampler=train_sampler,
@@ -459,10 +449,9 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
             task_datasets_val[task],
             shuffle=False,
             batch_size=32,
-            num_workers=2,
+            num_workers=0,
             pin_memory=True,
         )
->>>>>>> 502c0698fcb2d1b71c4337877347b2b8e9eb05ec
 
     return (
         task_batch_size,

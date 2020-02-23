@@ -5,6 +5,7 @@ import torch
 import logging
 from torch import nn
 import torch.nn.functional as F
+from collections import Counter
 from pytorch_transformers.modeling_bert import (
     BertLayerNorm, BertEmbeddings, BertEncoder, BertConfig,
     BertPreTrainedModel
@@ -648,12 +649,34 @@ class BertSpatialEncoder(nn.Module):
         self.output_hidden_states = config.output_hidden_states
         from pytorch_transformers.modeling_bert import BertLayer
 
-        logger.info(f"Num Spatial Layers: {config.num_spatial_layers}")
-        logger.info(f"Num Normal Layers: {config.num_hidden_layers}")
 
-        self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
-        self.spatial_layer = nn.ModuleList([SpatialBertLayer(config) for _ in range(config.num_spatial_layers)])
-        self.spatial_type = config.spatial_type
+        # backward compatibility
+        if config.layer_type_list is None:
+            logger.info("layer_type_list not passed, generating it!")
+            self.layer_type_list = ["n"]*config.num_hidden_layers
+
+            if hasattr(config, "num_implicit_relations") and config.num_implicit_relations != 0:
+                spatial_type = ["i"]
+            else:
+                spatial_type = ["s"]
+
+            if config.spatial_type == "bottom":
+                self.layer_type_list = spatial_type*config.num_spatial_layers + self.layer_type_list
+            if config.spatial_type == "top":
+                self.layer_type_list = self.layer_type_list + spatial_type*config.num_spatial_layers
+        else:
+            self.layer_type_list = config.layer_type_list
+
+        logger.info(f"Layers type list is: {self.layer_type_list}")
+        counter = Counter(self.layer_type_list)
+
+        self.num_spatial_layers = counter["s"]
+        self.num_normal_layers = counter["n"]
+        self.num_implicit_layers = counter["i"]
+
+        logger.info(f"Num Spatial Layers: {self.num_spatial_layers}")
+        logger.info(f"Num Normal Layers: {self.num_normal_layers}")
+        logger.info(f"Num Implicit Layers: {self.num_implicit_layers}")
 
         if config.mix_list is None:
             self.mix_list = ["none"]*len(self.layer_type_list)
@@ -745,7 +768,7 @@ class BertSpatialEncoder(nn.Module):
         return outputs  # last-layer hidden state, (all hidden states), (all attentions)
 
 
-class MMT(BertPreTrainedModel): 
+class MMT(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
 
@@ -914,7 +937,6 @@ class PrevPredEmbeddings(nn.Module):
         )
         position_ids = position_ids.unsqueeze(0).expand(batch_size, seq_length)
         position_embeddings = self.position_embeddings(position_ids)
-        
         # Token type ids: 0 -- vocab; 1 -- OCR
         token_type_ids = prev_inds.ge(ans_num).long()
         token_type_embeddings = self.token_type_embeddings(token_type_ids)

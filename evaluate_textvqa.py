@@ -114,8 +114,17 @@ def load_model():
     args = registry.get("args")
     task_config = registry.get("task_config")
     
-    transfer_keys = ["attention_mask_quadrants", "hidden_size", "num_implicit_relations", "spatial_type",
-                     "num_hidden_layers", "num_spatial_layers", "layer_type_list"]
+    transfer_keys = ["attention_mask_quadrants",
+                                     "hidden_size",
+                                     "num_implicit_relations",
+                                     "spatial_type",
+                                     "num_hidden_layers",
+                                     "num_spatial_layers",
+                                     "layer_type_list",
+                                     "cond_type",
+                                     "use_bias",
+                                     "no_drop",
+                                     "mix_list"]
     transfer_keys.extend(["aux_spatial_fusion", "use_aux_heads"])
 
     with open(args.config_file, "r") as file:
@@ -124,7 +133,9 @@ def load_model():
     # Adding blank keys that could be dynamically replaced later
     config_dict["layer_type_list"] = None
     config_dict["beam_size"] = args.beam_size 
+    config_dict["mix_list"] = None
 
+    mmt_config = BertConfig.from_dict(config_dict)
     # Replace keys
     for key in transfer_keys:
         if key in task_config["TASK19"]:

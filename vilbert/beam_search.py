@@ -56,6 +56,9 @@ class BeamSearch():
         batch_dict['question_mask'] = batch_dict['question_mask'].repeat_interleave(self._decode_size, dim=0)
         batch_dict['pad_obj_mask'] = batch_dict['pad_obj_mask'].repeat_interleave(self._decode_size, dim=0)
         batch_dict['pad_ocr_mask'] = batch_dict['pad_ocr_mask'].repeat_interleave(self._decode_size, dim=0)
+        
+        batch_dict['spatial_adj_matrix_share3'] = batch_dict['spatial_adj_matrix_share3'].repeat_interleave(self._decode_size, dim=0)
+        batch_dict['spatial_adj_matrix_quad4'] = batch_dict['spatial_adj_matrix_quad4'].repeat_interleave(self._decode_size, dim=0)
         batch_dict['spatial_adj_matrix'] = batch_dict['spatial_adj_matrix'].repeat_interleave(self._decode_size, dim=0)
         
         batch_dict['ocr_mmt_in'] = batch_dict['ocr_mmt_in'].repeat_interleave(self._decode_size, dim=0)
