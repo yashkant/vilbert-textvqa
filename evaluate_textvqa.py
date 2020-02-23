@@ -87,6 +87,9 @@ def parse_args():
     parser.add_argument(
         "--short_eval", default=False, type=bool, help="Run only three iterations of val "
     )
+    parser.add_argument(
+        "--split", default=False, type=bool, help="Which split do you want to evaluate"
+    )
     
     command_args = parser.parse_args()
 
@@ -325,7 +328,8 @@ def main():
         task_datasets_val, 
         task_dataloader_train, 
         task_dataloader_val
-    ) = LoadDatasets(args, task_cfg, args.tasks.split("-"))
+    ) = LoadDatasets(args, task_cfg, args.tasks.split("-"), split="val") 
+    # TODO: Remove this hardcoded split value
     
     # eval_df = load_data_for_evaluation()
     eval_df = pd.read_pickle(args.val_df_file)

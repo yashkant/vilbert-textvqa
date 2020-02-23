@@ -418,18 +418,18 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
         if "train" in split:
             task_datasets_train[task] = DatasetMapTrain[task_name](
                 task=task_cfg[task]["name"],
-                dataroot=task_cfg[task]["dataroot"],
-                annotations_jsonpath=task_cfg[task]["train_annotations_jsonpath"],
+                # dataroot=task_cfg[task]["dataroot"],
+                # annotations_jsonpath=task_cfg[task]["train_annotations_jsonpath"],
                 split=task_cfg[task]["train_split"],
-                image_features_reader=task_feature_reader1[
-                    task_cfg[task]["features_h5path1"]
-                ],
-                gt_image_features_reader=task_feature_reader2[
-                    task_cfg[task]["features_h5path2"]
-                ],
+                # image_features_reader=task_feature_reader1[
+                #     task_cfg[task]["features_h5path1"]
+                # ],
+                # gt_image_features_reader=task_feature_reader2[
+                #     task_cfg[task]["features_h5path2"]
+                # ],
                 tokenizer=tokenizer,
                 bert_model=args.bert_model,
-                clean_datasets=args.clean_train_sets,
+                # clean_datasets=args.clean_train_sets,
                 padding_index=0,
                 max_seq_length=task_cfg[task]["max_seq_length"],
                 max_region_num=task_cfg[task]["max_region_num"],
@@ -440,18 +440,18 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
         if "val" in split:
             task_datasets_val[task] = DatasetMapTrain[task_name](
                 task=task_cfg[task]["name"],
-                dataroot=task_cfg[task]["dataroot"],
-                annotations_jsonpath=task_cfg[task]["val_annotations_jsonpath"],
+                # dataroot=task_cfg[task]["dataroot"],
+                # annotations_jsonpath=task_cfg[task]["val_annotations_jsonpath"],
                 split=task_cfg[task]["val_split"],
-                image_features_reader=task_feature_reader1[
-                    task_cfg[task]["features_h5path1"]
-                ],
-                gt_image_features_reader=task_feature_reader2[
-                    task_cfg[task]["features_h5path2"]
-                ],
+                # image_features_reader=task_feature_reader1[
+                #     task_cfg[task]["features_h5path1"]
+                # ],
+                # gt_image_features_reader=task_feature_reader2[
+                #     task_cfg[task]["features_h5path2"]
+                # ],
                 tokenizer=tokenizer,
                 bert_model=args.bert_model,
-                clean_datasets=args.clean_train_sets,
+                # clean_datasets=args.clean_train_sets,
                 padding_index=0,
                 max_seq_length=task_cfg[task]["max_seq_length"],
                 max_region_num=task_cfg[task]["max_region_num"],

@@ -857,7 +857,7 @@ class MMT(BertPreTrainedModel):
         encoder_outputs = self.encoder(
             encoder_inputs,
             extended_attention_mask,
-            batch_dict["spatial_adj_matrix"],
+            batch_dict,
             head_mask=head_mask
         )
 
