@@ -179,8 +179,27 @@ class M4C(nn.Module):
     def _build_output(self):
         # dynamic OCR-copying scores with pointer network
         self.ocr_ptr_net = OcrPtrNet(hidden_size=self.mmt_config.hidden_size, query_key_size=self.mmt_config.ptr_query_size)
-        num_outputs = len(registry.answer_vocab)
+
+        if registry.vocab_type == "5k":
+            num_outputs = 5000
+        else:
+            num_outputs = 3998
+
         self.classifier = nn.Linear(self.mmt_config.hidden_size, num_outputs)
+        # fixed answer vocabulary scores
+        # num_choices = registry.get(self._datasets[0] + "_num_final_outputs")
+        # # remove the OCR copying dimensions in LoRRA's classifier output
+        # # (OCR copying will be handled separately)
+        # num_choices -= self.config.classifier.ocr_max_num
+        # self.classifier = ClassifierLayer(
+        #     self.config["classifier"]["type"],
+        #     in_dim=self.mmt_config.hidden_size,
+        #     out_dim=num_choices,
+        #     **self.config["classifier"]["params"]
+        # )
+        # self.answer_processor = registry.get(
+        #     self._datasets[0] + "_answer_processor"
+        # )
 
     def _build_aux_heads(self):
         from vilbert.vilbert import SimpleClassifier
@@ -838,7 +857,7 @@ class MMT(BertPreTrainedModel):
         encoder_outputs = self.encoder(
             encoder_inputs,
             extended_attention_mask,
-            batch_dict,
+            batch_dict["spatial_adj_matrix"],
             head_mask=head_mask
         )
 

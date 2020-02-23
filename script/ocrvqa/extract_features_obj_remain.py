@@ -221,16 +221,17 @@ class FeatureExtractor:
     def extract_features(self, image_dir, save_dir):
         # paths to all the items images
         files = glob.glob(image_dir + "/*", recursive=True)
-        feature_files = glob.glob(save_dir + "/*", recursive=True)
 
-        for ff in feature_files:
-            image_path = ff.split(".") + ".jpg"
-            import pdb
-            pdb.set_trace()
+        # find remaining files that are extracted yet!
+        remain_files = []
+        for file in tqdm(files, desc="Counting files"):
+            feature_file = os.path.join(save_dir, os.path.split(file)[-1]).split(".")[0] + ".npy"
+            if not os.path.exists(feature_file):
+                remain_files.append(file)
 
         assert os.path.exists(image_dir)
         assert len(files) > 0
-        for file in tqdm(files):
+        for file in tqdm(remain_files):
             try:
                 features, infos = self.get_detectron_features([file])
                 save_path = file.replace(image_dir, save_dir)

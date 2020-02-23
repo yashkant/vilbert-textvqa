@@ -15,7 +15,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 import torch.distributed as dist
 from torch.optim import Adam
-from torch.utils.data import DataLoader, Dataset, RandomSampler, ConcatDataset
+from torch.utils.data import DataLoader, Dataset, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
 from pytorch_transformers.tokenization_bert import BertTokenizer
 from pytorch_transformers.tokenization_roberta import RobertaTokenizer
@@ -23,6 +23,7 @@ from vilbert.datasets import DatasetMapTrain, DatasetMapEval
 from vilbert.datasets._image_features_reader import ImageFeaturesH5Reader
 from vilbert.datasets.textvqa_metrics import TextVQAAccuracy
 import pdb
+from tools.registry import registry
 from torch.optim.lr_scheduler import (
     LambdaLR,
     ReduceLROnPlateau,
@@ -35,7 +36,6 @@ from pytorch_transformers.optimization import (
     WarmupLinearSchedule,
 )
 from vilbert.optimization import RAdam
-from tools.registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +79,6 @@ class M4CandSpatialLoss(nn.Module):
 
         # spatial loss
         assert "spatial_scores" in batch_dict
-        assert "spatial_loss_weight" in registry
-        assert "textvqa_loss_weight" in registry
         spa_loss_mask = batch_dict["spatial_loss_mask"].float()
         # Todo: When all the relations are 0, argmax will return an arbitrary number between 0-11 (check it is masked)
         spa_targets = batch_dict["spatial_adj_matrix"].argmax(dim=-1).view(-1)
@@ -90,14 +88,12 @@ class M4CandSpatialLoss(nn.Module):
         spa_losses *= spa_loss_mask
         spa_count = torch.max(torch.sum(spa_loss_mask), self.one.to(spa_losses.device))
         spa_loss = torch.sum(spa_losses) / spa_count
-        total_loss = loss*(registry["textvqa_loss_weight"]) + spa_loss*(registry["spatial_loss_weight"])
+        total_loss = loss + spa_loss
 
         if self.print_count % 20 == 0:
             round_print = lambda x: round(float(x), 4)
             logger.info(f"Spatial Loss: {round_print(spa_loss)}, "
                         f"TextVQA Loss: {round_print(loss)}, "
-                        f"Spatial Loss weight: {round_print(registry['spatial_loss_weight'])}, "
-                        f"TextVQA Loss weight: {round_print(registry['textvqa_loss_weight'])}, "
                         f"Total Loss: {round_print(total_loss)}")
 
         return total_loss
@@ -215,16 +211,19 @@ MetricsMap = {
 }
 
 
-def ForwardModelsVal(args,
-                     task_cfg,
-                     device,
-                     task_id,
-                     batch_dict,
-                     model,
-                     task_losses):
+def ForwardModelsVal(args, task_cfg, device, task_id, batch_dict, model, task_losses):
+    # batch = tuple(t.cuda(device=device, non_blocking=True) for t in batch)
+
+    # import pdb
+    # pdb.set_trace()
+
     for key, value in batch_dict.items():
         if isinstance(value, torch.Tensor):
             batch_dict[key] = value.cuda(device=device, non_blocking=True)
+<<<<<<< HEAD
+=======
+    
+>>>>>>> a70b660f8eaa649a7c2e21f030c389fe545f4144
     question = batch_dict["question_indices"]
     batch_size = len(batch_dict["question_id"])
     batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
@@ -291,7 +290,12 @@ def ForwardModelsVal(args,
         """
     )
 
+<<<<<<< HEAD
     return float(loss), float(batch_acc), batch_size
+=======
+    return float(loss), float(batch_acc), batch_size, batch_dict,
+
+>>>>>>> a70b660f8eaa649a7c2e21f030c389fe545f4144
 
 
 def ForwardModelsTrain(
@@ -305,6 +309,10 @@ def ForwardModelsTrain(
         model,
         task_losses,
 ):
+    # given the current task, decided whether to forward the model and forward with specific loss.
+
+    # import pdb
+    # pdb.set_trace()
 
     # reset the task iteration when needed.
     if task_count[task_id] % len(task_dataloader_train[task_id]) == 0:
@@ -356,6 +364,40 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
             args.bert_model, do_lower_case=args.do_lower_case
         )
 
+    task_feature_reader1 = {}
+    task_feature_reader2 = {}
+    for i, task_id in enumerate(ids):
+        task = "TASK" + task_id
+        if task_cfg[task]["features_h5path1"] not in task_feature_reader1:
+            task_feature_reader1[task_cfg[task]["features_h5path1"]] = None
+        if task_cfg[task]["features_h5path2"] not in task_feature_reader2:
+            task_feature_reader2[task_cfg[task]["features_h5path2"]] = None
+
+    # (YK): Use with test split
+    # import pdb
+    # pdb.set_trace()
+    #
+    # for features_h5path in task_feature_reader1.keys():
+    #     task_feature_reader1.pop(features_h5path)
+    #     if features_h5path != "":
+    #         task_feature_reader1[features_h5path.format("trainval")] = None
+    #
+    # for features_h5path in task_feature_reader2.keys():
+    #     task_feature_reader2.pop(features_h5path)
+    #     if features_h5path != "":
+    #         task_feature_reader2[features_h5path.format("trainval")] = None
+
+    # initilzie the feature reader
+    for features_h5path in task_feature_reader1.keys():
+        if features_h5path != "":
+            task_feature_reader1[features_h5path] = ImageFeaturesH5Reader(
+                features_h5path, args.in_memory
+            )
+    for features_h5path in task_feature_reader2.keys():
+        if features_h5path != "":
+            task_feature_reader2[features_h5path] = ImageFeaturesH5Reader(
+                features_h5path, args.in_memory
+            )
 
     task_datasets_train = {}
     task_datasets_val = {}
@@ -365,93 +407,95 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
     task_batch_size = {}
     task_num_iters = {}
 
-    task_id = "19"
-    task = "TASK" + task_id
-    task_ids.append(task)
-    batch_size = task_cfg[task]["batch_size"] // args.gradient_accumulation_steps
-    num_workers = args.num_workers
-    if args.local_rank != -1:
-        batch_size = int(batch_size / dist.get_world_size())
-        num_workers = int(num_workers / dist.get_world_size())
+    for i, task_id in enumerate(ids):
+        task = "TASK" + task_id
+        task_name = task_cfg[task]["name"]
+        task_ids.append(task)
+        batch_size = task_cfg[task]["batch_size"] // args.gradient_accumulation_steps
+        num_workers = args.num_workers
+        if args.local_rank != -1:
+            batch_size = int(batch_size / dist.get_world_size())
+            num_workers = int(num_workers / dist.get_world_size())
 
-    if "use_datasets" not in task_cfg[task]:
-        task_cfg[task]['use_datasets'] = ["textvqa"]
-        logger.info("Did not find `use_datasets` key in task configuration, generating it!")
-
-    logger.info(
-        f"Loading Train Dataset(s) {task_cfg[task]['use_datasets']}  with batch size {batch_size}"
-    )
-
-
-    key_map = {
-        "textvqa": "TextVQA",
-        "stvqa": "STVQA"
-    }
-
-    train_datasets = []
-    for entry in task_cfg[task]["use_datasets"]:
-        dataset = DatasetMapTrain[key_map[entry]](
-            split="train",
-            tokenizer=tokenizer,
-            bert_model=args.bert_model,
-            padding_index=0,
-            max_seq_length=task_cfg[task]["max_seq_length"],
-            max_region_num=task_cfg[task]["max_region_num"],
-            extra_args=task_cfg[task]
-        )
-        train_datasets.append(dataset)
-
-    task_datasets_train["separate_datasets"] = train_datasets
-    task_datasets_train[task] = ConcatDataset(train_datasets)
-
-    if "val_on" not in task_cfg[task]:
-        task_cfg[task]['val_on'] = ["textvqa"]
-        logger.info("Did not find `val_on` key in task configuration, generating it!")
-
-    assert len(task_cfg[task]['val_on']) == 1
-    logger.info(
-        f"Loading Val Dataset {task_cfg[task]['val_on']}  with batch size {batch_size}"
-    )
-    val_task_name = key_map[task_cfg[task]['val_on'][0]]
-    task_datasets_val[task] = DatasetMapTrain[val_task_name](
-        split="val",
-        tokenizer=tokenizer,
-        bert_model=args.bert_model,
-        padding_index=0,
-        max_seq_length=task_cfg[task]["max_seq_length"],
-        max_region_num=task_cfg[task]["max_region_num"],
-        extra_args=task_cfg[task]
-    )
-
-    task_num_iters[task] = 0
-    task_batch_size[task] = 0
-    if "train" in split:
-        if args.local_rank == -1:
-            train_sampler = RandomSampler(task_datasets_train[task])
-        else:
-            # TODO: check if this works with current data generator from disk that relies on next(file)
-            # (it doesn't return item back by index)
-            train_sampler = DistributedSampler(task_datasets_train[task])
-
-        task_dataloader_train[task] = DataLoader(
-            task_datasets_train[task],
-            sampler=train_sampler,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            pin_memory=True,
+        # num_workers = int(num_workers / len(ids))
+        logger.info(
+            "Loading %s Dataset with batch size %d"
+            % (task_cfg[task]["name"], batch_size)
         )
 
-        task_num_iters[task] = len(task_dataloader_train[task])
-        task_batch_size[task] = batch_size
+        task_datasets_train[task] = None
+        if "train" in split:
+            task_datasets_train[task] = DatasetMapTrain[task_name](
+                task=task_cfg[task]["name"],
+                dataroot=task_cfg[task]["dataroot"],
+                annotations_jsonpath=task_cfg[task]["train_annotations_jsonpath"],
+                split=task_cfg[task]["train_split"],
+                image_features_reader=task_feature_reader1[
+                    task_cfg[task]["features_h5path1"]
+                ],
+                gt_image_features_reader=task_feature_reader2[
+                    task_cfg[task]["features_h5path2"]
+                ],
+                tokenizer=tokenizer,
+                bert_model=args.bert_model,
+                clean_datasets=args.clean_train_sets,
+                padding_index=0,
+                max_seq_length=task_cfg[task]["max_seq_length"],
+                max_region_num=task_cfg[task]["max_region_num"],
+                extra_args=task_cfg[task]
+            )
 
-    if "val" in split:
-        task_dataloader_val[task] = DataLoader(
-            task_datasets_val[task],
-            shuffle=False,
-            batch_size=32,
-            num_workers=0,
-            pin_memory=True,
-        )
+        task_datasets_val[task] = None
+        if "val" in split:
+            task_datasets_val[task] = DatasetMapTrain[task_name](
+                task=task_cfg[task]["name"],
+                dataroot=task_cfg[task]["dataroot"],
+                annotations_jsonpath=task_cfg[task]["val_annotations_jsonpath"],
+                split=task_cfg[task]["val_split"],
+                image_features_reader=task_feature_reader1[
+                    task_cfg[task]["features_h5path1"]
+                ],
+                gt_image_features_reader=task_feature_reader2[
+                    task_cfg[task]["features_h5path2"]
+                ],
+                tokenizer=tokenizer,
+                bert_model=args.bert_model,
+                clean_datasets=args.clean_train_sets,
+                padding_index=0,
+                max_seq_length=task_cfg[task]["max_seq_length"],
+                max_region_num=task_cfg[task]["max_region_num"],
+                extra_args=task_cfg[task]
+            )
+
+        task_num_iters[task] = 0
+        task_batch_size[task] = 0
+        if "train" in split:
+            if args.local_rank == -1:
+                train_sampler = RandomSampler(task_datasets_train[task])
+            else:
+                # TODO: check if this works with current data generator from disk that relies on next(file)
+                # (it doesn't return item back by index)
+                train_sampler = DistributedSampler(task_datasets_train[task])
+
+            task_dataloader_train[task] = DataLoader(
+                task_datasets_train[task],
+                sampler=train_sampler,
+                batch_size=batch_size,
+                num_workers=num_workers,
+                pin_memory=True,
+            )
+
+            task_num_iters[task] = len(task_dataloader_train[task])
+            task_batch_size[task] = batch_size
+
+        if "val" in split:
+            task_dataloader_val[task] = DataLoader(
+                task_datasets_val[task],
+                shuffle=False,
+                batch_size=32,
+                num_workers=0,
+                pin_memory=True,
+            )
 
     return (
         task_batch_size,
