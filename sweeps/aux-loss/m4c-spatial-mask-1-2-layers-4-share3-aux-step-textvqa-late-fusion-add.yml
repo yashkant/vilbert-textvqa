@@ -1,7 +1,7 @@
 TASK19:
   name: TextVQA
   type: V-logit
-  loss: TextVQALoss
+  loss: TextVQAandSpatialLoss
   process: normal
   task_id: 19
   dataroot: datasets/textvqa
@@ -25,7 +25,7 @@ TASK19:
   max_grad_norm: 0.25
   model_type: m4c_spatial
   # allowed quadrants to mask are 1,2,4
-  attention_mask_quadrants: [1,2,4]
+  attention_mask_quadrants: [1,2]
 #  Quadrants (QUE + OCR and OBJ + DEC)
 #
 #  1 | 2 | 3
@@ -35,12 +35,19 @@ TASK19:
 #  7 | 8 | 9
   lr_scheduler: pythia_warmup_decay
   optim: Adam
-  lr_decay_iters: [14000, 19000]
+  # ahead by 3k
+  lr_decay_iters: [17000, 22000]
   lr_decay: 0.1
   warmup_factor: 0.2
   warmup_iters: 1000
   vocab_type: 5k
   num_hidden_layers: 2
   num_spatial_layers: 4
-  spatial_type: top
-  distance_threshold: 1.0
+  heads_type: mix
+  layer_type_list: [n,n,s,s,s,s]
+  mix_list: [none, none, share3, share3, share3, share3]
+  aux_spatial_fusion: add
+  use_aux_heads: true
+  aux_loss_type: step
+  aux_loss_end: 5000
+  textvqa_loss_start: 5000

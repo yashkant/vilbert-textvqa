@@ -42,7 +42,6 @@ TASK19:
   vocab_type: 5k
   num_hidden_layers: 2
   num_spatial_layers: 4
-  spatial_type: top
-  distance_threshold: 1.0
-  heads_type: quad4
-
+  heads_type: mix
+  layer_type_list: [s, s, s, s, n, n]
+  mix_list: [none, none, quad4, share3, none, none,]

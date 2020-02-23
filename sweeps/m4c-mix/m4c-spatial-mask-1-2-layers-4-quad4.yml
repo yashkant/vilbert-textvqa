@@ -28,7 +28,7 @@ TASK19:
   attention_mask_quadrants: [1,2]
 #  Quadrants (QUE + OCR and OBJ + DEC)
 #
-#  1 | 2 | 3cd
+#  1 | 2 | 3
 #  ---------
 #  4 | 5 | 6
 #  ---------
@@ -42,5 +42,6 @@ TASK19:
   vocab_type: 5k
   num_hidden_layers: 2
   num_spatial_layers: 4
-  spatial_type: top
-  distance_threshold: 1.0
+  heads_type: mix
+  layer_type_list: [n,n,s,s,s,s]
+  mix_list: [none, none, quad4, quad4, quad4, quad4]

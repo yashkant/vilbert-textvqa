@@ -231,9 +231,11 @@ def main():
     print(task_cfg["TASK19"])
     logger.info("-"*20 + "Config End" + "-"*20)
 
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    seed = task_cfg["TASK19"].get("seed", args.seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    logger.info(f"Using seed: {seed}")
 
     model_type = task_cfg["TASK19"]["model_type"] if args.model_type is None else args.model_type
 
