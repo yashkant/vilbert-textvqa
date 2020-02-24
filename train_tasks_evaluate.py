@@ -42,7 +42,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def get_arguments():
+
+def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -222,11 +223,6 @@ def get_arguments():
                                                     "what about question encodings!?")
 
     args = parser.parse_args()
-    return args
-
-def main():
-    args = get_arguments()
-
     with open(args.task_file, "r") as f:
         task_cfg = edict(yaml.safe_load(f))
 
@@ -235,9 +231,11 @@ def main():
     print(task_cfg["TASK19"])
     logger.info("-"*20 + "Config End" + "-"*20)
 
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    seed = task_cfg["TASK19"].get("seed", args.seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    logger.info(f"Using seed: {seed}")
 
     model_type = task_cfg["TASK19"]["model_type"] if args.model_type is None else args.model_type
 
@@ -346,7 +344,7 @@ def main():
 
     # LOAD DATASETS
     task_batch_size, task_num_iters, task_ids, task_datasets_train, task_datasets_val, task_dataloader_train, \
-    task_dataloader_val = LoadDatasets(args, task_cfg, args.tasks.split("-"))
+    task_dataloader_val = LoadDatasets(args, task_cfg, args.tasks.split("-"), True)
 
     logdir = os.path.join(savePath, "logs")
 
@@ -399,11 +397,21 @@ def main():
                     default_gpu=default_gpu,
                 )
             else:
-                if model_type == "m4c_spatial":
+                if "m4c_spatial" in model_type:
                     assert "attention_mask_quadrants" in task_cfg["TASK19"]
                     # assert "spatial_type" in task_cfg["TASK19"]
                     # Transfer keys from config to BertConfig
-                    transfer_keys = ["attention_mask_quadrants", "hidden_size", "num_implicit_relations", "spatial_type", "num_hidden_layers", "num_spatial_layers", "layer_type_list"]
+                    transfer_keys = ["attention_mask_quadrants",
+                                     "hidden_size",
+                                     "num_implicit_relations",
+                                     "spatial_type",
+                                     "num_hidden_layers",
+                                     "num_spatial_layers",
+                                     "layer_type_list",
+                                     "cond_type",
+                                     "use_bias",
+                                     "no_drop",
+                                     "mix_list"]
                 elif model_type == "m4c" or model_type == "m4c_rd":
                     # Transfer keys from config to BertConfig
                     transfer_keys = ["num_hidden_layers"]
@@ -419,6 +427,10 @@ def main():
 
                 # Adding blank keys that could be dynamically replaced later
                 config_dict["layer_type_list"] = None
+                config_dict["mix_list"] = None
+
+                # Always use beam-size 1 for training
+                config_dict["beam_size"] = 1
 
                 # Replace keys
                 for key in transfer_keys:
@@ -440,54 +452,15 @@ def main():
     # LOAD LOSSES
     task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
 
-    no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
-
-    # if args.freeze != -1:
-    #     bert_weight_name_filtered = []
-    #     for name in bert_weight_name:
-    #         if "embeddings" in name:
-    #             bert_weight_name_filtered.append(name)
-    #         elif "encoder" in name:
-    #             layer_num = name.split(".")[2]
-    #             if int(layer_num) <= args.freeze:
-    #                 bert_weight_name_filtered.append(name)
-    #
-    #     optimizer_grouped_parameters = []
-    #     for key, value in dict(model.named_parameters()).items():
-    #         if key[12:] in bert_weight_name_filtered:
-    #             value.requires_grad = False
-    #
-    #     if default_gpu:
-    #         print("filtered weight")
-    #         print(bert_weight_name_filtered)
-
     # Turned of weight-decay and fine-tune stuff in ViLBERT!
     if "m4c" not in model_type:
         optimizer_grouped_parameters = []
         for key, value in dict(model.named_parameters()).items():
             if value.requires_grad:
-                # if "vil_" in key:
-                #     lr = 1e-4
-                # else:
-                #     if args.vision_scratch:
-                #         if key[12:] in bert_weight_name:
-                #             lr = base_lr
-                #         else:
-                #             lr = 1e-4
-                #     else:
-                #         lr = base_lr
                 lr = base_lr
                 optimizer_grouped_parameters += [
                     {"params": [value], "lr": lr, "weight_decay": 0.0}
                 ]
-                # if any(nd in key for nd in no_decay):
-                #     optimizer_grouped_parameters += [
-                #         {"params": [value], "lr": lr, "weight_decay": 0.0}
-                #     ]
-                # if not any(nd in key for nd in no_decay):
-                #     optimizer_grouped_parameters += [
-                #         {"params": [value], "lr": lr, "weight_decay": 0.01}
-                #     ]
     else:
         optimizer_grouped_parameters = model.get_optimizer_parameters(base_lr)
 
@@ -535,7 +508,7 @@ def main():
             from apex.parallel import DistributedDataParallel as DDP
         except ImportError:
             raise ImportError(
-                "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training."
+                "Please instal  l apex from https://www.github.com/nvidia/apex to use distributed and fp16 training."
             )
         model = DDP(model, delay_allreduce=True)
 
@@ -557,8 +530,6 @@ def main():
 
     # This validation score is used for model-saving.
     best_val_score = 0
-
-    # Todo: EVALUATION LOOP (Currently we perform one forward-step and then evaluate)
 
     # TRAINING LOOP
     for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
@@ -671,7 +642,7 @@ def evaluate(
     model.eval()
     for i, batch in enumerate(task_dataloader_val[task_id]):
         loss, score, batch_size,  batch_dict = ForwardModelsVal(
-            args, task_cfg, device, task_id, batch, model, task_losses
+            args, task_cfg, device, task_id, batch, model, task_losses, return_batch=True
         )
         tbLogger.step_val(
             epochId, float(loss), float(score), task_id, batch_size, "val"
@@ -695,14 +666,22 @@ def evaluate(
     # update the multi-task scheduler.
     # task_stop_controller[task_id].step(tbLogger.getValScore(task_id))
 
-    # np.save("/srv/share/ykant3/stats/model-preds-best.npy", predictions)
     import pdb
     pdb.set_trace()
+
+    from vilbert.task_utils import MetricsMap
+    tvqa_acc = MetricsMap["TextVQA"].accuracices
+    accuracy = sum([x*y for x, y in tvqa_acc])/5000
+
+    # np.save("/srv/share/ykant3/stats/model-preds-best.npy", predictions)
     score = tbLogger.showLossVal(task_id, task_stop_controller=None)
     model.train()
     return score
 
 
 if __name__ == "__main__":
-
-    main()
+    try:
+        main()
+    finally:
+        import os
+        os.system("watch -n 1 session-quit-error")

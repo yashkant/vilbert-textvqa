@@ -111,11 +111,13 @@ class TextVQADataset(Dataset):
         self.distance_threshold = extra_args.get("distance_threshold", 0.5)
         self.processing_threads = processing_threads
         self.heads_type = extra_args.get("heads_type", "none")
+        self.clean_answers = extra_args.get("clean_answers", True)
         registry.vocab_type = self.vocab_type
         registry.distance_threshold = self.distance_threshold
         logger.info(f"Dynamic Sampling is {self.dynamic_sampling}")
         logger.info(f"distance_threshold is {self.distance_threshold}")
         logger.info(f"heads_type: {self.heads_type}")
+        logger.info(f"Clean Answers is {self.clean_answers}")
 
         clean_train = ""
 
@@ -362,7 +364,11 @@ class TextVQADataset(Dataset):
         item["co_attention_mask"] = co_attention_mask
 
         # process answers (dynamic sampling)
-        cleaned_answers = [Processors.word_cleaner(word) for word in entry["answers"]]
+        if self.clean_answers:
+            cleaned_answers = [Processors.word_cleaner(word) for word in entry["answers"]]
+        else:
+            cleaned_answers = entry["answers"]
+
         cleaned_ocr_tokens = entry["cleaned_ocr_tokens"]
         processed_answers = self.processors.answer_processor({
             "answers": cleaned_answers,

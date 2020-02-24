@@ -57,8 +57,8 @@ class M4C(nn.Module):
 
         self.beam_size = self.mmt_config.beam_size
         self.is_running_validation = registry.get("is_running_validation", False)
-
         self.bsdecoder = BeamSearch(self.beam_size)
+        logger.info(f"Using beam size: {self.beam_size}")
 
         # build the models
         self.build()

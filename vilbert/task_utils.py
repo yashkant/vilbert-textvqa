@@ -221,7 +221,8 @@ def ForwardModelsVal(args,
                      task_id,
                      batch_dict,
                      model,
-                     task_losses):
+                     task_losses,
+                     return_batch=False):
     for key, value in batch_dict.items():
         if isinstance(value, torch.Tensor):
             batch_dict[key] = value.cuda(device=device, non_blocking=True)
@@ -239,6 +240,9 @@ def ForwardModelsVal(args,
 
     textvqa_metric = MetricsMap["TextVQA"]
     batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, batch_dict["textvqa_scores"])
+
+    if return_batch:
+        return float(loss), float(batch_acc), batch_size, batch_dict
 
     return float(loss), float(batch_acc), batch_size
 
@@ -295,7 +299,7 @@ def LoadLosses(args, task_cfg, task_ids):
     return losses
 
 
-def LoadDatasets(args, task_cfg, ids, split="trainval"):
+def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False):
     if "roberta" in args.bert_model:
         tokenizer = RobertaTokenizer.from_pretrained(
             args.bert_model, do_lower_case=args.do_lower_case
@@ -337,21 +341,25 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
         "stvqa": "STVQA"
     }
 
-    train_datasets = []
-    for entry in task_cfg[task]["use_datasets"]:
-        dataset = DatasetMapTrain[key_map[entry]](
-            split="train",
-            tokenizer=tokenizer,
-            bert_model=args.bert_model,
-            padding_index=0,
-            max_seq_length=task_cfg[task]["max_seq_length"],
-            max_region_num=task_cfg[task]["max_region_num"],
-            extra_args=task_cfg[task]
-        )
-        train_datasets.append(dataset)
 
-    task_datasets_train["separate_datasets"] = train_datasets
-    task_datasets_train[task] = ConcatDataset(train_datasets)
+    if not only_val:
+        train_datasets = []
+        for entry in task_cfg[task]["use_datasets"]:
+            dataset = DatasetMapTrain[key_map[entry]](
+                split="train",
+                tokenizer=tokenizer,
+                bert_model=args.bert_model,
+                padding_index=0,
+                max_seq_length=task_cfg[task]["max_seq_length"],
+                max_region_num=task_cfg[task]["max_region_num"],
+                extra_args=task_cfg[task]
+            )
+            train_datasets.append(dataset)
+
+        task_datasets_train["separate_datasets"] = train_datasets
+        task_datasets_train[task] = ConcatDataset(train_datasets)
+    else:
+        task_datasets_train[task] = None
 
     if "val_on" not in task_cfg[task]:
         task_cfg[task]['val_on'] = ["textvqa"]

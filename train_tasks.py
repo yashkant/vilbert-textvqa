@@ -440,6 +440,9 @@ def main():
                 config_dict["layer_type_list"] = None
                 config_dict["mix_list"] = None
 
+                # Always use beam-size 1 for training
+                config_dict["beam_size"] = 1
+
                 # Replace keys
                 for key in transfer_keys:
                     if key in task_cfg["TASK19"]:
