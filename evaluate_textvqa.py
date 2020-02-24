@@ -81,10 +81,10 @@ def parse_args():
         "--beam_size", type=int, help="number of beams"
     )
     parser.add_argument(
-        "--short_eval", default="val", type=str, help="Run only three iterations of val "
+        "--short_eval", default=False, type=bool, help="Run only three iterations of val "
     )
     parser.add_argument(
-        "--split", default=False, type=bool, help="Which split do you want to evaluate"
+        "--split", default="val", type=str, help="Which split do you want to evaluate"
     )
     
     command_args = parser.parse_args()
@@ -170,7 +170,10 @@ def load_model():
     logger.info(f"Resuming from Checkpoint: {args.model_ckpt}")
     checkpoint = torch.load(args.model_ckpt, map_location="cpu")
     new_dict = {}
-    
+
+    import pdb
+    pdb.set_trace()
+
     for attr in checkpoint["model_state_dict"]:
         if attr.startswith("module."):
             new_dict[attr.replace("module.", "", 1)] = checkpoint[
@@ -231,6 +234,10 @@ def evaluate(
             )
 
             save_keys = ['question_id', 'topkscores', 'complete_seqs']
+
+            # Shapes:
+            # topk-scores: (bs, dec_steps, beam_size)
+            # complete-seqs: (bs, beam_size, dec_steps)
             for key in save_keys:
                 predictions[key].append(batch[key])
 
