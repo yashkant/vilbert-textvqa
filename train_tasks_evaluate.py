@@ -42,8 +42,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-def main():
+def get_arguments():
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -223,6 +222,11 @@ def main():
                                                     "what about question encodings!?")
 
     args = parser.parse_args()
+    return args
+
+def main():
+    args = get_arguments()
+
     with open(args.task_file, "r") as f:
         task_cfg = edict(yaml.safe_load(f))
 
@@ -287,6 +291,7 @@ def main():
         prefix = "-" + args.save_name
     else:
         prefix = ""
+
     timeStamp = (
         "-".join(task_names)
         + "_"
@@ -294,11 +299,8 @@ def main():
         + prefix
         + f"-{args.tag}"
     )
-    savePath = os.path.join(args.output_dir, timeStamp)
 
-    # bert_weight_name = json.load(
-    #     open("config/" + args.bert_model + "_weight_name.json", "r")
-    # )
+    savePath = os.path.join(args.output_dir, timeStamp)
 
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device(
@@ -341,19 +343,12 @@ def main():
             print("\n", file=f)
             print(config, file=f)
 
+
     # LOAD DATASETS
     task_batch_size, task_num_iters, task_ids, task_datasets_train, task_datasets_val, task_dataloader_train, \
     task_dataloader_val = LoadDatasets(args, task_cfg, args.tasks.split("-"))
 
     logdir = os.path.join(savePath, "logs")
-    tbLogger = utils.tbLogger(
-        logdir,
-        savePath,
-        task_names,
-        task_ids,
-        task_num_iters,
-        args.gradient_accumulation_steps,
-    )
 
     if args.visual_target == 0:
         config.v_target_size = 1601
@@ -377,13 +372,6 @@ def main():
             * args.train_iter_multiplier
             / args.num_train_epochs
         )
-        # task_stop_controller[task_id] = utils.MultiTaskStopOnPlateau(
-        #     mode="max",
-        #     patience=1,
-        #     continue_threshold=0.005,
-        #     cooldown=1,
-        #     threshold=0.001,
-        # )
 
     task_ave_iter_list = sorted(task_ave_iter.values())
     median_num_iter = task_ave_iter_list[-1]
@@ -391,10 +379,6 @@ def main():
         median_num_iter * args.num_train_epochs // args.gradient_accumulation_steps
     )
 
-    # if args.dynamic_attention:
-    #     config.dynamic_attention = True
-    # if "roberta" in args.bert_model:
-    #     config.model = "roberta"
 
     # LOAD PRETRAINED VILBERT
     if args.baseline:

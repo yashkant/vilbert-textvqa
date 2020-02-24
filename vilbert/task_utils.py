@@ -371,6 +371,14 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
         max_region_num=task_cfg[task]["max_region_num"],
         extra_args=task_cfg[task]
     )
+    
+    # Make sure we are using correct-vocabs
+    if val_task_name == "TextVQA":
+        assert task_cfg[task]["vocab_type"] == "5k"
+    elif val_task_name == "STVQA":
+        assert task_cfg[task]["vocab_type"] == "5k_stvqa"
+    else:
+        raise ValueError
 
     task_num_iters[task] = 0
     task_batch_size[task] = 0
