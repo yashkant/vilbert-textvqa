@@ -81,7 +81,7 @@ def parse_args():
         "--beam_size", type=int, help="number of beams"
     )
     parser.add_argument(
-        "--short_eval", default=False, type=bool, help="Run only three iterations of val "
+        "--short_eval", default="val", type=str, help="Run only three iterations of val "
     )
     parser.add_argument(
         "--split", default=False, type=bool, help="Which split do you want to evaluate"
@@ -350,7 +350,7 @@ def main():
         task_datasets_val, 
         task_dataloader_train, 
         task_dataloader_val
-    ) = LoadDatasets(args, task_cfg, args.tasks.split("-"), split="val") 
+    ) = LoadDatasets(args, task_cfg, args.tasks.split("-"), split=args.split) 
     # TODO: Remove this hardcoded split value
     
     # eval_df = load_data_for_evaluation()
