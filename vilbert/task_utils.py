@@ -358,8 +358,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False):
 
         task_datasets_train["separate_datasets"] = train_datasets
         task_datasets_train[task] = ConcatDataset(train_datasets)
-    else:
-        task_datasets_train[task] = None
+
 
     if "val_on" not in task_cfg[task]:
         task_cfg[task]['val_on'] = ["textvqa"]
@@ -390,7 +389,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False):
 
     task_num_iters[task] = 0
     task_batch_size[task] = 0
-    if "train" in split:
+    if "train" in split and not only_val:
         if args.local_rank == -1:
             train_sampler = RandomSampler(task_datasets_train[task])
         else:

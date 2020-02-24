@@ -344,7 +344,7 @@ def main():
 
     # LOAD DATASETS
     task_batch_size, task_num_iters, task_ids, task_datasets_train, task_datasets_val, task_dataloader_train, \
-    task_dataloader_val = LoadDatasets(args, task_cfg, args.tasks.split("-"), True)
+    task_dataloader_val = LoadDatasets(args, task_cfg, args.tasks.split("-"), only_val=True)
 
     logdir = os.path.join(savePath, "logs")
 
@@ -534,28 +534,8 @@ def main():
     # TRAINING LOOP
     for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
         # model.train()
-        for step in tqdm(range(median_num_iter), desc="Iters"):
+        for step in tqdm(range(1), desc="Iters"):
             iterId = startIterID + step + (epochId * median_num_iter)
-            first_task = True
-            # for task_id in task_ids:
-            #     is_forward = False
-            #     # if (not task_stop_controller[task_id].in_stop) or (
-            #     #     iterId % args.train_iter_gap == 0
-            #     # ):
-            #     #     is_forward = True
-
-            # if "cosine" in lr_scheduler_config and global_step > warmpu_steps:
-            #     lr_scheduler.step()
-            #
-            # if (
-            #     step % (20 * args.gradient_accumulation_steps) == 0
-            #     and step != 0
-            #     and default_gpu
-            # ):
-            #     tbLogger.showLossTrain()
-            #     if step % (100 * args.gradient_accumulation_steps) == 0:
-            #         logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}")
-
             # decided whether to evaluate on each tasks.
             for task_id in task_ids:
                 # don't run validation during debug runs
@@ -578,47 +558,6 @@ def main():
                         default_gpu,
                         tbLogger,
                     )
-
-                    # if default_gpu and not task_cfg["TASK19"]["debug"]:
-                    #     # Save a trained model
-                    #     logger.info("** ** * Saving fine - tuned model ** ** * ")
-                    #     model_to_save = (
-                    #         model.module if hasattr(model, "module") else model
-                    #     )  # Only save the model it-self
-                    #     # output_model_file = os.path.join(
-                    #     #     savePath, "pytorch_model_" + str(epochId) + ".bin"
-                    #     # )
-                    #     # torch.save(model_to_save.state_dict(), output_model_file)
-                    #     if curr_val_score > best_val_score:
-                    #         output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
-                    #         logger.info(f"Saving Checkpoint: {output_checkpoint}")
-                    #         logger.info(
-                    #             f"Current Validation Score: {curr_val_score} | Previous Best Validation Score: {best_val_score}")
-                    #         best_val_score = curr_val_score
-                    #         torch.save(
-                    #             {
-                    #                 "model_state_dict": model_to_save.state_dict(),
-                    #                 "optimizer_state_dict": optimizer.state_dict(),
-                    #                 "warmup_scheduler_state_dict": warmup_scheduler.state_dict(),
-                    #                 # 'lr_scheduler_state_dict': lr_scheduler.state_dict(),
-                    #                 "global_step": global_step,
-                    #                 "epoch_id": epochId,
-                    #                 # "task_stop_controller": task_stop_controller,
-                    #                 "tb_logger": tbLogger,
-                    #             },
-                    #             output_checkpoint,
-                    #         )
-
-        # if lr_scheduler_config == "automatic":
-        #     lr_scheduler.step(sum(val_scores.values()))
-        #     logger.info("best average score is %3f" % lr_scheduler.best)
-        # elif lr_scheduler_config == "mannul":
-        #     lr_scheduler.step()
-
-        # if epochId in lr_reduce_list:
-        #     for task_id in task_ids:
-        #         # reset the task_stop_controller once the lr drop
-        #         task_stop_controller[task_id]._reset()
 
     tbLogger.txt_close()
 
@@ -663,19 +602,10 @@ def evaluate(
             sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
             sys.stdout.flush()
 
-    # update the multi-task scheduler.
-    # task_stop_controller[task_id].step(tbLogger.getValScore(task_id))
-
-    import pdb
-    pdb.set_trace()
-
     from vilbert.task_utils import MetricsMap
-    tvqa_acc = MetricsMap["TextVQA"].accuracices
+    tvqa_acc = MetricsMap["TextVQA"].accuracies
     accuracy = sum([x*y for x, y in tvqa_acc])/5000
-
-    # np.save("/srv/share/ykant3/stats/model-preds-best.npy", predictions)
-    score = tbLogger.showLossVal(task_id, task_stop_controller=None)
-    model.train()
+    print(f"Accuracy: {accuracy}")
     return score
 
 

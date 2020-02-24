@@ -116,9 +116,11 @@ class STVQADataset(TextVQADataset):
         self.heads_type = extra_args.get("heads_type", "none")
         registry.vocab_type = self.vocab_type
         registry.distance_threshold = self.distance_threshold
+        self.clean_answers = extra_args.get("clean_answers", True)
         logger.info(f"Dynamic Sampling is {self.dynamic_sampling}")
         logger.info(f"distance_threshold is {self.distance_threshold}")
         logger.info(f"heads_type: {self.heads_type}")
+        logger.info(f"Clean Answers is {self.clean_answers}")
 
         clean_train = ""
 

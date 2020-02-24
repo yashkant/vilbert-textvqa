@@ -7,6 +7,7 @@ import re
 class TextVQAAccuracy:
     def __init__(self):
         self.evaluator = TextVQAAccuracyEvaluator()
+        self.accuracies = []
         self.debug_count = 0
 
     def calculate(self, batch_dict, textvqa_scores):
@@ -80,6 +81,7 @@ class TextVQAAccuracy:
         # # add each dec_step's answer separately, shape: (bs, seq_len)
         # model_output["pred_ans_words"] = [x["answer_words"] for x in predictions]
 
+        self.accuracies.append((accuracy, len(batch_dict["question_id"])))
         return accuracy, pred_scores
 
 
