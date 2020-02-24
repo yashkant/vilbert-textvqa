@@ -19,5 +19,6 @@
   "num_decoding_steps": 12,
   "max_obj_num": 100,
   "max_ocr_num": 50,
-  "max_seq_length": 20
+  "max_seq_length": 20,
+  "beam_size": 5
 }

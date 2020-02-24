@@ -11,7 +11,7 @@ from pytorch_transformers.modeling_bert import (
 )
 from tools.registry import registry
 from vilbert.textvqa_encoders import ImageEncoder
-
+from vilbert.beam_search import BeamSearch
 logger = logging.getLogger(__name__)
 
 
@@ -49,6 +49,10 @@ class M4C(nn.Module):
             logger.info(f"Spatial aux fusion type: {self.aux_spatial_fusion}")
         else:
             logger.info("Not using spatial-aux heads")
+
+        self.beam_size = self.mmt_config.beam_size
+        self.is_running_validation = registry.get("is_running_validation", False)
+        self.bsdecoder = BeamSearch(self.beam_size)
 
         # build the models
         self.build()
@@ -206,7 +210,12 @@ class M4C(nn.Module):
         # self._forward_txt_encoding(batch_dict)
         self._forward_obj_encoding(batch_dict)
         self._forward_ocr_encoding(batch_dict)
-        self._forward_mmt_and_output(batch_dict)
+        
+        if self.training or not self.is_running_validation:
+            self._forward_mmt_and_output(batch_dict)
+        else:
+            self._forward_beam_search(batch_dict)
+
         if self.use_aux_heads:
             self._forward_aux(batch_dict)
 
@@ -214,6 +223,11 @@ class M4C(nn.Module):
             "textvqa_scores": batch_dict["scores"],
             "spatial_scores": None if not self.use_aux_heads else batch_dict["spatial_head_out"]
         }
+
+        if 'complete_seqs' in batch_dict:
+            results_dict['complete_seqs'] = batch_dict['complete_seqs'].cpu().detach().numpy()
+            results_dict['topkscores'] = batch_dict['topkscores'].cpu().detach().numpy()
+            results_dict['question_id'] = batch_dict['question_id'].cpu().detach().numpy()
 
         return results_dict
 
@@ -345,6 +359,18 @@ class M4C(nn.Module):
                 # decoding
                 argmax_inds = batch_dict["scores"].argmax(dim=-1)
                 batch_dict['train_prev_inds'][:, 1:] = argmax_inds[:, :-1]
+    
+    def _forward_beam_search(self, batch_dict):
+        dec_step_num = batch_dict['train_prev_inds'].size(1)
+        batch_dict = self.bsdecoder.init_batch(batch_dict)
+
+        for t in range(dec_step_num):
+            self._forward_mmt(batch_dict)
+            self._forward_output(batch_dict)
+
+            finish, batch_dict, batch_size_t = self.bsdecoder.decode(batch_dict, t)
+            if finish:
+                break
 
     def _forward_aux(self, batch_dict):
         txt_max_num = batch_dict["question_mask"].size(-1)

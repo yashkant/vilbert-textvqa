@@ -1,16 +1,17 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import functools
 import math
-from collections import Counter
-
 import torch
 import logging
 from torch import nn
 import torch.nn.functional as F
+from collections import Counter
 from pytorch_transformers.modeling_bert import (
     BertLayerNorm, BertEmbeddings, BertEncoder, BertConfig,
     BertPreTrainedModel
 )
+
+from vilbert.beam_search import BeamSearch
 from tools.registry import registry
 from vilbert.textvqa_encoders import ImageEncoder
 
@@ -53,6 +54,11 @@ class M4C(nn.Module):
         # type of spatial-layers
         self.spatial_type = getattr(self.mmt_config, "spatial_type", "top")
         logger.info(f"Using {self.spatial_type} type spatial layers")
+
+        self.beam_size = self.mmt_config.beam_size
+        self.is_running_validation = registry.get("is_running_validation", False)
+
+        self.bsdecoder = BeamSearch(self.beam_size)
 
         # build the models
         self.build()
@@ -173,8 +179,27 @@ class M4C(nn.Module):
     def _build_output(self):
         # dynamic OCR-copying scores with pointer network
         self.ocr_ptr_net = OcrPtrNet(hidden_size=self.mmt_config.hidden_size, query_key_size=self.mmt_config.ptr_query_size)
-        num_outputs = len(registry.answer_vocab)
+
+        if registry.vocab_type == "5k":
+            num_outputs = 5000
+        else:
+            num_outputs = 3998
+
         self.classifier = nn.Linear(self.mmt_config.hidden_size, num_outputs)
+        # fixed answer vocabulary scores
+        # num_choices = registry.get(self._datasets[0] + "_num_final_outputs")
+        # # remove the OCR copying dimensions in LoRRA's classifier output
+        # # (OCR copying will be handled separately)
+        # num_choices -= self.config.classifier.ocr_max_num
+        # self.classifier = ClassifierLayer(
+        #     self.config["classifier"]["type"],
+        #     in_dim=self.mmt_config.hidden_size,
+        #     out_dim=num_choices,
+        #     **self.config["classifier"]["params"]
+        # )
+        # self.answer_processor = registry.get(
+        #     self._datasets[0] + "_answer_processor"
+        # )
 
     def _build_aux_heads(self):
         from vilbert.vilbert import SimpleClassifier
@@ -191,7 +216,13 @@ class M4C(nn.Module):
         # self._forward_txt_encoding(batch_dict)
         self._forward_obj_encoding(batch_dict)
         self._forward_ocr_encoding(batch_dict)
-        self._forward_mmt_and_output(batch_dict)
+        
+        if self.training or not self.is_running_validation:
+            self._forward_mmt_and_output(batch_dict)
+        else:
+            # self._forward_mmt_and_output(batch_dict)
+            self._forward_beam_search(batch_dict)
+        
         if self.use_aux_heads:
             self._forward_aux(batch_dict)
 
@@ -199,6 +230,11 @@ class M4C(nn.Module):
             "textvqa_scores": batch_dict["scores"],
             "spatial_scores": None if not self.use_aux_heads else batch_dict["spatial_head_out"]
         }
+
+        if 'complete_seqs' in batch_dict:
+            results_dict['complete_seqs'] = batch_dict['complete_seqs'].cpu().detach().numpy()
+            results_dict['topkscores'] = batch_dict['topkscores'].cpu().detach().numpy()
+            results_dict['question_id'] = batch_dict['question_id'].cpu().detach().numpy()
 
         return results_dict
 
@@ -331,6 +367,19 @@ class M4C(nn.Module):
                 argmax_inds = batch_dict["scores"].argmax(dim=-1)
                 batch_dict['train_prev_inds'][:, 1:] = argmax_inds[:, :-1]
 
+    def _forward_beam_search(self, batch_dict):
+        dec_step_num = batch_dict["train_prev_inds"].size(1)
+        # Decoding with beam search
+        batch_dict = self.bsdecoder.init_batch(batch_dict)
+
+        for t in range(dec_step_num):
+            self._forward_mmt(batch_dict)
+            self._forward_output(batch_dict)
+
+            finish, batch_dict, batch_size_t = self.bsdecoder.decode(batch_dict, t)
+            if finish:
+                break
+
     def _forward_aux(self, batch_dict):
         txt_max_num = batch_dict["question_mask"].size(-1)
         obj_max_num = batch_dict["pad_obj_mask"].size(-1)
@@ -413,14 +462,14 @@ class SpatialBertSelfAttention(nn.Module):
     Todo: Keep 768 and build zero-mask for 12th head (not needed with identity relation)
     """
 
-    def __init__(self, config, use_implicit=False):
+    def __init__(self, config):
         super(SpatialBertSelfAttention, self).__init__()
         assert hasattr(config, "num_spatial_relations")
 
         self.num_attention_heads = config.num_spatial_relations
         self.num_spatial_relations = config.num_spatial_relations
 
-        if hasattr(config, "num_implicit_relations") and use_implicit:
+        if hasattr(config, "num_implicit_relations"):
             self.num_attention_heads += config.num_implicit_relations
             self.num_implicit_relations = config.num_implicit_relations
 
@@ -480,8 +529,6 @@ class SpatialBertSelfAttention(nn.Module):
 
         # Removing masking all quadrants
         spatial_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, num_spatial_heads))
-
-        # Add explicit mask
         spatial_attention_mask[:, self.max_seq_len:self.max_seq_len + ocr_obj_num,
         self.max_seq_len:self.max_seq_len + ocr_obj_num, :] = spatial_adj_matrix
 
@@ -493,20 +540,14 @@ class SpatialBertSelfAttention(nn.Module):
 
         assert spatial_attention_mask.shape == (batch_size, num_features, num_features, self.num_attention_heads)
 
-        # Mask attention-quadrants (spatial relations only)
+        # Mask attention-quadrants
         for quadrant in self.mask_quadrants:
             if quadrant == 1:
-                spatial_attention_mask[:, :self.max_seq_len, :self.max_seq_len, :self.num_spatial_relations] = 0
+                spatial_attention_mask[:, :self.max_seq_len, :self.max_seq_len, :] = 0
             elif quadrant == 2:
-                spatial_attention_mask[:, :self.max_seq_len, self.max_seq_len:self.max_seq_len+ocr_obj_num, :self.num_spatial_relations] = 0
+                spatial_attention_mask[:, :self.max_seq_len, self.max_seq_len:self.max_seq_len+ocr_obj_num, :] = 0
             elif quadrant == 4:
-                spatial_attention_mask[:, self.max_seq_len:self.max_seq_len+ocr_obj_num, :self.max_seq_len, :self.num_spatial_relations] = 0
-            elif quadrant == 7:
-                spatial_attention_mask[:, self.max_seq_len+ocr_obj_num:, :self.max_seq_len, :self.num_spatial_relations] = 0
-            elif quadrant == 8:
-                spatial_attention_mask[:, self.max_seq_len+ocr_obj_num:, self.max_seq_len:self.max_seq_len+ocr_obj_num, :self.num_spatial_relations] = 0
-            elif quadrant == 9:
-                spatial_attention_mask[:, self.max_seq_len+ocr_obj_num:, self.max_seq_len+ocr_obj_num:, :self.num_spatial_relations] = 0
+                spatial_attention_mask[:, self.max_seq_len:self.max_seq_len+ocr_obj_num, :self.max_seq_len, :] = 0
             else:
                 raise ValueError
 
@@ -525,7 +566,7 @@ class SpatialBertSelfAttention(nn.Module):
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
 
-        # Prevent imbalanced masking
+        # Prevent unbalanced masking
         combined_mask = torch.min(attention_mask, spatial_attention_mask)
         assert len(torch.unique(combined_mask)) == 2
 
@@ -564,9 +605,9 @@ class SpatialBertSelfAttention(nn.Module):
 
 
 class SpatialBertAttention(nn.Module):
-    def __init__(self, config, use_implicit=False):
+    def __init__(self, config):
         super(SpatialBertAttention, self).__init__()
-        self.self = SpatialBertSelfAttention(config, use_implicit)
+        self.self = SpatialBertSelfAttention(config)
         from pytorch_transformers.modeling_bert import BertSelfOutput
         self.output = BertSelfOutput(config)
         self.pruned_heads = set()
@@ -602,10 +643,10 @@ class SpatialBertAttention(nn.Module):
 
 
 class SpatialBertLayer(nn.Module):
-    def __init__(self, config, use_implicit=False):
+    def __init__(self, config):
         super(SpatialBertLayer, self).__init__()
         from pytorch_transformers.modeling_bert import BertIntermediate, BertOutput
-        self.attention = SpatialBertAttention(config, use_implicit)
+        self.attention = SpatialBertAttention(config)
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
 
