@@ -169,12 +169,8 @@ class M4C(nn.Module):
     def _build_output(self):
         # dynamic OCR-copying scores with pointer network
         self.ocr_ptr_net = OcrPtrNet(hidden_size=self.mmt_config.hidden_size, query_key_size=self.mmt_config.ptr_query_size)
-
-        if registry.vocab_type == "5k":
-            num_outputs = 5000
-        else:
-            num_outputs = 3998
-
+        num_outputs = len(registry.answer_vocab)
+        logger.info(f"Answer vocab-size is: {num_outputs}")
         self.classifier = nn.Linear(self.mmt_config.hidden_size, num_outputs)
         # fixed answer vocabulary scores
         # num_choices = registry.get(self._datasets[0] + "_num_final_outputs")

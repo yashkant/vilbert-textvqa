@@ -3,19 +3,41 @@ import torch
 from tools.registry import registry
 from tools.objects_to_byte_tensor import enc_obj2bytes, dec_bytes2obj
 import re
+import numpy as np
+import os
 
 class TextVQAAccuracy:
-    def __init__(self):
+    def __init__(self, use_original_tokens=False):
         self.evaluator = TextVQAAccuracyEvaluator()
         self.accuracies = []
         self.debug_count = 0
+        self.use_original_tokens = use_original_tokens
+        self.question_id_vs_tokens = {}
+        self.question_id_vs_answers = {}
+
+        if self.use_original_tokens:
+            print("Using original tokens")
+            train_imdb_path = "datasets/textvqa/imdb/textvqa_0.5/imdb_google_det_bbox_textvqa_multidec_sa_info_ascii_train.npy"
+            val_imdb_path = "datasets/textvqa/imdb/textvqa_0.5/imdb_google_det_bbox_textvqa_multidec_sa_info_ascii_val.npy"
+            ocr_features_path = '/srv/share/ykant3/vilbert-mt/features/ocr/train/'
+
+            for imdb_path in [train_imdb_path, val_imdb_path]:
+                imdb_data = np.load(imdb_path, allow_pickle=True)
+                for instance in imdb_data:
+                    if "question_id" in instance:
+                        ocr_feature_path = os.path.join(ocr_features_path, instance["image_id"] + ".npy")
+                        ocr_feature_data = np.load(ocr_feature_path, allow_pickle=True).item()
+                        self.question_id_vs_tokens[instance["question_id"]] = ocr_feature_data["ocr_tokens"]
+                        self.question_id_vs_answers[instance["question_id"]] = instance["answers"]
+
+    def word_cleaner_lower(self, word):
+        word = word.lower()
+        return word.strip()
 
     def calculate(self, batch_dict, textvqa_scores):
         self.debug_count += 1
 
         _print = False
-        # if self.debug_count % 50 == 0:
-        #     _print = True
 
         if "pred_answer_rd" in batch_dict and batch_dict["pred_answer_rd"] is not None:
             pred_answers = batch_dict["pred_answer_rd"]
@@ -29,7 +51,10 @@ class TextVQAAccuracy:
         predictions = []
 
         for idx, question_id in enumerate(batch_dict["question_id"]):
-            context_tokens = dec_bytes2obj(ocr_tokens_enc[idx])
+            if self.use_original_tokens:
+                context_tokens = self.question_id_vs_tokens[int(question_id)]
+            else:
+                context_tokens = dec_bytes2obj(ocr_tokens_enc[idx])
             answer_words = []
             belongs_to = []
 
@@ -94,8 +119,7 @@ class STVQAANLS(TextVQAAccuracy):
 class STVQAAccuracy(TextVQAAccuracy):
     def __init__(self):
         self.name = "stvqa_accuracy"
-        import pythia.utils.m4c_evaluators as evaluators
-        self.evaluator = evaluators.STVQAAccuracyEvaluator()
+        self.evaluator = STVQAAccuracyEvaluator()
 
 
 class OCRVQAAccuracy(STVQAAccuracy):

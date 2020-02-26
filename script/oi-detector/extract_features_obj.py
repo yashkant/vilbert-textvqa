@@ -8,7 +8,7 @@
 import argparse
 import glob
 import os
-
+import json
 import cv2
 import numpy as np
 import torch
@@ -22,14 +22,32 @@ from maskrcnn_benchmark.utils.model_serialization import load_state_dict
 from tqdm import tqdm
 
 
-# image_folders
-IMAGES_OCRVQA = "/srv/share/ykant3/ocr-vqa/images/"
-OBJ_FEATURES_OCRVQA = "/srv/share/ykant3/ocr-vqa/features/"
+IMAGES_TEXTVQA = [
+    "/srv/share/ykant3/pythia/dataset_images/train_images/",
+    "/srv/share/ykant3/pythia/dataset_images/test_images/",
+]
+
+OI_OBJ_JSON = [
+    "/srv/share3/hagrawal9/data/TextVQA_train_images_oidetector.json",
+    "/srv/share3/hagrawal9/data/TextVQA_test_images_oidetector.json"
+]
+
+OI_OBJ_FEATURES = [
+    "/srv/share/ykant3/vilbert-mt/features/oi-features/obj/train/",
+    "/srv/share/ykant3/vilbert-mt/features/oi-features/obj/test/"
+]
 
 
 class FeatureExtractor:
     MAX_SIZE = 1333
     MIN_SIZE = 800
+
+    def preprocess_boxes(self, boxes, height, width):
+        boxes[:, 0] = boxes[:, 0]*width
+        boxes[:, 2] = boxes[:, 2]*width
+        boxes[:, 1] = boxes[:, 1]*height
+        boxes[:, 3] = boxes[:, 3]*height
+        return boxes
 
     def __init__(self):
         self.args = self.get_parser().parse_args()
@@ -95,39 +113,33 @@ class FeatureExtractor:
         model.eval()
         return model
 
-    def _image_transform(self, path):
-        img = Image.open(path)
+    def _image_transform(self, image_path):
+        """Handles 2-dim and n-dim images. Resize between (800, 1333) and output scale"""
+        img = Image.open(image_path)
         im = np.array(img).astype(np.float32)
-        # IndexError: too many indices for array, grayscale images
-        if len(im.shape) < 3:
-            im = np.repeat(im[:, :, np.newaxis], 3, axis=2)
-        # Handle 4-channel images
+        if im.ndim == 2:
+            im = np.tile(im[:, :, None], (1, 1, 3))
         if im.shape[2] > 3:
             im = im[:, :, :3]
         im = im[:, :, ::-1]
         im -= np.array([102.9801, 115.9465, 122.7717])
         im_shape = im.shape
-        im_height = im_shape[0]
-        im_width = im_shape[1]
         im_size_min = np.min(im_shape[0:2])
         im_size_max = np.max(im_shape[0:2])
-
-        # Scale based on minimum size
-        im_scale = self.MIN_SIZE / im_size_min
-
+        im_scale = float(800) / float(im_size_min)
         # Prevent the biggest axis from being more than max_size
-        # If bigger, scale it down
-        if np.round(im_scale * im_size_max) > self.MAX_SIZE:
-            im_scale = self.MAX_SIZE / im_size_max
-
+        if np.round(im_scale * im_size_max) > 1333:
+            im_scale = float(1333) / float(im_size_max)
         im = cv2.resize(
-            im, None, None, fx=im_scale, fy=im_scale, interpolation=cv2.INTER_LINEAR
+            im,
+            None,
+            None,
+            fx=im_scale,
+            fy=im_scale,
+            interpolation=cv2.INTER_LINEAR
         )
         img = torch.from_numpy(im).permute(2, 0, 1)
-
-        im_info = {"width": im_width, "height": im_height}
-
-        return img, im_scale, im_info
+        return img, im_scale, im_shape
 
     def _process_feature_extraction(
         self, output, im_scales, im_infos, feature_name="fc6", conf_thresh=0
@@ -184,32 +196,29 @@ class FeatureExtractor:
 
         return feat_list, info_list
 
-    def get_detectron_features(self, image_paths):
-        img_tensor, im_scales, im_infos = [], [], []
+    def get_detectron_features(self, image_path, input_boxes):
+        # img_tensor, im_scales, im_infos = [], [], []
+        im, im_scale, im_shape = self._image_transform(image_path)
 
-        for image_path in image_paths:
-            im, im_scale, im_info = self._image_transform(image_path)
-            img_tensor.append(im)
-            im_scales.append(im_scale)
-            im_infos.append(im_info)
+        if input_boxes is not None:
+            if isinstance(input_boxes, np.ndarray):
+                input_boxes = torch.from_numpy(input_boxes.copy()).to("cuda")
+            input_boxes *= im_scale
+            input_boxes = [input_boxes]
 
-        # Image dimensions should be divisible by 32, to allow convolutions
-        # in detector to work
+        img_tensor, im_scales = [im], [im_scale]
+        # im.shape: (C,H,W)
+        # batches the images and decides the max_size
         current_img_list = to_image_list(img_tensor, size_divisible=32)
-        current_img_list = current_img_list.to("cuda")
+        current_img_list = current_img_list.to('cuda')
 
         with torch.no_grad():
-            output = self.detection_model(current_img_list)
+            output = self.detection_model(current_img_list, input_boxes=input_boxes)
 
-        feat_list = self._process_feature_extraction(
-            output,
-            im_scales,
-            im_infos,
-            self.args.feature_name,
-            self.args.confidence_threshold,
-        )
+        feat = output[0][self.args.feature_name].cpu().numpy()
+        bbox = output[0]["proposals"][0].bbox.cpu().numpy() / im_scale
 
-        return feat_list
+        return feat, bbox
 
     def _save_feature(self, save_path, feature, info):
         file_base_name = save_path.split(".")[0]
@@ -218,35 +227,58 @@ class FeatureExtractor:
         info["features"] = feature.cpu().numpy()
         np.save(file_base_name, info)
 
-    def extract_features(self, image_dir, save_dir):
+    def extract_features(self, json_path, save_dir, image_dir):
+
+        with open(json_path) as file:
+            json_data = json.load(file)
+
         # paths to all the items images
         files = glob.glob(image_dir + "/*", recursive=True)
-
-        # find remaining files that are extracted yet!
-        remain_files = []
-        for file in tqdm(files, desc="Counting files"):
-            feature_file = os.path.join(save_dir, os.path.split(file)[-1]).split(".")[0] + ".npy"
-            if not os.path.exists(feature_file):
-                remain_files.append(file)
-
-        import pdb
-        pdb.set_trace()
-
         assert os.path.exists(image_dir)
-        assert len(files) > 0
-        for file in tqdm(remain_files):
+        assert len(files) == len(json_data["image_url"])
+
+        for idx, image_path in tqdm(json_data["image_url"].items()):
             try:
-                features, infos = self.get_detectron_features([file])
-                save_path = file.replace(image_dir, save_dir)
+                abs_image_path = os.path.join(image_dir, image_path)
+                assert os.path.exists(abs_image_path)
+                image_w, image_h = Image.open(abs_image_path).size
+                normalized_boxes = np.array(json_data["detection_boxes"][idx])
+                bounding_boxes = self.preprocess_boxes(normalized_boxes, image_h, image_w)
+
+                if len(bounding_boxes) > 0:
+                    extracted_feat, _ = self.get_detectron_features(abs_image_path, input_boxes=bounding_boxes)
+                else:
+                    extracted_feat = np.zeros((0, 2048), np.float32)
+
+                assert len(extracted_feat) == len(bounding_boxes)
+
+                save_data = {
+                    "bounding_boxes": bounding_boxes,
+                    "features": extracted_feat,
+                    "detection_class_entities": json_data["detection_class_entities"][idx],
+                    "detection_class_names": json_data["detection_class_names"][idx],
+                    "detection_boxes": json_data["detection_boxes"][idx],
+                    "detection_scores": json_data["detection_scores"][idx],
+                    "detection_class_labels": json_data["detection_class_labels"][idx],
+                    "image_url": json_data["image_url"][idx],
+                }
+                save_path = abs_image_path.replace(image_dir, save_dir).split(".")[0]
+                save_path = save_path + ".npy"
+
                 _save_dir = os.path.split(save_path)[0]
-                assert os.path.exists(_save_dir)
-                self._save_feature(save_path, features[0], infos[0])
+                if not os.path.exists(_save_dir):
+                    os.makedirs(_save_dir)
+                    print(f"Creating Dir: {_save_dir}")
+
+                np.save(save_path, save_data)
             except BaseException:
-                print("Couldn't extract from: ", file)
+                print("Couldn't extract from: ", abs_image_path)
 
 
 if __name__ == "__main__":
     feature_extractor = FeatureExtractor()
-    # Todo: Store fc7 weights from here.
-    print(f"Extracting from: {IMAGES_OCRVQA} \nSaving to: {OBJ_FEATURES_OCRVQA}")
-    feature_extractor.extract_features(IMAGES_OCRVQA, OBJ_FEATURES_OCRVQA)
+
+    for json_path, save_dir, image_dir in zip(OI_OBJ_JSON, OI_OBJ_FEATURES, IMAGES_TEXTVQA):
+        print(f"Extracting from: {image_dir} \nSaving to: {save_dir}")
+        feature_extractor.extract_features(json_path, save_dir, image_dir)
+

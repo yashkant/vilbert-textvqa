@@ -37,7 +37,7 @@ def _load_dataset(dataroot, name, debug):
         the splits, and return entries.
     """
 
-    if name == "train" or name == "val" or name =="test":
+    if name == "train" or name == "val" or name == "test":
         imdb_holder = "imdb_google_det_bbox_textvqa_multidec_sa_info_ascii_{}.npy"
         if name == "test":
             imdb_holder = "imdb_google_det_bbox_textvqa_info_{}.npy"
@@ -45,7 +45,7 @@ def _load_dataset(dataroot, name, debug):
         if debug:
             imdb_holder = "debug_" + imdb_holder
 
-        imdb_path = os.path.join(dataroot, "imdb/textvqa_0.5/",imdb_holder.format(name))
+        imdb_path = os.path.join(dataroot, "imdb/textvqa_0.5/", imdb_holder.format(name))
         logger.info(f"Loading IMDB for {name}" if not debug else f"Loading IMDB for {name} in debug mode")
         imdb_data = ImageDatabase(imdb_path)
     else:
@@ -74,16 +74,16 @@ def _load_dataset(dataroot, name, debug):
 
 class TextVQADataset(Dataset):
     def __init__(
-        self,
-        split,
-        tokenizer,
-        bert_model,
-        task="TextVQA",
-        padding_index=0,
-        max_seq_length=16,
-        max_region_num=101,
-        processing_threads=32,
-        extra_args=None
+            self,
+            split,
+            tokenizer,
+            bert_model,
+            task="TextVQA",
+            padding_index=0,
+            max_seq_length=16,
+            max_region_num=101,
+            processing_threads=32,
+            extra_args=None
     ):
         """
         (YK): Builds self.entries by reading questions and answers and caches them.
@@ -112,12 +112,21 @@ class TextVQADataset(Dataset):
         self.processing_threads = processing_threads
         self.heads_type = extra_args.get("heads_type", "none")
         self.clean_answers = extra_args.get("clean_answers", True)
+        self.randomize = extra_args.get("randomize", -1)
+
         registry.vocab_type = self.vocab_type
         registry.distance_threshold = self.distance_threshold
+        registry.randomize = self.randomize
+
         logger.info(f"Dynamic Sampling is {self.dynamic_sampling}")
         logger.info(f"distance_threshold is {self.distance_threshold}")
         logger.info(f"heads_type: {self.heads_type}")
         logger.info(f"Clean Answers is {self.clean_answers}")
+        logger.info(f"Randomize is {self.randomize}")
+
+        # We only randomize the spatial-adj-matrix
+        if self.heads_type != "none":
+            assert self.randomize <= 0
 
         clean_train = ""
 
@@ -151,6 +160,10 @@ class TextVQADataset(Dataset):
             cache_path = cache_path.split(".")[0]
             cache_path = cache_path + f"_heads_new" + ".pkl"
 
+        if self.randomize > 0:
+            cache_path = cache_path.split(".")[0]
+            cache_path = cache_path + f"_randomize_{self.randomize}" + ".pkl"
+
         logger.info(f"Cache Name:  {cache_path}")
 
         if not os.path.exists(cache_path) or self.debug:
@@ -165,7 +178,12 @@ class TextVQADataset(Dataset):
             self.entries, _ = _load_dataset(dataroot, split, self.debug)
             # convert questions to tokens, create masks, segment_ids
             self.process()
-            self.process_spatials()
+
+            if self.randomize > 0:
+                self.process_random_spatials()
+            else:
+                self.process_spatials()
+
             if self.heads_type != "none":
                 self.process_spatial_extras()
             if not self.debug:
@@ -180,7 +198,6 @@ class TextVQADataset(Dataset):
                 registry.processors_only_registry = self.processors
             else:
                 self.processors = registry.processors_only_registry
-
 
             # otherwise load cache!
             logger.info("Loading from %s" % cache_path)
@@ -261,6 +278,37 @@ class TextVQADataset(Dataset):
         for result, entry in zip(results, self.entries):
             entry["spatial_adj_matrix"] = result
 
+
+    def process_random_spatials(self):
+        pad_obj_ocr_bboxes_list = []
+        for entry in tqdm(self.entries, desc="Reading Entries"):
+            # Adding spatial graph matrix
+            obj_features, obj_num_boxes, obj_bboxes, _ = self.obj_features_reader[entry["image_id"]]
+            obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes - 1, obj_bboxes[1:]
+            _, _, pad_obj_bboxes = self._pad_features(
+                obj_features, obj_bboxes, obj_num_boxes, self.max_obj_num, tensorize=False
+            )
+            ocr_features, ocr_num_boxes, ocr_bboxes, _ = self.ocr_features_reader[entry["image_id"]]
+            ocr_features, ocr_num_boxes, ocr_bboxes = ocr_features[1:], ocr_num_boxes - 1, ocr_bboxes[1:]
+            _, _, pad_ocr_bboxes = self._pad_features(
+                ocr_features, ocr_bboxes, ocr_num_boxes, self.max_ocr_num, tensorize=False
+            )
+            # Append bboxes to the list
+            pad_obj_ocr_bboxes_list.append(np.concatenate([pad_obj_bboxes[:, :-1], pad_ocr_bboxes[:, :-1]], axis=0))
+
+        logger.info(f"Processsing Random Spatial Relations with {self.processing_threads} threads")
+        pool = mp.Pool(self.processing_threads)
+        # map is synchronous (ordered)
+        results = pool.map(RandomSpatialProcessor, pad_obj_ocr_bboxes_list)
+        pool.close()
+        pool.join()
+        assert len(results) == len(self.entries)
+        for result, entry in zip(results, self.entries):
+            entry["spatial_adj_matrix"] = result
+
+
+
+
     @staticmethod
     def process_four_quadrant_spatials(spatial_adj_matrix):
         replace_dict = {}
@@ -278,17 +326,19 @@ class TextVQADataset(Dataset):
             spatial_adj_matrix_share3_2_replace_dict[quad] = quad - 1
         spatial_adj_matrix_share3_2_replace_dict[4] = 11
 
-        spatial_adj_matrix_quad4 = np.copy(spatial_adj_matrix)*0
-        spatial_adj_matrix_share3_1 = np.copy(spatial_adj_matrix)*0
-        spatial_adj_matrix_share3_2 = np.copy(spatial_adj_matrix)*0
+        spatial_adj_matrix_quad4 = np.copy(spatial_adj_matrix) * 0
+        spatial_adj_matrix_share3_1 = np.copy(spatial_adj_matrix) * 0
+        spatial_adj_matrix_share3_2 = np.copy(spatial_adj_matrix) * 0
 
         assert len(spatial_adj_matrix.shape) == 2
         rows, cols = spatial_adj_matrix.shape
         for row in range(rows):
             for col in range(cols):
                 spatial_adj_matrix_quad4[row][col] = replace_dict.get(spatial_adj_matrix[row][col], 0)
-                spatial_adj_matrix_share3_1[row][col] = spatial_adj_matrix_share3_1_replace_dict.get(spatial_adj_matrix[row][col], 0)
-                spatial_adj_matrix_share3_2[row][col] = spatial_adj_matrix_share3_2_replace_dict.get(spatial_adj_matrix[row][col], 0)
+                spatial_adj_matrix_share3_1[row][col] = spatial_adj_matrix_share3_1_replace_dict.get(
+                    spatial_adj_matrix[row][col], 0)
+                spatial_adj_matrix_share3_2[row][col] = spatial_adj_matrix_share3_2_replace_dict.get(
+                    spatial_adj_matrix[row][col], 0)
         return spatial_adj_matrix_quad4, spatial_adj_matrix_share3_1, spatial_adj_matrix_share3_2
 
     def __len__(self):
@@ -334,16 +384,16 @@ class TextVQADataset(Dataset):
         # add object-features and bounding boxes
         obj_features, obj_num_boxes, obj_bboxes, _ = self.obj_features_reader[image_id]
         # remove avg-features
-        obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes-1, obj_bboxes[1:]
-        pad_obj_features, pad_obj_mask, pad_obj_bboxes= self._pad_features(
+        obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes - 1, obj_bboxes[1:]
+        pad_obj_features, pad_obj_mask, pad_obj_bboxes = self._pad_features(
             obj_features, obj_bboxes, obj_num_boxes, self.max_obj_num
         )
 
         # add ocr-features and bounding boxes
         ocr_features, ocr_num_boxes, ocr_bboxes, _ = self.ocr_features_reader[image_id]
         # remove avg-features
-        ocr_features, ocr_num_boxes, ocr_bboxes = ocr_features[1:], ocr_num_boxes-1, ocr_bboxes[1:]
-        pad_ocr_features, pad_ocr_mask, pad_ocr_bboxes= self._pad_features(
+        ocr_features, ocr_num_boxes, ocr_bboxes = ocr_features[1:], ocr_num_boxes - 1, ocr_bboxes[1:]
+        pad_ocr_features, pad_ocr_mask, pad_ocr_bboxes = self._pad_features(
             ocr_features, ocr_bboxes, ocr_num_boxes, self.max_ocr_num
         )
 
@@ -378,19 +428,34 @@ class TextVQADataset(Dataset):
 
         # In the first iteration expand all the spatial relation matrices
         if not isinstance(entry["spatial_adj_matrix"], torch.Tensor):
-            entry["spatial_loss_mask"] = torch.from_numpy((entry["spatial_adj_matrix"] != 0).astype(np.float))
-            entry["spatial_ocr_relations"] = torch.from_numpy(
-                entry["spatial_adj_matrix"][-self.max_ocr_num:, -self.max_ocr_num:].astype(np.float)
-            )
+            if self.randomize > 0:
+                rows, cols, slices = entry["spatial_adj_matrix"].shape
+                assert slices == self.randomize
+                adj_matrices = []
 
-            # Todo: For four-quadrants and two heads, create a second matrix with appropiate relations and
-            #  add it to first one.
+                # Expand each slice
+                for slice_idx in range(slices):
+                    adj_matrix_slice = torch_broadcast_adj_matrix(
+                        torch.from_numpy(entry["spatial_adj_matrix"][:, :, slice_idx]),
+                        label_num=12
+                    )
+                    adj_matrices.append(adj_matrix_slice)
 
-            # label_num = 12 classifies self-relationship as label=12
-            entry["spatial_adj_matrix"] = torch_broadcast_adj_matrix(
-                torch.from_numpy(entry["spatial_adj_matrix"]),
-                label_num=12
-            )
+                # Aggregate each slice
+                entry["spatial_adj_matrix"] = adj_matrices[0]
+                for matrix_slice in adj_matrices[1:]:
+                    entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], matrix_slice)
+
+            else:
+                entry["spatial_loss_mask"] = torch.from_numpy((entry["spatial_adj_matrix"] != 0).astype(np.float))
+                entry["spatial_ocr_relations"] = torch.from_numpy(
+                    entry["spatial_adj_matrix"][-self.max_ocr_num:, -self.max_ocr_num:].astype(np.float)
+                )
+                # label_num = 12 classifies self-relationship as label=12
+                entry["spatial_adj_matrix"] = torch_broadcast_adj_matrix(
+                    torch.from_numpy(entry["spatial_adj_matrix"]),
+                    label_num=12
+                )
 
             if self.heads_type == "quad4":
                 spatial_adj_matrix_quad4 = torch_broadcast_adj_matrix(
@@ -429,6 +494,8 @@ class TextVQADataset(Dataset):
                 )
                 entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_1)
                 entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_2)
+
+
         else:
             try:
                 assert len(entry["spatial_adj_matrix"].shape) == 3
@@ -464,6 +531,7 @@ class TextVQADataset(Dataset):
                     pdb.set_trace()
 
         return item
+
 
 class Processors:
     """
@@ -505,6 +573,11 @@ class Processors:
     def word_cleaner(word):
         word = word.lower()
         word = word.replace(",", "").replace("?", "").replace("'s", " 's")
+        return word.strip()
+
+    @staticmethod
+    def word_cleaner_lower(word):
+        word = word.lower()
         return word.strip()
 
 

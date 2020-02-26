@@ -81,12 +81,14 @@ from .textvqa_vocab import VocabDict
 from ..phoc import build_phoc
 from vilbert.spatial_utils_regat import build_graph_using_normalized_boxes
 
+
 def _pad_tokens(tokens, PAD_TOKEN, max_length):
     padded_tokens = [PAD_TOKEN] * max_length
     token_length = min(len(tokens), max_length)
     padded_tokens[:token_length] = tokens[:token_length]
     token_length = torch.tensor(token_length, dtype=torch.long)
     return padded_tokens, token_length
+
 
 class WordToVectorDict:
     def __init__(self, model):
@@ -95,6 +97,7 @@ class WordToVectorDict:
     def __getitem__(self, word):
         # Check if mean for word split needs to be done here
         return np.mean([self.model.get_word_vector(w) for w in word.split(" ")], axis=0)
+
 
 class BaseProcessor:
     """Every processor in Pythia needs to inherit this class for compatability
@@ -817,6 +820,25 @@ def SpatialProcessor(pad_obj_ocr_bboxes):
                                                     distance_threshold=registry.distance_threshold).astype(np.int8)
     return adj_matrix
 
+def RandomSpatialProcessor(pad_obj_ocr_bboxes):
+    randomize = registry.randomize
+    adj_matrix_shape = (len(pad_obj_ocr_bboxes), len(pad_obj_ocr_bboxes), randomize)
+    adj_matrix = np.zeros(adj_matrix_shape, dtype=np.int8)
+    spatial_relations_types = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+
+    for row in range(adj_matrix_shape[0]):
+        for col in range(adj_matrix_shape[1]):
+            random_indices = np.random.choice(spatial_relations_types, size=randomize, replace=False)
+            # remove none-edges
+            if 0 not in random_indices:
+                adj_matrix[row][col] = random_indices
+
+    # Remove masked relations
+    masked_inds = np.where(pad_obj_ocr_bboxes.sum(axis=-1) == 0)
+    adj_matrix[masked_inds] = 0
+    adj_matrix[:, masked_inds] = 0
+
+    return adj_matrix
 
 class BertTokenizerProcessor:
     """

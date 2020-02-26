@@ -21,7 +21,7 @@ from pytorch_transformers.tokenization_bert import BertTokenizer
 from pytorch_transformers.tokenization_roberta import RobertaTokenizer
 from vilbert.datasets import DatasetMapTrain, DatasetMapEval
 from vilbert.datasets._image_features_reader import ImageFeaturesH5Reader
-from vilbert.datasets.textvqa_metrics import TextVQAAccuracy
+from vilbert.datasets.textvqa_metrics import TextVQAAccuracy, STVQAAccuracy
 import pdb
 from torch.optim.lr_scheduler import (
     LambdaLR,
@@ -212,6 +212,7 @@ LossMap = {
 
 MetricsMap = {
     "TextVQA": TextVQAAccuracy(),
+    "ANLSAccuracy": STVQAAccuracy(),
 }
 
 
@@ -381,7 +382,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False):
     
     # Make sure we are using correct-vocabs
     if val_task_name == "TextVQA":
-        assert task_cfg[task]["vocab_type"] == "5k"
+        assert task_cfg[task]["vocab_type"] != "5k_stvqa"
     elif val_task_name == "STVQA":
         assert task_cfg[task]["vocab_type"] == "5k_stvqa"
     else:

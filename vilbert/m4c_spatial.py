@@ -180,6 +180,7 @@ class M4C(nn.Module):
         # dynamic OCR-copying scores with pointer network
         self.ocr_ptr_net = OcrPtrNet(hidden_size=self.mmt_config.hidden_size, query_key_size=self.mmt_config.ptr_query_size)
         num_outputs = len(registry.answer_vocab)
+        logger.info(f"Answer vocab-size is: {num_outputs}")
         self.classifier = nn.Linear(self.mmt_config.hidden_size, num_outputs)
 
     def _build_aux_heads(self):

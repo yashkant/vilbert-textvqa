@@ -545,7 +545,7 @@ def main():
                 if True or (iterId != 0 and iterId % task_num_iters[task_id] == 0) or (
                     epochId == args.num_train_epochs - 1 and step == median_num_iter - 1
                 ):
-                    curr_val_score = evaluate(
+                    evaluate(
                         args,
                         task_dataloader_val,
                         None,
@@ -606,7 +606,8 @@ def evaluate(
     tvqa_acc = MetricsMap["TextVQA"].accuracies
     accuracy = sum([x*y for x, y in tvqa_acc])/5000
     print(f"Accuracy: {accuracy}")
-    return score
+    import pdb
+    pdb.set_trace()
 
 
 if __name__ == "__main__":
