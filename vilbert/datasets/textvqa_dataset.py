@@ -446,6 +446,7 @@ class TextVQADataset(Dataset):
                 for matrix_slice in adj_matrices[1:]:
                     entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], matrix_slice)
 
+                entry["spatial_loss_mask"] = entry["spatial_ocr_relations"] =None
             else:
                 entry["spatial_loss_mask"] = torch.from_numpy((entry["spatial_adj_matrix"] != 0).astype(np.float))
                 entry["spatial_ocr_relations"] = torch.from_numpy(
