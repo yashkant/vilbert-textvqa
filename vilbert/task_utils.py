@@ -311,8 +311,6 @@ def ForwardModelsTrain(
         )
 
     task_tokens = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
-    import pdb
-    pdb.set_trace()
     vil_prediction, vil_prediction_gqa, vil_logit, vil_binary_prediction, vil_tri_prediction, vision_prediction, vision_logit, linguisic_prediction, linguisic_logit, _ = model(
         question,
         features,
@@ -558,11 +556,6 @@ def LoadDatasetEval(args, task_cfg, ids):
             task_feature_reader2[features_h5path] = ImageFeaturesH5Reader(
                 features_h5path, args.in_memory
             )
-
-    import pdb
-    pdb.set_trace()
-
-    task_feature_reader1[features_h5path][1]
 
     task_datasets_val = {}
     task_dataloader_val = {}

@@ -156,9 +156,8 @@ def _load_dataset(dataroot, name, clean_datasets):
         # Removing ids that are present in test-set of other tasks
         if clean_datasets:
             remove_ids = np.load(os.path.join(dataroot, "cache", "coco_test_ids.npy"))
-            remove_ids = set([int(x) for x in remove_ids])
-
-        for question, answer in tqdm(zip(questions, answers)):
+            remove_ids = [int(x) for x in remove_ids]
+        for question, answer in zip(questions, answers):
             if "train" in name and int(question["image_id"]) in remove_ids:
                 continue
             assert_eq(question["question_id"], answer["question_id"])

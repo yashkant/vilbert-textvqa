@@ -45,31 +45,6 @@ BERT_PRETRAINED_MODEL_ARCHIVE_MAP = {
 }
 
 
-def _batch_gather(x, inds):
-    """
-
-    :param x: (bs, len, dim)
-    :param inds: (bs, 1)
-    :return: (bs, dim) selecting index from each position along the batch!
-    """
-    assert x.dim() == 3
-    batch_size = x.size(0)
-    length = x.size(1)
-    dim = x.size(2)
-    x_flat = x.view(batch_size*length, dim)
-
-    # [0, len, ..., (bs-1)*len], starting indices of each example
-    batch_offsets = torch.arange(batch_size, device=inds.device) * length
-    # shape: (bs, 1)
-    batch_offsets = batch_offsets.unsqueeze(-1)
-    assert batch_offsets.dim() == inds.dim()
-    # get indices on the flattened array corresponding to entries in prev_inds
-    inds_flat = batch_offsets + inds
-    # select `inds_flat` from `x_flat` array
-    results = F.embedding(inds_flat, x_flat)
-    return results
-
-
 def load_tf_weights_in_bert(model, tf_checkpoint_path):
     """ Load tf checkpoints in a pytorch model
     """
@@ -416,63 +391,6 @@ class RobertaEmbeddings(BertEmbeddings):
         return super(RobertaEmbeddings, self).forward(
             input_ids, token_type_ids=token_type_ids, position_ids=position_ids
         )
-
-
-class DecoderEmbeddings(nn.Module):
-    """
-    Decoder Embeddings for TextVQA
-    """
-    def __init__(self, config):
-        super().__init__()
-
-        MAX_DEC_LENGTH = 100
-        MAX_TYPE_NUM = 5
-        hidden_size = config.hidden_size
-        ln_eps = config.layer_norm_eps
-
-        self.position_embeddings = nn.Embedding(MAX_DEC_LENGTH, hidden_size)
-        self.token_type_embeddings = nn.Embedding(MAX_TYPE_NUM, hidden_size)
-
-        self.ans_layer_norm = BertLayerNorm(hidden_size, eps=ln_eps)
-        self.ocr_layer_norm = BertLayerNorm(hidden_size, eps=ln_eps)
-        self.emb_layer_norm = BertLayerNorm(hidden_size, eps=ln_eps)
-        self.emb_dropout = nn.Dropout(config.hidden_dropout_prob)
-
-    def forward(self, vocab_emb, ocr_emb, prev_inds):
-        assert prev_inds.dim() == 2 and prev_inds.dtype == torch.long
-        assert vocab_emb.dim() == 2
-
-        batch_size = prev_inds.size(0)
-        seq_length = prev_inds.size(1)
-        ans_num = vocab_emb.size(0)
-
-        # apply layer normalization to both answer embedding and OCR embedding
-        # before concatenation, so that they have the same scale
-        vocab_emb = self.ans_layer_norm(vocab_emb)
-        ocr_emb = self.ocr_layer_norm(ocr_emb)
-        assert vocab_emb.size(-1) == ocr_emb.size(-1)
-        vocab_emb = vocab_emb.unsqueeze(0).expand(batch_size, -1, -1)
-        ans_ocr_emb_cat = torch.cat([vocab_emb, ocr_emb], dim=1)
-        raw_dec_emb = _batch_gather(ans_ocr_emb_cat, prev_inds)
-
-        # Add position and type embedding for previous predictions
-        position_ids = torch.arange(
-            seq_length,
-            dtype=torch.long,
-            device=ocr_emb.device
-        )
-        position_ids = position_ids.unsqueeze(0).expand(batch_size, seq_length)
-        position_embeddings = self.position_embeddings(position_ids)
-        # Token type ids: 0 -- vocab; 1 -- OCR
-        token_type_ids = prev_inds.ge(ans_num).long()
-        token_type_embeddings = self.token_type_embeddings(token_type_ids)
-        embeddings = position_embeddings + token_type_embeddings
-        embeddings = self.emb_layer_norm(embeddings)
-        embeddings = self.emb_dropout(embeddings)
-        dec_emb = raw_dec_emb + embeddings
-
-        return dec_emb
-
 
 
 class BertSelfAttention(nn.Module):
@@ -983,9 +901,6 @@ class BertConnectionLayer(nn.Module):
 
 
 class BertEncoder(nn.Module):
-    """
-    # (YK): Todo
-    """
     def __init__(self, config):
         super(BertEncoder, self).__init__()
 
@@ -1261,9 +1176,6 @@ class BertImgPredictionHeadTransform(nn.Module):
 
 
 class BertLMPredictionHead(nn.Module):
-    """
-    # (YK): Language mask prediction head
-    """
     def __init__(self, config, bert_model_embedding_weights):
         super(BertLMPredictionHead, self).__init__()
         self.transform = BertPredictionHeadTransform(config)
@@ -1307,22 +1219,15 @@ class BertOnlyNSPHead(nn.Module):
 class BertPreTrainingHeads(nn.Module):
     def __init__(self, config, bert_model_embedding_weights):
         super(BertPreTrainingHeads, self).__init__()
-        # language-mask head, takes in features spits distribution over vocabulary (30k)
         self.predictions = BertLMPredictionHead(config, bert_model_embedding_weights)
-        # alignment-prediction task head?
         self.bi_seq_relationship = nn.Linear(config.bi_hidden_size, 2)
-        # image-prediction task head, takes in image_feature spits out distribution over image-labels (1601)
         self.imagePredictions = BertImagePredictionHead(config)
-        # how to fuse vision + textual outputs
         self.fusion_method = config.fusion_method
         self.dropout = nn.Dropout(0.1)
 
     def forward(
         self, sequence_output_t, sequence_output_v, pooled_output_t, pooled_output_v
     ):
-
-        import pdb
-        pdb.set_trace()
 
         if self.fusion_method == "sum":
             pooled_output = self.dropout(pooled_output_t + pooled_output_v)
@@ -1383,9 +1288,6 @@ class BertPreTrainedModel(PreTrainedModel):
 class BertModel(BertPreTrainedModel):
     def __init__(self, config):
         super(BertModel, self).__init__(config)
-
-        import pdb
-        pdb.set_trace()
 
         # initilize word embedding
         if config.model == "bert":
@@ -1488,7 +1390,6 @@ class BertModel(BertPreTrainedModel):
         sequence_output_t = encoded_layers_t[-1]
         sequence_output_v = encoded_layers_v[-1]
 
-        # (YK): Extract first token's output and passes it via a linear layer
         pooled_output_t = self.t_pooler(sequence_output_t)
         pooled_output_v = self.v_pooler(sequence_output_v)
 
@@ -1507,7 +1408,6 @@ class BertModel(BertPreTrainedModel):
 
 class BertImageEmbeddings(nn.Module):
     """Construct the embeddings from image, spatial location (omit now) and token_type embeddings.
-    # (YK): Todo
     """
 
     def __init__(self, config):
@@ -1558,7 +1458,6 @@ class BertForMultiModalPreTraining(BertPreTrainedModel):
         elif self.visual_target == 2:
             self.vis_criterion = CrossEntropyLoss()
 
-        # Todo: They're already tied, no?
         self.tie_weights()
 
     def tie_weights(self):
@@ -1698,65 +1597,13 @@ class BertForMultiModalPreTraining(BertPreTrainedModel):
             )
 
 
-class OcrPtrNet(nn.Module):
-    """
-    # (YK): Dynamic ocr-scores from decoding output
-        query_inputs: (bs, dec_steps, hidden_size)
-        key_inputs: (bs, ocr_tokens, hidden_size)
-        scores: (bs, dec_steps, ocr_tokens)
-    """
-    def __init__(self, hidden_size, query_key_size=None):
-        super().__init__()
-
-        if query_key_size is None:
-            query_key_size = hidden_size
-        self.hidden_size = hidden_size
-        self.query_key_size = query_key_size
-
-        self.query = nn.Linear(hidden_size, query_key_size)
-        self.key = nn.Linear(hidden_size, query_key_size)
-
-    def forward(self, query_inputs, key_inputs, attention_mask):
-        extended_attention_mask = (1.0 - attention_mask) * -10000.0
-        assert extended_attention_mask.dim() == 2
-        extended_attention_mask = extended_attention_mask.unsqueeze(1)
-
-        query_layer = self.query(query_inputs)
-        if query_layer.dim() == 2:
-            query_layer = query_layer.unsqueeze(1)
-            squeeze_result = True
-        else:
-            squeeze_result = False
-        key_layer = self.key(key_inputs)
-
-        scores = torch.matmul(
-            query_layer,
-            key_layer.transpose(-1, -2)
-        )
-        scores = scores / math.sqrt(self.query_key_size)
-        scores = scores + extended_attention_mask
-        if squeeze_result:
-            scores = scores.squeeze(1)
-
-        return scores
-
-
 class VILBertForVLTasks(BertPreTrainedModel):
-    """
-    This class is initialized using a method from BertPretrainedModel
-    # (YK): l_hidden_size is hidden_size
-    """
     def __init__(self, config, num_labels, dropout_prob=0.1, default_gpu=True):
         super(VILBertForVLTasks, self).__init__(config)
-        # import pdb
-        # pdb.set_trace()
-
-        # (YK): apply is torch.util function and self.init_weights come from pretrained_model
         self.num_labels = num_labels
 
         self.bert = BertModel(config)
         self.dropout = nn.Dropout(dropout_prob)
-        # (YK): self.bert.embeddings.word_embeddings.weight these are vocabulary embedding weights
         self.cls = BertPreTrainingHeads(
             config, self.bert.embeddings.word_embeddings.weight
         )
@@ -1775,11 +1622,6 @@ class VILBertForVLTasks(BertPreTrainedModel):
         )  # for Visual Entailiment tasks
         self.vision_logit = nn.Linear(config.v_hidden_size, 1)
         self.linguisic_logit = nn.Linear(config.hidden_size, 1)
-
-        # (YK) Todo: Build textvqa prediction setup (for each decoded token find inner product)
-        self.vil_prediction_textvqa_vocab = nn.Linear(config.hidden_size, 4000)
-        self.vil_prediction_textvqa_ocr = OcrPtrNet(config.hidden_size, config.ptr_query_size)
-
         self.fusion_method = config.fusion_method
         self.apply(self.init_weights)
 
@@ -1806,9 +1648,6 @@ class VILBertForVLTasks(BertPreTrainedModel):
         output_all_encoded_layers=False,
         output_all_attention_masks=False,
     ):
-
-        import pdb
-        pdb.set_trace()
 
         sequence_output_t, sequence_output_v, pooled_output_t, pooled_output_v, all_attention_mask = self.bert(
             input_txt,
@@ -1854,16 +1693,6 @@ class VILBertForVLTasks(BertPreTrainedModel):
             (1.0 - image_attention_mask) * -10000.0
         ).unsqueeze(2).to(dtype=next(self.parameters()).dtype)
         linguisic_logit = self.linguisic_logit(self.dropout(sequence_output_t))
-
-        # # building textvqa classifiers
-        # ocr_output = None # slice sequence_output_v
-        # dec_output = None # slice tail of sequence_output_t
-        # ocr_attention_mask = None # pass via dataset
-        #
-        # vocab_scores = self.vil_prediction_textvqa_vocab(dec_output)
-        # ocr_scores = self.vil_prediction_textvqa_ocr(dec_output, ocr_output, ocr_attention_mask)
-        # textvqa_scores = torch.cat([vocab_scores, ocr_scores], dim=-1)
-
 
         return (
             vil_prediction,
