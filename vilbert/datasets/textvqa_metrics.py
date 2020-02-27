@@ -424,4 +424,4 @@ class STVQAANLSEvaluator:
             pred_scores.append(anls)
 
         accuracy = sum(pred_scores) / len(pred_scores)
-        return accuracy
+        return accuracy, pred_scores

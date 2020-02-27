@@ -114,13 +114,22 @@ class STVQADataset(TextVQADataset):
         self.distance_threshold = extra_args.get("distance_threshold", 0.5)
         self.processing_threads = processing_threads
         self.heads_type = extra_args.get("heads_type", "none")
+        self.clean_answers = extra_args.get("clean_answers", True)
+        self.randomize = extra_args.get("randomize", -1)
+
         registry.vocab_type = self.vocab_type
         registry.distance_threshold = self.distance_threshold
-        self.clean_answers = extra_args.get("clean_answers", True)
+        registry.randomize = self.randomize
+
         logger.info(f"Dynamic Sampling is {self.dynamic_sampling}")
         logger.info(f"distance_threshold is {self.distance_threshold}")
         logger.info(f"heads_type: {self.heads_type}")
         logger.info(f"Clean Answers is {self.clean_answers}")
+        logger.info(f"Randomize is {self.randomize}")
+
+        # We only randomize the spatial-adj-matrix
+        if self.heads_type != "none":
+            assert self.randomize <= 0
 
         clean_train = ""
 
@@ -154,6 +163,10 @@ class STVQADataset(TextVQADataset):
             cache_path = cache_path.split(".")[0]
             cache_path = cache_path + f"_heads_new" + ".pkl"
 
+        if self.randomize > 0:
+            cache_path = cache_path.split(".")[0]
+            cache_path = cache_path + f"_randomize_{self.randomize}" + ".pkl"
+
         logger.info(f"Cache Name:  {cache_path}")
 
         if not os.path.exists(cache_path) or self.debug:
@@ -168,23 +181,26 @@ class STVQADataset(TextVQADataset):
             self.entries, _ = _load_dataset(split, self.debug)
             # convert questions to tokens, create masks, segment_ids
             self.process()
-            self.process_spatials()
+
+            if self.randomize > 0:
+                self.process_random_spatials()
+            else:
+                self.process_spatials()
+
             if self.heads_type != "none":
                 self.process_spatial_extras()
             if not self.debug:
                 cPickle.dump(self.entries, open(cache_path, "wb"))
         else:
             if "processors_only_registry" not in registry:
-                self.processors = Processors(self._tokenizer, vocab_type=self.vocab_type)
+                self.processors = Processors(
+                    self._tokenizer,
+                    only_registry=True,
+                    vocab_type=self.vocab_type
+                )  # only initialize the M4C processor (for registry)
                 registry.processors_only_registry = self.processors
             else:
                 self.processors = registry.processors_only_registry
-
-            self.processors = Processors(
-                self._tokenizer,
-                only_registry=True,
-                vocab_type=self.vocab_type
-            )  # only initialize the M4C processor (for registry)
 
             # otherwise load cache!
             logger.info("Loading from %s" % cache_path)

@@ -22,27 +22,15 @@ from maskrcnn_benchmark.utils.model_serialization import load_state_dict
 from tqdm import tqdm
 
 
-IMDB_SCENETEXT_RESPONSE_FIXED = [
-    "/srv/share/ykant3/scene-text/train/imdb/train_task_response_meta_fixed.npy",
-    "/srv/share/ykant3/scene-text/test/imdb/test_task1_response_meta_fixed.npy",
-    "/srv/share/ykant3/scene-text/test/imdb/test_task2_response_meta_fixed.npy",
-    "/srv/share/ykant3/scene-text/test/imdb/test_task3_response_meta_fixed.npy",
+IMDB_OCRVQA_SPLITS = [
+    "/srv/share/ykant3/ocr-vqa/intermediate/ocrvqa_train.npy",
+    "/srv/share/ykant3/ocr-vqa/intermediate/ocrvqa_val.npy",
+    "/srv/share/ykant3/ocr-vqa/intermediate/ocrvqa_test.npy",
 ]
 
-OCR_FEATURES_SCENETEXT = [
-    "/srv/share/ykant3/scene-text/features/ocr/train/train_task/",
-    "/srv/share/ykant3/scene-text/features/ocr/test/test_task1/",
-    "/srv/share/ykant3/scene-text/features/ocr/test/test_task2/",
-    "/srv/share/ykant3/scene-text/features/ocr/test/test_task3/"
-]
+IMAGES_OCRVQA = "/srv/share/ykant3/ocr-vqa/images/"
 
-# image_folders
-IMAGES_SCENETEXT = [
-    "/srv/share/ykant3/scene-text/train/train_task/",
-    "/srv/share/ykant3/scene-text/test/test_task1/",
-    "/srv/share/ykant3/scene-text/test/test_task2/",
-    "/srv/share/ykant3/scene-text/test/test_task3/"
-]
+OCR_FEATURES_OCRVQA = "/srv/share/ykant3/ocr-vqa/features/"
 
 def preprocess_ocr_tokens(info, prefix, suffix):
     """CRUX: given an entry return list of bboxes [x1,y1,x2,y2] and tokens"""
@@ -87,29 +75,6 @@ class FeatureExtractor:
             default=100,
             help="Number of features to extract.",
         )
-        # parser.add_argument(
-        #     "--output_folder", type=str, default="/srv/share/ykant3/vilbert-mt/features/ocr/train/", help="Output folder"
-        # )
-
-        # parser.add_argument(
-        #     "--output_folder", type=str, default="/srv/share/ykant3/vilbert-mt/features/ocr/test/", help="Output folder"
-        # )
-        #
-        # parser.add_argument("--imdb_file",
-        #                     type=str,
-        #                     default="/nethome/ykant3/pythia/data/imdb/textvqa_0.5/imdb_google_det_bbox_textvqa_info_test.npy",
-        #                     help="Image directory or file")
-
-        # parser.add_argument("--imdb_file",
-        #                     type=str,
-        #                     default="/nethome/ykant3/pythia/data/imdb/textvqa_0.5/imdb_google_det_bbox_textvqa_multidec_sa_info_ascii_train.npy",
-        #                     help="Image directory or file")
-
-        # parser.add_argument("--imdb_file",
-        #                     type=str,
-        #                     default="/nethome/ykant3/pythia/data/imdb/textvqa_0.5/imdb_google_det_bbox_textvqa_multidec_sa_info_ascii_val.npy",
-        #                     help="Image directory or file")
-
         parser.add_argument(
             "--feature_name",
             type=str,
@@ -222,13 +187,25 @@ class FeatureExtractor:
             yield array[i : i + chunk_size]
 
     def extract_features(self, imdb_data, save_dir, image_dir):
-        # split = imdb_data[0]["dataset_type"]
         prefix, suffix = "google_", "_filtered"
-        for instance in tqdm(imdb_data[1:]):
-            image_path = instance["image_path"]
+        image_paths = []
+
+        for instance in tqdm(imdb_data):
+            image_path = os.path.join(IMAGES_OCRVQA, instance["image_path"])
+
+            if image_path in image_paths:
+                continue
+
+            save_path = image_path.replace(image_dir, save_dir).split(".")[0]
+            save_path = save_path + ".npy"
+
+            if os.path.exists(save_path):
+                continue
+
+            image_paths.append(image_path)
+            assert os.path.exists(image_path)
             image_w, image_h = Image.open(image_path).size
             instance["image_width"], instance["image_height"] = image_w, image_h
-            assert os.path.exists(image_path)
             ocr_boxes, ocr_tokens = preprocess_ocr_tokens(instance, prefix, suffix)
             try:
                 if len(ocr_boxes) > 0:
@@ -242,8 +219,6 @@ class FeatureExtractor:
                     "ocr_tokens": ocr_tokens,
                     "features": extracted_feat
                 }
-                save_path = image_path.replace(image_dir, save_dir).split(".")[0]
-                save_path = save_path + ".npy"
 
                 _save_dir = os.path.split(save_path)[0]
                 if not os.path.exists(_save_dir):
@@ -260,8 +235,12 @@ class FeatureExtractor:
 
 if __name__ == "__main__":
     feature_extractor = FeatureExtractor()
-    for imdb_file, save_dir, image_dir in zip(IMDB_SCENETEXT_RESPONSE_FIXED, OCR_FEATURES_SCENETEXT, IMAGES_SCENETEXT):
-        print(f"Reading from: {imdb_file} \nSaving to: {save_dir}")
+    print(f"Extracting for: {IMDB_OCRVQA_SPLITS[:1]}")
+    for imdb_file in IMDB_OCRVQA_SPLITS[:1]:
+        print(f"Reading from: {imdb_file} \nSaving to: {OCR_FEATURES_OCRVQA}")
         imdb_data = np.load(imdb_file, allow_pickle=True)
-        feature_extractor.extract_features(imdb_data, save_dir, image_dir)
+        print(f"Extracting from {int(len(imdb_data)/2)} to end")
+        imdb_data = imdb_data[int(len(imdb_data)/2):]
+        # imdb_data = imdb_data[1:int(len(imdb_data)/2)]
+        feature_extractor.extract_features(imdb_data, OCR_FEATURES_OCRVQA, IMAGES_OCRVQA)
         np.save(imdb_file, imdb_data)

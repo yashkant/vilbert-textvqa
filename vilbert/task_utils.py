@@ -234,6 +234,11 @@ def ForwardModelsVal(args,
 
     results_dict = model(batch_dict)
     batch_dict.update(results_dict)
+
+    # TODO: Fix this ugly hack!
+    if registry.get("is_running_validation", False):
+        return None, None, None
+
     if task_cfg[task_id]["loss"] == "TextVQAandSpatialLoss":
         loss = task_losses[task_id](batch_dict)
     else:
@@ -332,10 +337,6 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False):
         task_cfg[task]['use_datasets'] = ["textvqa"]
         logger.info("Did not find `use_datasets` key in task configuration, generating it!")
 
-    logger.info(
-        f"Loading Train Dataset(s) {task_cfg[task]['use_datasets']}  with batch size {batch_size}"
-    )
-
 
     key_map = {
         "textvqa": "TextVQA",
@@ -344,6 +345,11 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False):
 
 
     if not only_val:
+
+        logger.info(
+            f"Loading Train Dataset(s) {task_cfg[task]['use_datasets']}  with batch size {batch_size}"
+        )
+
         train_datasets = []
         for entry in task_cfg[task]["use_datasets"]:
             dataset = DatasetMapTrain[key_map[entry]](
