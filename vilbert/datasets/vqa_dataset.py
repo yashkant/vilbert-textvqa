@@ -13,6 +13,7 @@ import torch
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
+from tools.registry import registry
 from ._image_features_reader import ImageFeaturesH5Reader
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
@@ -182,6 +183,7 @@ class VQAClassificationDataset(Dataset):
         padding_index=0,
         max_seq_length=16,
         max_region_num=101,
+        extra_args=None
     ):
         """
         (YK): Builds self.entries by reading questions and answers and caches them.
@@ -199,8 +201,16 @@ class VQAClassificationDataset(Dataset):
         self._image_features_reader = image_features_reader
         self._tokenizer = tokenizer
         self._padding_index = padding_index
+        self.debug = extra_args.get("debug", False)
+        registry.debug = self.debug
 
         clean_train = "_cleaned" if clean_datasets else ""
+
+        if self.debug:
+            cache_path = "/nethome/ykant3/vilbert-multi-task/datasets/VQA/cache/VQA_trainval_23_debug.pkl"
+            logger.info("Loading in debug mode from %s" % cache_path)
+            self.entries = cPickle.load(open(cache_path, "rb"))
+            return
 
         if "roberta" in bert_model:
             cache_path = os.path.join(
@@ -232,6 +242,8 @@ class VQAClassificationDataset(Dataset):
         else:
             logger.info("Loading from %s" % cache_path)
             self.entries = cPickle.load(open(cache_path, "rb"))
+
+
 
     def tokenize(self, max_length=16):
         """Tokenizes the questions.
@@ -348,18 +360,18 @@ class VQAClassificationDataset(Dataset):
             if labels is not None:
                 target.scatter_(0, labels, scores)
 
-        return (
-            features,
-            spatials,
-            image_mask,
-            question,
-            target,
-            input_mask,
-            segment_ids,
-            co_attention_mask,
-            image_id,
-            question_id,
-        )
+        item_dict = {
+            "input_imgs": features,
+            "image_mask": image_mask,
+            "image_loc": spatials,
+            "question_indices": question,
+            "question_mask": input_mask,
+            "image_id": image_id,
+            "question_id": question_id,
+            "target": target
+        }
+
+        return item_dict
 
     def __len__(self):
         return len(self.entries)

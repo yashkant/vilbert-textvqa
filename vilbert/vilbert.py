@@ -1604,28 +1604,14 @@ class VILBertForVLTasks(BertPreTrainedModel):
 
         self.bert = BertModel(config)
         self.dropout = nn.Dropout(dropout_prob)
-        self.cls = BertPreTrainingHeads(
-            config, self.bert.embeddings.word_embeddings.weight
-        )
         self.vil_prediction = SimpleClassifier(
             config.bi_hidden_size, config.bi_hidden_size * 2, 3129, 0.5
         )
         self.vil_prediction_gqa = SimpleClassifier(
             config.bi_hidden_size, config.bi_hidden_size * 2, 1533, 0.5
         )
-        self.vil_binary_prediction = SimpleClassifier(
-            config.bi_hidden_size * 2, config.bi_hidden_size * 2, 2, 0.5
-        )
-        self.vil_logit = nn.Linear(config.bi_hidden_size, 1)
-        self.vil_tri_prediction = nn.Linear(
-            config.bi_hidden_size, 3
-        )  # for Visual Entailiment tasks
-        self.vision_logit = nn.Linear(config.v_hidden_size, 1)
-        self.linguisic_logit = nn.Linear(config.hidden_size, 1)
         self.fusion_method = config.fusion_method
         self.apply(self.init_weights)
-
-        self.tie_weights()
 
     def tie_weights(self):
         """ Make sure we are sharing the input and output embeddings.
@@ -1650,12 +1636,12 @@ class VILBertForVLTasks(BertPreTrainedModel):
     ):
 
         sequence_output_t, sequence_output_v, pooled_output_t, pooled_output_v, all_attention_mask = self.bert(
-            input_txt,
-            input_imgs,
-            image_loc,
-            token_type_ids,
-            attention_mask,
-            image_attention_mask,
+            input_txt,  # (bs, que_inds (23))
+            input_imgs,  # (bs, num_image_features (101), feat_dim(2048))
+            image_loc,  # (bs, num_image_features (101), feat_dim(5))
+            token_type_ids,  # (bs, num_image_features (101), feat_dim(5))
+            attention_mask,  # (bs, que_inds)
+            image_attention_mask,   # (bs, num_image_features)
             co_attention_mask,
             task_ids,
             output_all_encoded_layers=output_all_encoded_layers,
@@ -1669,10 +1655,7 @@ class VILBertForVLTasks(BertPreTrainedModel):
         vision_logit = 0
         linguisic_prediction = 0
         linguisic_logit = 0
-
-        linguisic_prediction, vision_prediction, vil_binary_prediction = self.cls(
-            sequence_output_t, sequence_output_v, pooled_output_t, pooled_output_v
-        )
+        vil_tri_prediction = 0
 
         if self.fusion_method == "sum":
             pooled_output = self.dropout(pooled_output_t + pooled_output_v)
@@ -1683,16 +1666,6 @@ class VILBertForVLTasks(BertPreTrainedModel):
 
         vil_prediction = self.vil_prediction(pooled_output)
         vil_prediction_gqa = self.vil_prediction_gqa(pooled_output)
-        if pooled_output.size(0) % 2 == 0:
-            vil_binary_prediction = self.vil_binary_prediction(
-                pooled_output.view(-1, pooled_output.size(1) * 2)
-            )
-        vil_logit = self.vil_logit(pooled_output)
-        vil_tri_prediction = self.vil_tri_prediction(pooled_output)
-        vision_logit = self.vision_logit(self.dropout(sequence_output_v)) + (
-            (1.0 - image_attention_mask) * -10000.0
-        ).unsqueeze(2).to(dtype=next(self.parameters()).dtype)
-        linguisic_logit = self.linguisic_logit(self.dropout(sequence_output_t))
 
         return (
             vil_prediction,

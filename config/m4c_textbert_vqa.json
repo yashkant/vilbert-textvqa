@@ -1,0 +1,6 @@
+{
+"lr_scale_text_bert": 0.1,
+"num_hidden_layers": 3,
+"text_bert_init_from_bert_base": true,
+"vocab_size": 30522
+}

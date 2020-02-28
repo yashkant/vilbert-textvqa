@@ -10,8 +10,9 @@ import os
 import random
 from io import open
 import numpy as np
-
+import pprint
 from tensorboardX import SummaryWriter
+from torch.optim import Adam
 from tqdm import tqdm
 from bisect import bisect
 import yaml
@@ -23,25 +24,13 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 
-from pytorch_transformers.optimization import (
-    AdamW,
-    WarmupConstantSchedule,
-    WarmupLinearSchedule,
-)
-
-from vilbert.optimization import RAdam
 from vilbert.task_utils import (
     LoadDatasets,
     LoadLosses,
     ForwardModelsTrain,
     ForwardModelsVal,
-)
-from torch.optim.lr_scheduler import (
-    LambdaLR,
-    ReduceLROnPlateau,
-    CosineAnnealingLR,
-    CosineAnnealingWarmRestarts,
-)
+    clip_gradients,
+    get_optim_scheduler)
 
 import vilbert.utils as utils
 import torch.distributed as dist
@@ -161,7 +150,7 @@ def main():
         help="whether use chunck for parallel training.",
     )
     parser.add_argument(
-        "--optim", default="AdamW", type=str, help="what to use for the optimization."
+        "--optim", default=None, type=str, help="what to use for the optimization."
     )
     parser.add_argument(
         "--tasks", default="", type=str, help="1-2-3... training task separate by -"
@@ -182,7 +171,7 @@ def main():
     )
     parser.add_argument(
         "--lr_scheduler",
-        default="mannul",
+        default=None,
         type=str,
         help="whether use learning rate scheduler.",
     )
@@ -217,22 +206,53 @@ def main():
         action="store_true",
         help="whether to use task specific tokens for the multi-task learning.",
     )
+    parser.add_argument(
+        "--task_file", default="sweeps/vqa_task.yml", type=str, help="joint config file"
+    )
+
+    parser.add_argument(
+        "--tag", default="debug", type=str, help="tag for the experiment", required=True
+    )
+
+    parser.add_argument(
+        "--model_type", default=None, type=str, help="Type of model 22 or 31 or 22nf or 22lf"
+    )
+
+    parser.add_argument(
+        "--from_scratch", action="store_true", help="Initialize ViLBERT weights from scratch/ does it make"
+                                                    "what about question encodings!?")
 
     args = parser.parse_args()
-    with open("vilbert_tasks.yml", "r") as f:
+    with open(args.task_file, "r") as f:
         task_cfg = edict(yaml.safe_load(f))
 
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    logger.info("-"*20 + "Config Start" + "-"*20)
+    print(vars(args))
+    print(task_cfg["TASK19"])
+    logger.info("-"*20 + "Config End" + "-"*20)
 
-    # Todo: what is baseline? difference: BaseBert/ViLBert and BertConfig from pytorch/ViLBert
+    seed = task_cfg["TASK19"].get("seed", args.seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    logger.info(f"Using seed: {seed}")
+
+    model_type = task_cfg["TASK19"]["model_type"] if args.model_type is None else args.model_type
+
     if args.baseline:
         from pytorch_transformers.modeling_bert import BertConfig
         from vilbert.basebert import BaseBertForVLTasks
-    else:
+    elif model_type == "vilbert":
         from vilbert.vilbert import BertConfig
         from vilbert.vilbert import VILBertForVLTasks
+    elif model_type == "m4c_spatial":
+        logger.info("Using M4C-Spatial model")
+        from vilbert.m4c_spatial import BertConfig, M4C
+    elif model_type == "m4c":
+        logger.info("Using M4C model")
+        from vilbert.m4c import BertConfig, M4C
+    else:
+        raise ValueError
 
     task_names = []
     task_lr = []
@@ -257,12 +277,13 @@ def main():
         + "_"
         + args.config_file.split("/")[1].split(".")[0]
         + prefix
+        + f"-{args.tag}"
     )
     savePath = os.path.join(args.output_dir, timeStamp)
 
-    bert_weight_name = json.load(
-        open("config/" + args.bert_model + "_weight_name.json", "r")
-    )
+    # bert_weight_name = json.load(
+    #     open("config/" + args.bert_model + "_weight_name.json", "r")
+    # )
 
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device(
@@ -280,6 +301,9 @@ def main():
             device, n_gpu, bool(args.local_rank != -1), args.fp16
         )
     )
+
+    if task_cfg["TASK19"]["grad_clip_mode"] == "all":
+        logger.info(f"Using gradients clipping mode: {task_cfg['TASK19']['grad_clip_mode']}")
 
     # (YK): default_gpu decides whether to log outputs
     default_gpu = False
@@ -330,7 +354,7 @@ def main():
         os.makedirs(args.output_dir)
 
     task_ave_iter = {}
-    task_stop_controller = {}
+    # task_stop_controller = {}
     for task_id, num_iter in task_num_iters.items():
         task_ave_iter[task_id] = int(
             task_cfg[task]["num_epoch"]
@@ -338,27 +362,12 @@ def main():
             * args.train_iter_multiplier
             / args.num_train_epochs
         )
-        task_stop_controller[task_id] = utils.MultiTaskStopOnPlateau(
-            mode="max",
-            patience=1,
-            continue_threshold=0.005,
-            cooldown=1,
-            threshold=0.001,
-        )
 
     task_ave_iter_list = sorted(task_ave_iter.values())
     median_num_iter = task_ave_iter_list[-1]
     num_train_optimization_steps = (
         median_num_iter * args.num_train_epochs // args.gradient_accumulation_steps
     )
-    num_labels = max([dataset.num_labels for dataset in task_datasets_train.values()])
-
-    # num_labels = 3129
-
-    if args.dynamic_attention:
-        config.dynamic_attention = True
-    if "roberta" in args.bert_model:
-        config.model = "roberta"
 
     # LOAD PRETRAINED VILBERT
     if args.baseline:
@@ -366,105 +375,99 @@ def main():
         model = BaseBertForVLTasks.from_pretrained(
             args.from_pretrained,
             config=config,
-            num_labels=num_labels,
+            num_labels=None,
             default_gpu=default_gpu,
         )
     else:
-        model = VILBertForVLTasks.from_pretrained(
-            args.from_pretrained,
-            config=config,
-            num_labels=num_labels,
-            default_gpu=default_gpu,
-        )
+        if args.from_scratch:
+            logger.info("Not Using Pre-trained weights")
+            if "m4c" not in model_type:
+                model = VILBertForVLTasks(
+                    config=config,
+                    num_labels=None,
+                    default_gpu=default_gpu,
+                )
+            else:
+                if "m4c_spatial" in model_type:
+                    assert "attention_mask_quadrants" in task_cfg["TASK19"]
+                    # assert "spatial_type" in task_cfg["TASK19"]
+                    # Transfer keys from config to BertConfig
+                    transfer_keys = ["attention_mask_quadrants",
+                                     "hidden_size",
+                                     "num_implicit_relations",
+                                     "spatial_type",
+                                     "num_hidden_layers",
+                                     "num_spatial_layers",
+                                     "layer_type_list",
+                                     "cond_type",
+                                     "use_bias",
+                                     "no_drop",
+                                     "mix_list"]
+                elif model_type == "m4c" or model_type == "m4c_rd":
+                    # Transfer keys from config to BertConfig
+                    transfer_keys = ["num_hidden_layers"]
+                else:
+                    raise ValueError
+
+                # Common keys
+                transfer_keys.extend(["aux_spatial_fusion", "use_aux_heads"])
+
+                # Load config-file M4C
+                with open(args.config_file, "r") as file:
+                    config_dict = json.load(file)
+
+                # Adding blank keys that could be dynamically replaced later
+                config_dict["layer_type_list"] = None
+                config_dict["mix_list"] = None
+
+                # Always use beam-size 1 for training
+                config_dict["beam_size"] = 1
+
+                # Replace keys
+                for key in transfer_keys:
+                    if key in task_cfg["TASK19"]:
+                        config_dict[key] = task_cfg["TASK19"][key]
+                        logger.info(f"Transferring keys:  {key}, {config_dict[key]}")
+                mmt_config = BertConfig.from_dict(config_dict)
+
+                text_bert_config = BertConfig.from_json_file("config/m4c_textbert_vqa.json")
+                model = M4C(mmt_config, text_bert_config)
+        else:
+            model = VILBertForVLTasks.from_pretrained(
+                args.from_pretrained,
+                config=config,
+                num_labels=None,
+                default_gpu=default_gpu,
+            )
 
     # LOAD LOSSES
     task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
 
-    no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
-
-    if args.freeze != -1:
-        bert_weight_name_filtered = []
-        for name in bert_weight_name:
-            if "embeddings" in name:
-                bert_weight_name_filtered.append(name)
-            elif "encoder" in name:
-                layer_num = name.split(".")[2]
-                if int(layer_num) <= args.freeze:
-                    bert_weight_name_filtered.append(name)
-
+    # Turned of weight-decay and fine-tune stuff in ViLBERT!
+    if "m4c" not in model_type:
         optimizer_grouped_parameters = []
         for key, value in dict(model.named_parameters()).items():
-            if key[12:] in bert_weight_name_filtered:
-                value.requires_grad = False
-
-        if default_gpu:
-            print("filtered weight")
-            print(bert_weight_name_filtered)
-
-    optimizer_grouped_parameters = []
-    for key, value in dict(model.named_parameters()).items():
-        if value.requires_grad:
-            if "vil_" in key:
-                lr = 1e-4
-            else:
-                if args.vision_scratch:
-                    if key[12:] in bert_weight_name:
-                        lr = base_lr
-                    else:
-                        lr = 1e-4
-                else:
-                    lr = base_lr
-            if any(nd in key for nd in no_decay):
+            if value.requires_grad:
+                lr = base_lr
                 optimizer_grouped_parameters += [
                     {"params": [value], "lr": lr, "weight_decay": 0.0}
                 ]
-            if not any(nd in key for nd in no_decay):
-                optimizer_grouped_parameters += [
-                    {"params": [value], "lr": lr, "weight_decay": 0.01}
-                ]
+    else:
+        optimizer_grouped_parameters = model.get_optimizer_parameters(base_lr)
 
     if default_gpu:
         print(len(list(model.named_parameters())), len(optimizer_grouped_parameters))
 
-    if args.optim == "AdamW":
-        optimizer = AdamW(optimizer_grouped_parameters, lr=base_lr, correct_bias=False)
-    elif args.optim == "RAdam":
-        optimizer = RAdam(optimizer_grouped_parameters, lr=base_lr)
-
-    warmpu_steps = args.warmup_proportion * num_train_optimization_steps
-
-    if args.lr_scheduler == "warmup_linear":
-        warmup_scheduler = WarmupLinearSchedule(
-            optimizer, warmup_steps=warmpu_steps, t_total=num_train_optimization_steps
-        )
-    else:
-        warmup_scheduler = WarmupConstantSchedule(optimizer, warmup_steps=warmpu_steps)
-
-    lr_reduce_list = np.array([5, 7])
-    if args.lr_scheduler == "automatic":
-        lr_scheduler = ReduceLROnPlateau(
-            optimizer, mode="max", factor=0.2, patience=1, cooldown=1, threshold=0.001
-        )
-    elif args.lr_scheduler == "cosine":
-        lr_scheduler = CosineAnnealingLR(
-            optimizer, T_max=median_num_iter * args.num_train_epochs
-        )
-    elif args.lr_scheduler == "cosine_warm":
-        lr_scheduler = CosineAnnealingWarmRestarts(
-            optimizer, T_0=median_num_iter * args.num_train_epochs
-        )
-    elif args.lr_scheduler == "mannul":
-
-        def lr_lambda_fun(epoch):
-            return pow(0.2, np.sum(lr_reduce_list <= epoch))
-
-        lr_scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda_fun)
+    optimizer, warmup_scheduler, lr_scheduler, lr_scheduler_config, warmpu_steps = get_optim_scheduler(
+        args, task_cfg, optimizer_grouped_parameters, num_train_optimization_steps, base_lr, median_num_iter
+    )
 
     startIterID = 0
     global_step = 0
     start_epoch = 0
 
     if args.resume_file != "" and os.path.exists(args.resume_file):
+        logger.info(f"Resuming from Checkpoint: {args.resume_file}")
         checkpoint = torch.load(args.resume_file, map_location="cpu")
         new_dict = {}
         for attr in checkpoint["model_state_dict"]:
@@ -480,7 +483,7 @@ def main():
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         global_step = checkpoint["global_step"]
         start_epoch = int(checkpoint["epoch_id"]) + 1
-        task_stop_controller = checkpoint["task_stop_controller"]
+        # task_stop_controller = checkpoint["task_stop_controller"]
         tbLogger = checkpoint["tb_logger"]
         del checkpoint
 
@@ -512,19 +515,22 @@ def main():
     task_iter_train = {name: None for name in task_ids}
     task_count = {name: 0 for name in task_ids}
 
+    if start_epoch >= args.num_train_epochs:
+        logger.info("Resetting Train Epochs to 0")
+        start_epoch = 0
+
+    # This validation score is used for model-saving.
+    best_val_score = 0
+
+
     # TRAINING LOOP
     for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
         model.train()
-        for step in tqdm(range(median_num_iter), desc="Iters"):
+        for step in tqdm(range(100), desc="Iters"):
             iterId = startIterID + step + (epochId * median_num_iter)
             first_task = True
             for task_id in task_ids:
-                is_forward = False
-                if (not task_stop_controller[task_id].in_stop) or (
-                    iterId % args.train_iter_gap == 0
-                ):
-                    is_forward = True
-
+                is_forward = True
                 if is_forward:
                     loss, score = ForwardModelsTrain(
                         args,
@@ -538,27 +544,22 @@ def main():
                         task_losses,
                     )
 
-                    loss = loss * loss_scale[task_id]
-                    if args.gradient_accumulation_steps > 1:
-                        loss = loss / args.gradient_accumulation_steps
-
                     loss.backward()
+
+                    if task_cfg["TASK19"]["grad_clip_mode"] == "all":
+                        clip_gradients(model, task_cfg["TASK19"]["max_grad_norm"], task_cfg["TASK19"]["grad_clip_mode"])
+
                     if (step + 1) % args.gradient_accumulation_steps == 0:
-                        if args.fp16:
-                            lr_this_step = args.learning_rate * warmup_linear(
-                                global_step / num_train_optimization_steps,
-                                args.warmup_proportion,
-                            )
-                            for param_group in optimizer.param_groups:
-                                param_group["lr"] = lr_this_step
+                        optimizer.step()
 
                         if first_task and (
                             global_step < warmpu_steps
-                            or args.lr_scheduler == "warmup_linear"
+                            or lr_scheduler_config == "warmup_linear"
+                            or lr_scheduler_config == "pythia_warmup_decay"
                         ):
                             warmup_scheduler.step()
 
-                        optimizer.step()
+
                         model.zero_grad()
                         if first_task:
                             global_step += 1
@@ -575,7 +576,7 @@ def main():
                                 "train",
                             )
 
-            if "cosine" in args.lr_scheduler and global_step > warmpu_steps:
+            if "cosine" in lr_scheduler_config and global_step > warmpu_steps:
                 lr_scheduler.step()
 
             if (
@@ -584,16 +585,22 @@ def main():
                 and default_gpu
             ):
                 tbLogger.showLossTrain()
+                if step % (100 * args.gradient_accumulation_steps) == 0:
+                    logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}")
 
             # decided whether to evaluate on each tasks.
             for task_id in task_ids:
+                # don't run validation during debug runs
+                if task_cfg["TASK19"]["debug"]:
+                    break
+
                 if (iterId != 0 and iterId % task_num_iters[task_id] == 0) or (
                     epochId == args.num_train_epochs - 1 and step == median_num_iter - 1
                 ):
-                    evaluate(
+                    curr_val_score = evaluate(
                         args,
                         task_dataloader_val,
-                        task_stop_controller,
+                        None,
                         task_cfg,
                         device,
                         task_id,
@@ -604,41 +611,42 @@ def main():
                         tbLogger,
                     )
 
-        if args.lr_scheduler == "automatic":
+                    if default_gpu and not task_cfg["TASK19"]["debug"]:
+                        # Save a trained model
+                        logger.info("** ** * Saving fine - tuned model ** ** * ")
+                        model_to_save = (
+                            model.module if hasattr(model, "module") else model
+                        )  # Only save the model it-self
+                        # output_model_file = os.path.join(
+                        #     savePath, "pytorch_model_" + str(epochId) + ".bin"
+                        # )
+                        # torch.save(model_to_save.state_dict(), output_model_file)
+                        if curr_val_score > best_val_score:
+                            output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
+                            logger.info(f"Saving Checkpoint: {output_checkpoint}")
+                            logger.info(
+                                f"Current Validation Score: {curr_val_score} | Previous Best Validation Score: {best_val_score}")
+                            best_val_score = curr_val_score
+                            torch.save(
+                                {
+                                    "model_state_dict": model_to_save.state_dict(),
+                                    "optimizer_state_dict": optimizer.state_dict(),
+                                    "warmup_scheduler_state_dict": warmup_scheduler.state_dict(),
+                                    # 'lr_scheduler_state_dict': lr_scheduler.state_dict(),
+                                    "global_step": global_step,
+                                    "epoch_id": epochId,
+                                    # "task_stop_controller": task_stop_controller,
+                                    "tb_logger": tbLogger,
+                                },
+                                output_checkpoint,
+                            )
+
+        if lr_scheduler_config == "automatic":
             lr_scheduler.step(sum(val_scores.values()))
             logger.info("best average score is %3f" % lr_scheduler.best)
-        elif args.lr_scheduler == "mannul":
+        elif lr_scheduler_config == "mannul":
             lr_scheduler.step()
 
-        if epochId in lr_reduce_list:
-            for task_id in task_ids:
-                # reset the task_stop_controller once the lr drop
-                task_stop_controller[task_id]._reset()
-
-        if default_gpu:
-            # Save a trained model
-            logger.info("** ** * Saving fine - tuned model ** ** * ")
-            model_to_save = (
-                model.module if hasattr(model, "module") else model
-            )  # Only save the model it-self
-            output_model_file = os.path.join(
-                savePath, "pytorch_model_" + str(epochId) + ".bin"
-            )
-            output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
-            torch.save(model_to_save.state_dict(), output_model_file)
-            torch.save(
-                {
-                    "model_state_dict": model_to_save.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                    "warmup_scheduler_state_dict": warmup_scheduler.state_dict(),
-                    # 'lr_scheduler_state_dict': lr_scheduler.state_dict(),
-                    "global_step": global_step,
-                    "epoch_id": epochId,
-                    "task_stop_controller": task_stop_controller,
-                    "tb_logger": tbLogger,
-                },
-                output_checkpoint,
-            )
     tbLogger.txt_close()
 
 
@@ -668,12 +676,14 @@ def evaluate(
             sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
             sys.stdout.flush()
 
-    # update the multi-task scheduler.
-    task_stop_controller[task_id].step(tbLogger.getValScore(task_id))
-    score = tbLogger.showLossVal(task_id, task_stop_controller)
+    score = tbLogger.showLossVal(task_id, task_stop_controller=None)
     model.train()
+    return score
 
 
 if __name__ == "__main__":
-
-    main()
+    try:
+        main()
+    finally:
+        import os
+        os.system("watch -n 1 session-quit-error")
