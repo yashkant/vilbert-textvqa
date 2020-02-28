@@ -137,7 +137,7 @@ def main():
     parser.add_argument(
         "--num_workers",
         type=int,
-        default=0,
+        default=16,
         help="Number of workers in the dataloader.",
     )
     parser.add_argument(
@@ -526,7 +526,7 @@ def main():
     # TRAINING LOOP
     for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
         model.train()
-        for step in tqdm(range(100), desc="Iters"):
+        for step in tqdm(range(median_num_iter), desc="Iters"):
             iterId = startIterID + step + (epochId * median_num_iter)
             first_task = True
             for task_id in task_ids:

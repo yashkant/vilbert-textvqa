@@ -156,7 +156,7 @@ class M4C(nn.Module):
             finetune_params_set.update(list(m['module'].parameters()))
         # remaining_params are those parameters w/ default lr
         remaining_params = [
-            p for p in self.parameters() if p not in finetune_params_set
+             p for p in self.parameters() if p not in finetune_params_set
         ]
         # put the default lr parameters at the beginning
         # so that the printed lr (of group 0) matches the default lr
@@ -235,58 +235,8 @@ class MMT_VQA(BertPreTrainedModel):
 
         joint_embeddings = torch.cat([text_embeddings, image_embeddings], dim=1)
         joint_mask = torch.cat([batch_dict["question_mask"], batch_dict["image_mask"]], dim=-1)
-
-
-        # build embeddings for predictions in previous decoding steps
-        # fixed_ans_emb is an embedding lookup table for each fixed vocabulary
-        # dec_emb = self.prev_pred_embeddings(fixed_ans_emb, batch_dict["ocr_mmt_in"], batch_dict["train_prev_inds"])
-
-        # a zero mask for decoding steps, so the encoding steps elements can't
-        # attend to decoding steps.
-        # A triangular causal mask will be filled for the decoding steps
-        # later in extended_attention_mask
-        # dec_mask = torch.zeros(
-        #     dec_emb.size(0),
-        #     dec_emb.size(1),
-        #     dtype=torch.long,
-        #     device=dec_emb.device
-        # )
-        # encoder_inputs = torch.cat(
-        #     [batch_dict["text_bert_emb"], batch_dict["obj_mmt_in"], batch_dict["ocr_mmt_in"], dec_emb],
-        #     dim=1
-        # )
-        # attention_mask = torch.cat(
-        #     [batch_dict["question_mask"], batch_dict["pad_obj_mask"], batch_dict["pad_ocr_mask"], dec_mask],
-        #     dim=1
-        # )
-        #
-        # # offsets of each modality in the joint embedding space
-        # txt_max_num = batch_dict["question_mask"].size(-1)
-        # obj_max_num = batch_dict["pad_obj_mask"].size(-1)
-        # ocr_max_num = batch_dict["pad_ocr_mask"].size(-1)
-        # dec_max_num = dec_mask.size(-1)
-        # txt_begin = 0
-        # txt_end = txt_begin + txt_max_num
-        # ocr_begin = txt_max_num + obj_max_num
-        # ocr_end = ocr_begin + ocr_max_num
-
-        # We create a 3D attention mask from a 2D tensor mask.
-        # Sizes are [batch_size, 1, from_seq_length, to_seq_length]
-        # So we can broadcast to
-        # [batch_size, num_heads, from_seq_length, to_seq_length]
-        # to_seq_length = attention_mask.size(1)
-        # from_seq_length = to_seq_length
-
-        # generate the attention mask similar to prefix LM
-        # all elements can attend to the elements in encoding steps
         extended_attention_mask = joint_mask.unsqueeze(1).unsqueeze(2)
         extended_attention_mask = extended_attention_mask.to(dtype=next(self.parameters()).dtype)  # fp16 compatibility
-
-        # # decoding step elements can attend to themselves in a causal manner
-        # extended_attention_mask[:, :, -dec_max_num:, -dec_max_num:] = \
-        #     _get_causal_mask(dec_max_num, encoder_inputs.device)
-        #
-        # flip the mask, so that invalid attention pairs have -10000.
         extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
         assert not extended_attention_mask.requires_grad
         head_mask = [None] * self.config.num_hidden_layers

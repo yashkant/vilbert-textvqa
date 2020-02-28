@@ -11,14 +11,14 @@ TASK19:
   val_annotations_jsonpath: ''
   max_seq_length: 23
   max_region_num: 101
-  batch_size: 4
+  batch_size: 128
   eval_batch_size: 1024
   train_split: trainval
   val_split: minval
   lr: 0.0001
   num_epoch: 30
-  debug: True
-  model_type: m4c
+  debug: False
+  model_type: m4c_spatial
   grad_clip_mode: all
   optim: Adam
   lr_scheduler: pythia_warmup_decay
@@ -28,3 +28,7 @@ TASK19:
   lr_decay: 0.2
   max_grad_norm: 0.25
   num_hidden_layers: 6
+  attention_mask_quadrants: [1,2]
+  layer_type_list: [n,n,s,s,s,s]
+  mix_list: [none, none, share3, share3, share3, share3]
+  heads_type: mix

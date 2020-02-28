@@ -15,6 +15,8 @@ from tqdm import tqdm
 
 from tools.registry import registry
 from ._image_features_reader import ImageFeaturesH5Reader
+from ..spatial_utils_regat import build_graph_using_normalized_boxes, random_spatial_processor, \
+    torch_broadcast_adj_matrix
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
@@ -183,7 +185,8 @@ class VQAClassificationDataset(Dataset):
         padding_index=0,
         max_seq_length=16,
         max_region_num=101,
-        extra_args=None
+        extra_args=None,
+        processing_threads=64
     ):
         """
         (YK): Builds self.entries by reading questions and answers and caches them.
@@ -202,15 +205,15 @@ class VQAClassificationDataset(Dataset):
         self._tokenizer = tokenizer
         self._padding_index = padding_index
         self.debug = extra_args.get("debug", False)
+        self.heads_type = extra_args.get("heads_type", "none")
         registry.debug = self.debug
+        self.randomize = extra_args.get("randomize", -1)
+        self.processing_threads = processing_threads
+
+        logger.info(f"heads_type: {self.heads_type}")
+        logger.info(f"Randomize is {self.randomize}")
 
         clean_train = "_cleaned" if clean_datasets else ""
-
-        if self.debug:
-            cache_path = "/nethome/ykant3/vilbert-multi-task/datasets/VQA/cache/VQA_trainval_23_debug.pkl"
-            logger.info("Loading in debug mode from %s" % cache_path)
-            self.entries = cPickle.load(open(cache_path, "rb"))
-            return
 
         if "roberta" in bert_model:
             cache_path = os.path.join(
@@ -232,10 +235,26 @@ class VQAClassificationDataset(Dataset):
                 "cache",
                 task + "_" + split + "_" + str(max_seq_length) + clean_train + ".pkl",
             )
+
+        if self.heads_type != "none" or self.randomize > 0:
+            cache_path = cache_path.split(".")[0]
+            cache_path = cache_path + "_heads_new.pkl"
+
+        if self.debug:
+            cache_path = "/nethome/ykant3/vilbert-multi-task/datasets/VQA/cache/VQA_trainval_23_debug.pkl"
+            logger.info("Loading in debug mode from %s" % cache_path)
+            self.entries = cPickle.load(open(cache_path, "rb"))
+            if self.heads_type != "none" or self.randomize > 0:
+                self.process_spatials()
+            return
+
+
         if not os.path.exists(cache_path):
             self.entries = _load_dataset(dataroot, split, clean_datasets)
             # convert questions to tokens, create masks, segment_ids
             self.tokenize(max_seq_length)
+            if self.heads_type != "none" or self.randomize > 0:
+                self.process_spatials()
             # convert all tokens to tensors
             self.tensorize()
             cPickle.dump(self.entries, open(cache_path, "wb"))
@@ -243,6 +262,74 @@ class VQAClassificationDataset(Dataset):
             logger.info("Loading from %s" % cache_path)
             self.entries = cPickle.load(open(cache_path, "rb"))
 
+
+    def process_spatials(self):
+        logger.info(f"Processsing Share/Single/Random Spatial Relations with {self.processing_threads} threads")
+        import multiprocessing as mp
+
+        pad_obj_list = []
+
+        for entry in tqdm(self.entries, desc="Reading Entries"):
+            # Adding spatial graph matrix
+            obj_features, obj_num_boxes, obj_bboxes, _ = self._image_features_reader[entry["image_id"]]
+            obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes - 1, obj_bboxes[1:]
+            _, _, pad_obj_bboxes = self._pad_features(
+                obj_features, obj_bboxes, obj_num_boxes, self._max_region_num, tensorize=False
+            )
+            pad_obj_bboxes = pad_obj_bboxes[:, :-1]
+
+            # Append bboxes to the list
+            pad_obj_list.append(pad_obj_bboxes)
+
+
+        sp_pool = mp.Pool(self.processing_threads)
+        # map is synchronous (ordered)
+        result_list = list(tqdm(sp_pool.imap(VQAClassificationDataset.process_all_spatials, pad_obj_list),
+                                     total=len(pad_obj_list), desc="Spatial Relations"))
+        sp_pool.close()
+        sp_pool.join()
+        logger.info(f"Done Processsing Quadrant Spatial Relations with {self.processing_threads} threads")
+        assert len(result_list) == len(pad_obj_list)
+
+
+        for entry, (adj_matrix, adj_matrix_share3_1, adj_matrix_share3_2, adj_matrix_random1, adj_matrix_random3) \
+                in zip(self.entries, result_list):
+            entry["spatial_adj_matrix"] = adj_matrix
+            entry["spatial_adj_matrix_share3_1"] = adj_matrix_share3_1
+            entry["spatial_adj_matrix_share3_2"] = adj_matrix_share3_2
+            entry["spatial_adj_matrix_random1"] = adj_matrix_random1
+            entry["spatial_adj_matrix_random3"] = adj_matrix_random3
+
+
+    @staticmethod
+    def process_all_spatials(pad_obj_bboxes):
+        adj_matrix, adj_matrix_share3_1, adj_matrix_share3_2 \
+            = build_graph_using_normalized_boxes(pad_obj_bboxes, distance_threshold=0.5)
+        adj_matrix_random1, adj_matrix_random3 = random_spatial_processor(pad_obj_bboxes)
+        return adj_matrix, adj_matrix_share3_1, adj_matrix_share3_2, adj_matrix_random1, adj_matrix_random3
+
+
+    def _pad_features(self, features, bboxes, num_boxes, max_feat_num, tensorize=True):
+        mix_num_boxes = min(int(num_boxes), max_feat_num)
+        mask = [1] * (int(mix_num_boxes))
+        while len(mask) < max_feat_num:
+            mask.append(0)
+
+        mix_boxes_pad = np.zeros((max_feat_num, 5))
+        mix_boxes_pad[:mix_num_boxes] = bboxes[:mix_num_boxes]
+
+        mix_features_pad = np.zeros((max_feat_num, 2048))
+        mix_features_pad[:mix_num_boxes] = features[:mix_num_boxes]
+
+        if not tensorize:
+            return mix_features_pad, mask, mix_boxes_pad
+
+        # tensorize
+        pad_features = torch.tensor(mix_features_pad).float()
+        mask_features = torch.tensor(mask).long()
+        pad_bboxes = torch.tensor(mix_boxes_pad).float()
+
+        return pad_features, mask_features, pad_bboxes
 
 
     def tokenize(self, max_length=16):
@@ -333,12 +420,6 @@ class VQAClassificationDataset(Dataset):
         while len(image_mask) < self._max_region_num:
             image_mask.append(0)
 
-        # shuffle the image location here.
-        # img_idx = list(np.random.permutation(num_boxes-1)[:mix_num_boxes]+1)
-        # img_idx.append(0)
-        # mix_boxes_pad[:mix_num_boxes] = boxes[img_idx]
-        # mix_features_pad[:mix_num_boxes] = features[img_idx]
-
         mix_boxes_pad[:mix_num_boxes] = boxes[:mix_num_boxes]
         mix_features_pad[:mix_num_boxes] = features[:mix_num_boxes]
 
@@ -350,8 +431,68 @@ class VQAClassificationDataset(Dataset):
         input_mask = entry["q_input_mask"]
         segment_ids = entry["q_segment_ids"]
 
-        co_attention_mask = torch.zeros((self._max_region_num, self._max_seq_length))
         target = torch.zeros(self.num_labels)
+
+        item_dict = {}
+
+        # In the first iteration expand all the spatial relation matrices
+        if "spatial_adj_matrix" in entry:
+            if not isinstance(entry["spatial_adj_matrix"], torch.Tensor):
+                if self.randomize > 0:
+                    if self.randomize == 1:
+                        entry["spatial_adj_matrix"] = entry["spatial_adj_matrix_random1"]
+                    elif self.randomize == 3:
+                        entry["spatial_adj_matrix"] = entry["spatial_adj_matrix_random3"]
+                    else:
+                        raise AssertionError
+                    entry["spatial_adj_matrix"] = None
+                    rows, cols, slices = entry["spatial_adj_matrix"].shape
+                    assert slices == self.randomize
+                    adj_matrices = []
+
+                    # Expand each slice
+                    for slice_idx in range(slices):
+                        adj_matrix_slice = torch_broadcast_adj_matrix(
+                            torch.from_numpy(entry["spatial_adj_matrix"][:, :, slice_idx]),
+                            label_num=12
+                        )
+                        adj_matrices.append(adj_matrix_slice)
+
+                    # Aggregate each slice
+                    entry["spatial_adj_matrix"] = adj_matrices[0]
+                    for matrix_slice in adj_matrices[1:]:
+                        entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], matrix_slice)
+
+                else:
+                    # label_num = 12 classifies self-relationship as label=12
+                    entry["spatial_adj_matrix"] = torch_broadcast_adj_matrix(
+                        torch.from_numpy(entry["spatial_adj_matrix"]),
+                        label_num=12
+                    )
+
+                if self.heads_type == "mix":
+                    spatial_adj_matrix_share3_1 = torch_broadcast_adj_matrix(
+                        torch.from_numpy(entry["spatial_adj_matrix_share3_1"]),
+                        label_num=12
+                    )
+                    spatial_adj_matrix_share3_2 = torch_broadcast_adj_matrix(
+                        torch.from_numpy(entry["spatial_adj_matrix_share3_2"]),
+                        label_num=12
+                    )
+                    entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_1)
+                    entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_2)
+
+            # Put keys into item_dict
+            put_keys = ["spatial_adj_matrix_share3", "spatial_adj_matrix"]
+            for key in put_keys:
+                if key in entry:
+                    item_dict[key] = entry[key]
+
+            try:
+                assert len(item_dict["spatial_adj_matrix"].shape) == 3
+            except:
+                import pdb
+                pdb.set_trace()
 
         if "test" not in self.split:
             answer = entry["answer"]
@@ -360,7 +501,7 @@ class VQAClassificationDataset(Dataset):
             if labels is not None:
                 target.scatter_(0, labels, scores)
 
-        item_dict = {
+        item_dict.update({
             "input_imgs": features,
             "image_mask": image_mask,
             "image_loc": spatials,
@@ -368,8 +509,8 @@ class VQAClassificationDataset(Dataset):
             "question_mask": input_mask,
             "image_id": image_id,
             "question_id": question_id,
-            "target": target
-        }
+            "target": target,
+        })
 
         return item_dict
 
