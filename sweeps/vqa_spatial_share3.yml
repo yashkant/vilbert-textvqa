@@ -5,7 +5,7 @@ TASK19:
   process: normal
   task_id: 1
   dataroot: datasets/VQA/
-  features_h5path1: datasets/coco/COCO_trainval_resnext152_faster_rcnn_genome.lmdb
+  features_h5path1: datasets/VQA/cache/vqa-cache-2/trainval
   features_h5path2: ''
   train_annotations_jsonpath: ''
   val_annotations_jsonpath: ''

@@ -209,6 +209,7 @@ class VQAClassificationDataset(Dataset):
         registry.debug = self.debug
         self.randomize = extra_args.get("randomize", -1)
         self.processing_threads = processing_threads
+        self.spatial_dict = {}
 
         logger.info(f"heads_type: {self.heads_type}")
         logger.info(f"Randomize is {self.randomize}")
@@ -407,6 +408,9 @@ class VQAClassificationDataset(Dataset):
         3. Build target (vocab-dim) with VQA scores scattered at label-indices
         4. Return
         """
+        # import  time
+        # time_start = time.time()
+
         entry = self.entries[index]
         image_id = entry["image_id"]
         question_id = entry["question_id"]
@@ -429,7 +433,6 @@ class VQAClassificationDataset(Dataset):
 
         question = entry["q_token"]
         input_mask = entry["q_input_mask"]
-        segment_ids = entry["q_segment_ids"]
 
         target = torch.zeros(self.num_labels)
 
@@ -482,17 +485,28 @@ class VQAClassificationDataset(Dataset):
                     entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_1)
                     entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_2)
 
-            # Put keys into item_dict
-            put_keys = ["spatial_adj_matrix_share3", "spatial_adj_matrix"]
-            for key in put_keys:
-                if key in entry:
-                    item_dict[key] = entry[key]
+            move_keys = ["spatial_adj_matrix_share3", "spatial_adj_matrix", "spatial_adj_matrix_random1", "spatial_adj_matrix_random3"]
 
-            try:
-                assert len(item_dict["spatial_adj_matrix"].shape) == 3
-            except:
-                import pdb
-                pdb.set_trace()
+            if image_id not in self.spatial_dict:
+                self.spatial_dict[image_id] = {}
+
+            for key in move_keys:
+                if key in entry:
+                    if key not in self.spatial_dict[image_id]:
+                        self.spatial_dict[image_id][key] = entry[key]
+                    # else:
+                    #     try:
+                    #         assert (self.spatial_dict[image_id][key] == entry[key]).all()
+                    #     except:
+                    #         import pdb
+                    #         pdb.set_trace()
+                    del entry[key]
+
+
+        if self.heads_type == "mix":
+            assert image_id in self.spatial_dict
+            item_dict.update(self.spatial_dict[image_id])
+
 
         if "test" not in self.split:
             answer = entry["answer"]
@@ -512,6 +526,8 @@ class VQAClassificationDataset(Dataset):
             "target": target,
         })
 
+        # time_end = time.time()
+        # print(f"Time taken: {time_start - time_end}")
         return item_dict
 
     def __len__(self):
