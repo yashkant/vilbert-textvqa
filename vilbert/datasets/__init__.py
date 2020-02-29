@@ -26,6 +26,7 @@ from .guesswhat_pointing_dataset import GuessWhatPointingDataset
 from .flickr_grounding_dataset import FlickrGroundingDataset
 from .textvqa_dataset import TextVQADataset
 from .stvqa_dataset import STVQADataset
+from .ocrvqa_dataset import OCRVQADataset
 # from .flickr_retreival_dataset import FlickrRetreivalDatasetTrain, FlickrRetreivalDatasetVal
 __all__ = [
     "FoilClassificationDataset",
@@ -71,6 +72,7 @@ DatasetMapTrain = {
     "FlickrGrounding": FlickrGroundingDataset,
     "TextVQA": TextVQADataset,
     "STVQA": STVQADataset,
+    "OCRVQA": OCRVQADataset,
 }
 
 

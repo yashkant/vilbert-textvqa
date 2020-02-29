@@ -278,7 +278,6 @@ class TextVQADataset(Dataset):
         for result, entry in zip(results, self.entries):
             entry["spatial_adj_matrix"] = result
 
-
     def process_random_spatials(self):
         pad_obj_ocr_bboxes_list = []
         for entry in tqdm(self.entries, desc="Reading Entries"):
@@ -305,9 +304,6 @@ class TextVQADataset(Dataset):
         assert len(results) == len(self.entries)
         for result, entry in zip(results, self.entries):
             entry["spatial_adj_matrix"] = result
-
-
-
 
     @staticmethod
     def process_four_quadrant_spatials(spatial_adj_matrix):

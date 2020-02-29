@@ -340,7 +340,8 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False):
 
     key_map = {
         "textvqa": "TextVQA",
-        "stvqa": "STVQA"
+        "stvqa": "STVQA",
+        "ocrvqa": "OCRVQA"
     }
 
 
@@ -391,6 +392,8 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False):
         assert task_cfg[task]["vocab_type"] != "5k_stvqa"
     elif val_task_name == "STVQA":
         assert task_cfg[task]["vocab_type"] == "5k_stvqa"
+    elif val_task_name == "OCRVQA":
+        assert task_cfg[task]["vocab_type"] == "ocrvqa"
     else:
         raise ValueError
 

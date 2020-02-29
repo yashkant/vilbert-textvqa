@@ -882,6 +882,7 @@ class M4CAnswerProcessor:
         vocab_none = "/srv/share/ykant3/pythia/vocabs/vocab_none.txt"
         vocab4k_latest = "/srv/share/ykant3/pythia/vocabs/answer_vocab_textvqa_4k_filtered.txt"
         vocab5k_stvqa = "/srv/share/ykant3/m4c-release/data/m4c_vocabs/stvqa/fixed_answer_vocab_stvqa_5k.txt"
+        vocab_ocrvqa = "/srv/share/ykant3/m4c-release/data/m4c_vocabs/ocrvqa/fixed_answer_vocab_ocrvqa_82.txt"
 
         if config.vocab_type == "5k":
             self.answer_vocab = VocabDict(vocab5k, *args, **kwargs)
@@ -895,6 +896,8 @@ class M4CAnswerProcessor:
             self.answer_vocab = VocabDict(vocab4k_latest, *args, **kwargs)
         elif config.vocab_type == "5k_stvqa":
             self.answer_vocab = VocabDict(vocab5k_stvqa, *args, **kwargs)
+        elif config.vocab_type == "ocrvqa":
+            self.answer_vocab = VocabDict(vocab_ocrvqa, *args, **kwargs)
         else:
             raise ValueError
 

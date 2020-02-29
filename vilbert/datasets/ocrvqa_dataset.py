@@ -70,13 +70,13 @@ def _load_dataset(name, debug):
     return entries, imdb_data.metadata
 
 
-class STVQADataset(TextVQADataset):
+class OCRVQADataset(TextVQADataset):
     def __init__(
         self,
         split,
         tokenizer,
         bert_model,
-        task="STVQA",
+        task="OCRVQA",
         padding_index=0,
         max_seq_length=16,
         max_region_num=101,
@@ -90,14 +90,14 @@ class STVQADataset(TextVQADataset):
         # Just initialize the grand-parent classs
         Dataset.__init__(self)
 
-        dataroot = extra_args["stvqa_dataroot"]
+        dataroot = extra_args["ocrvqa_dataroot"]
         self.split = split
         self._max_seq_length = max_seq_length
         self.obj_features_reader = ImageFeaturesH5Reader(
-            features_path=extra_args["stvqa_features_h5path1"], in_memory=True
+            features_path=extra_args["ocrvqa_features_h5path1"], in_memory=True
         )
         self.ocr_features_reader = ImageFeaturesH5Reader(
-            features_path=extra_args["stvqa_features_h5path2"], in_memory=True
+            features_path=extra_args["ocrvqa_features_h5path2"], in_memory=True
         )
         self._tokenizer = tokenizer
         self._padding_index = padding_index
@@ -107,7 +107,7 @@ class STVQADataset(TextVQADataset):
         assert self.max_ocr_num == 50
         self.max_resnet_num = extra_args["max_resnet_num"]
         self.debug = extra_args.get("debug", False)
-        self.vocab_type = extra_args.get("vocab_type", "4k")
+        self.vocab_type = extra_args["vocab_type"]
         self.dynamic_sampling = extra_args.get("dynamic_sampling", True)
         self.distance_threshold = extra_args.get("distance_threshold", 0.5)
         self.processing_threads = processing_threads
