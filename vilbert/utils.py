@@ -268,7 +268,7 @@ class tbLogger(object):
 
     def step_val(self, epochId, loss, score, task_id, batch_size, split):
         self.task_loss_val[task_id] += loss * batch_size
-        self.task_score_val[task_id] += score
+        self.task_score_val[task_id] += score*batch_size
         self.task_step_val[task_id] += self.gradient_accumulation_steps
         self.task_datasize_val[task_id] += batch_size
 
