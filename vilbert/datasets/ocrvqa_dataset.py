@@ -16,7 +16,8 @@ from tqdm import tqdm
 from .textvqa_processors import *
 from easydict import EasyDict as edict
 from ._image_features_reader import ImageFeaturesH5Reader
-from vilbert.spatial_utils_regat import torch_broadcast_adj_matrix
+from vilbert.spatial_utils_regat import torch_broadcast_adj_matrix, build_graph_using_normalized_boxes_new, \
+    random_spatial_processor
 import multiprocessing as mp
 from vilbert.datasets.textvqa_dataset import TextVQADataset, Processors, ImageDatabase
 
@@ -114,6 +115,7 @@ class OCRVQADataset(TextVQADataset):
         self.heads_type = extra_args.get("heads_type", "none")
         self.clean_answers = extra_args.get("clean_answers", True)
         self.randomize = extra_args.get("randomize", -1)
+        self.spatials = {}
 
         registry.vocab_type = self.vocab_type
         registry.distance_threshold = self.distance_threshold
@@ -153,17 +155,9 @@ class OCRVQADataset(TextVQADataset):
                 + f"_dynamic_{self.dynamic_sampling}" + ".pkl",
             )
 
-        if self.distance_threshold != 0.5:
-            cache_path = cache_path.split(".")[0]
-            cache_path = cache_path + f"_threshold_{self.distance_threshold}" + ".pkl"
-
-        if self.heads_type != "none":
-            cache_path = cache_path.split(".")[0]
-            cache_path = cache_path + f"_heads_new" + ".pkl"
-
-        if self.randomize > 0:
-            cache_path = cache_path.split(".")[0]
-            cache_path = cache_path + f"_randomize_{self.randomize}" + ".pkl"
+        if self.heads_type != "none" or self.randomize > 0:
+            spatial_cache_path = cache_path.split(".")[0]
+            spatial_cache_path = spatial_cache_path + f"_spatials" + ".pkl"
 
         logger.info(f"Cache Name:  {cache_path}")
 
@@ -180,15 +174,13 @@ class OCRVQADataset(TextVQADataset):
             # convert questions to tokens, create masks, segment_ids
             self.process()
 
-            if self.randomize > 0:
-                self.process_random_spatials()
-            else:
+            if self.randomize > 0 or self.heads_type != "none":
                 self.process_spatials()
 
-            if self.heads_type != "none":
-                self.process_spatial_extras()
             if not self.debug:
                 cPickle.dump(self.entries, open(cache_path, "wb"))
+                if self.randomize > 0 or self.heads_type != "none":
+                    cPickle.dump(self.spatials, open(spatial_cache_path, "wb"))
         else:
             if "processors_only_registry" not in registry:
                 self.processors = Processors(
@@ -203,3 +195,62 @@ class OCRVQADataset(TextVQADataset):
             # otherwise load cache!
             logger.info("Loading from %s" % cache_path)
             self.entries = cPickle.load(open(cache_path, "rb"))
+
+            if self.randomize > 0 or self.heads_type != "none":
+                self.spatials = cPickle.load(open(spatial_cache_path, "rb"))
+
+    def process_spatials(self):
+        logger.info(f"Processsing Share/Single/Random Spatial Relations with {self.processing_threads} threads")
+        import multiprocessing as mp
+
+        image_id_obj_list = {}
+
+        for entry in tqdm(self.entries, desc="Reading Entries"):
+            if entry["image_id"] in image_id_obj_list:
+                continue
+            # Adding spatial graph matrix
+            obj_features, obj_num_boxes, obj_bboxes, _ = self._image_features_reader[entry["image_id"]]
+            obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes - 1, obj_bboxes[1:]
+            _, _, pad_obj_bboxes = self._pad_features(
+                obj_features, obj_bboxes, obj_num_boxes, self._max_region_num, tensorize=False
+            )
+            pad_obj_bboxes = pad_obj_bboxes[:, :-1]
+            # Append bboxes to the list
+            image_id_obj_list[entry["image_id"]] = pad_obj_bboxes
+
+        image_ids = []
+        obj_lists = []
+        for image_id, obj_list in image_id_obj_list.items():
+            image_ids.append(image_id)
+            obj_lists.append(obj_list)
+
+
+
+        # Add mapping for images vs
+        sp_pool = mp.Pool(self.processing_threads)
+        # map is synchronous (ordered)
+        result_list = list(tqdm(sp_pool.imap(OCRVQADataset.process_all_spatials, obj_lists),
+                                     total=len(obj_lists), desc="Spatial Relations"))
+        sp_pool.close()
+        sp_pool.join()
+        logger.info(f"Done Processsing Quadrant Spatial Relations with {self.processing_threads} threads")
+        assert len(result_list) == len(obj_lists)
+
+
+        for image_id, (adj_matrix, adj_matrix_share3_1, adj_matrix_share3_2, adj_matrix_random1, adj_matrix_random3) \
+                in zip(image_ids, result_list):
+            self.spatials[image_id] = {}
+            self.spatials[image_id]["spatial_adj_matrix"] = adj_matrix
+            self.spatials[image_id]["spatial_adj_matrix_share3_1"] = adj_matrix_share3_1
+            self.spatials[image_id]["spatial_adj_matrix_share3_2"] = adj_matrix_share3_2
+            self.spatials[image_id]["spatial_adj_matrix_random1"] = adj_matrix_random1
+            self.spatials[image_id]["spatial_adj_matrix_random3"] = adj_matrix_random3
+
+
+    @staticmethod
+    def process_all_spatials(pad_obj_bboxes):
+        adj_matrix, adj_matrix_share3_1, adj_matrix_share3_2 \
+            = build_graph_using_normalized_boxes_new(pad_obj_bboxes, distance_threshold=0.5)
+        adj_matrix_random1, adj_matrix_random3 = random_spatial_processor(pad_obj_bboxes)
+        return adj_matrix, adj_matrix_share3_1, adj_matrix_share3_2, adj_matrix_random1, adj_matrix_random3
+

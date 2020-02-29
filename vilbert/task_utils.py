@@ -212,7 +212,7 @@ LossMap = {
 
 MetricsMap = {
     "TextVQA": TextVQAAccuracy(),
-    "ANLSAccuracy": STVQAAccuracy(),
+    "STVQA": STVQAAccuracy(),
 }
 
 
@@ -244,7 +244,11 @@ def ForwardModelsVal(args,
     else:
         loss = task_losses[task_id](batch_dict["textvqa_scores"], batch_dict["targets"], batch_dict["train_loss_mask"])
 
-    textvqa_metric = MetricsMap["TextVQA"]
+    if "metric" in task_cfg[task_id]:
+        textvqa_metric = MetricsMap[task_cfg[task_id]["metric"]]
+    else:
+        textvqa_metric = MetricsMap["TextVQA"]
+
     batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, batch_dict["textvqa_scores"])
 
     if return_batch:
@@ -275,6 +279,7 @@ def ForwardModelsTrain(
     for key, value in batch_dict.items():
         if isinstance(value, torch.Tensor):
             batch_dict[key] = value.cuda(device=device, non_blocking=True)
+
     question = batch_dict["question_indices"]
     batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
 
@@ -285,7 +290,10 @@ def ForwardModelsTrain(
     else:
         loss = task_losses[task_id](batch_dict["textvqa_scores"], batch_dict["targets"], batch_dict["train_loss_mask"])
 
-    textvqa_metric = MetricsMap["TextVQA"]
+    if "metric" in task_cfg[task_id]:
+        textvqa_metric = MetricsMap[task_cfg[task_id]["metric"]]
+    else:
+        textvqa_metric = MetricsMap["TextVQA"]
     batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, batch_dict["textvqa_scores"])
 
     return loss, batch_acc

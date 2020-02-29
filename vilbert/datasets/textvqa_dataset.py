@@ -422,86 +422,87 @@ class TextVQADataset(Dataset):
         })
         entry.update(processed_answers)
 
-        # In the first iteration expand all the spatial relation matrices
-        if not isinstance(entry["spatial_adj_matrix"], torch.Tensor):
-            if self.randomize > 0:
-                rows, cols, slices = entry["spatial_adj_matrix"].shape
-                assert slices == self.randomize
-                adj_matrices = []
 
-                # Expand each slice
-                for slice_idx in range(slices):
-                    adj_matrix_slice = torch_broadcast_adj_matrix(
-                        torch.from_numpy(entry["spatial_adj_matrix"][:, :, slice_idx]),
+        if self.heads_type in ["mix", "share3", "quad4"] or self.randomize > 0:
+            # In the first iteration expand all the spatial relation matrices
+            if not isinstance(entry["spatial_adj_matrix"], torch.Tensor):
+                if self.randomize > 0:
+                    rows, cols, slices = entry["spatial_adj_matrix"].shape
+                    assert slices == self.randomize
+                    adj_matrices = []
+
+                    # Expand each slice
+                    for slice_idx in range(slices):
+                        adj_matrix_slice = torch_broadcast_adj_matrix(
+                            torch.from_numpy(entry["spatial_adj_matrix"][:, :, slice_idx]),
+                            label_num=12
+                        )
+                        adj_matrices.append(adj_matrix_slice)
+
+                    # Aggregate each slice
+                    entry["spatial_adj_matrix"] = adj_matrices[0]
+                    for matrix_slice in adj_matrices[1:]:
+                        entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], matrix_slice)
+
+                    entry["spatial_loss_mask"] = entry["spatial_ocr_relations"] = None
+                else:
+                    entry["spatial_loss_mask"] = torch.from_numpy((entry["spatial_adj_matrix"] != 0).astype(np.float))
+                    entry["spatial_ocr_relations"] = torch.from_numpy(
+                        entry["spatial_adj_matrix"][-self.max_ocr_num:, -self.max_ocr_num:].astype(np.float)
+                    )
+                    # label_num = 12 classifies self-relationship as label=12
+                    entry["spatial_adj_matrix"] = torch_broadcast_adj_matrix(
+                        torch.from_numpy(entry["spatial_adj_matrix"]),
                         label_num=12
                     )
-                    adj_matrices.append(adj_matrix_slice)
 
-                # Aggregate each slice
-                entry["spatial_adj_matrix"] = adj_matrices[0]
-                for matrix_slice in adj_matrices[1:]:
-                    entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], matrix_slice)
+                if self.heads_type == "quad4":
+                    spatial_adj_matrix_quad4 = torch_broadcast_adj_matrix(
+                        torch.from_numpy(entry["spatial_adj_matrix_quad4"]),
+                        label_num=12
+                    )
+                    entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_quad4)
 
-                entry["spatial_loss_mask"] = entry["spatial_ocr_relations"] =None
+                if self.heads_type == "share3":
+                    spatial_adj_matrix_share3_1 = torch_broadcast_adj_matrix(
+                        torch.from_numpy(entry["spatial_adj_matrix_share3_1"]),
+                        label_num=12
+                    )
+
+                    spatial_adj_matrix_share3_2 = torch_broadcast_adj_matrix(
+                        torch.from_numpy(entry["spatial_adj_matrix_share3_2"]),
+                        label_num=12
+                    )
+                    entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_1)
+                    entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_2)
+
+                if self.heads_type == "mix":
+                    spatial_adj_matrix_quad4 = torch_broadcast_adj_matrix(
+                        torch.from_numpy(entry["spatial_adj_matrix_quad4"]),
+                        label_num=12
+                    )
+                    entry["spatial_adj_matrix_quad4"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_quad4)
+
+                    spatial_adj_matrix_share3_1 = torch_broadcast_adj_matrix(
+                        torch.from_numpy(entry["spatial_adj_matrix_share3_1"]),
+                        label_num=12
+                    )
+                    spatial_adj_matrix_share3_2 = torch_broadcast_adj_matrix(
+                        torch.from_numpy(entry["spatial_adj_matrix_share3_2"]),
+                        label_num=12
+                    )
+                    entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"],
+                                                                   spatial_adj_matrix_share3_1)
+                    entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"],
+                                                                   spatial_adj_matrix_share3_2)
             else:
-                entry["spatial_loss_mask"] = torch.from_numpy((entry["spatial_adj_matrix"] != 0).astype(np.float))
-                entry["spatial_ocr_relations"] = torch.from_numpy(
-                    entry["spatial_adj_matrix"][-self.max_ocr_num:, -self.max_ocr_num:].astype(np.float)
-                )
-                # label_num = 12 classifies self-relationship as label=12
-                entry["spatial_adj_matrix"] = torch_broadcast_adj_matrix(
-                    torch.from_numpy(entry["spatial_adj_matrix"]),
-                    label_num=12
-                )
-
-            if self.heads_type == "quad4":
-                spatial_adj_matrix_quad4 = torch_broadcast_adj_matrix(
-                    torch.from_numpy(entry["spatial_adj_matrix_quad4"]),
-                    label_num=12
-                )
-                entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_quad4)
-
-            if self.heads_type == "share3":
-                spatial_adj_matrix_share3_1 = torch_broadcast_adj_matrix(
-                    torch.from_numpy(entry["spatial_adj_matrix_share3_1"]),
-                    label_num=12
-                )
-
-                spatial_adj_matrix_share3_2 = torch_broadcast_adj_matrix(
-                    torch.from_numpy(entry["spatial_adj_matrix_share3_2"]),
-                    label_num=12
-                )
-                entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_1)
-                entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_2)
-
-            if self.heads_type == "mix":
-                spatial_adj_matrix_quad4 = torch_broadcast_adj_matrix(
-                    torch.from_numpy(entry["spatial_adj_matrix_quad4"]),
-                    label_num=12
-                )
-                entry["spatial_adj_matrix_quad4"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_quad4)
-
-                spatial_adj_matrix_share3_1 = torch_broadcast_adj_matrix(
-                    torch.from_numpy(entry["spatial_adj_matrix_share3_1"]),
-                    label_num=12
-                )
-                spatial_adj_matrix_share3_2 = torch_broadcast_adj_matrix(
-                    torch.from_numpy(entry["spatial_adj_matrix_share3_2"]),
-                    label_num=12
-                )
-                entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_1)
-                entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_2)
-
-
-        else:
-            try:
-                assert len(entry["spatial_adj_matrix"].shape) == 3
-                assert "spatial_loss_mask" in entry
-                assert "spatial_ocr_relations" in entry
-            except:
-                import pdb
-                pdb.set_trace()
-
+                try:
+                    assert len(entry["spatial_adj_matrix"].shape) == 3
+                    assert "spatial_loss_mask" in entry
+                    assert "spatial_ocr_relations" in entry
+                except:
+                    import pdb
+                    pdb.set_trace()
         item.update(entry)
 
         # remove unwanted keys

@@ -10,7 +10,7 @@ class TextVQAAccuracy:
     def __init__(self, use_original_tokens=False):
         self.evaluator = TextVQAAccuracyEvaluator()
         self.accuracies = []
-        self.debug_count = 0
+        # self.debug_count = 0
         self.use_original_tokens = use_original_tokens
         self.question_id_vs_tokens = {}
         self.question_id_vs_answers = {}
@@ -35,7 +35,7 @@ class TextVQAAccuracy:
         return word.strip()
 
     def calculate(self, batch_dict, textvqa_scores):
-        self.debug_count += 1
+        # self.debug_count += 1
 
         _print = False
 
@@ -73,12 +73,12 @@ class TextVQAAccuracy:
             answer = ' '.join(answer_words).replace(" 's", "'s")
             gt_answers = dec_bytes2obj(gt_answers_enc[idx])
 
-            # print 5 samples in each batch
-            if idx <= 4 and _print:
-                print("Ans: ", answer, "\n GT Ans: ", [ascii(x) for x in gt_answers], "\n Belongs To: ", belongs_to)
-                print("-"*20)
-                # import pdb
-                # pdb.set_trace()
+            # # print 5 samples in each batch
+            # if idx <= 4 and _print:
+            #     print("Ans: ", answer, "\n GT Ans: ", [ascii(x) for x in gt_answers], "\n Belongs To: ", belongs_to)
+            #     print("-"*20)
+            #     # import pdb
+            #     # pdb.set_trace()
 
             predictions.append({
                 "question_id": question_id.item(),
@@ -120,7 +120,8 @@ class STVQAAccuracy(TextVQAAccuracy):
     def __init__(self):
         self.name = "stvqa_accuracy"
         self.evaluator = STVQAAccuracyEvaluator()
-
+        self.use_original_tokens = False
+        self.accuracies = []
 
 class OCRVQAAccuracy(STVQAAccuracy):
     def __init__(self):
@@ -399,7 +400,7 @@ class STVQAAccuracyEvaluator:
             pred_scores.append(score)
 
         accuracy = sum(pred_scores) / len(pred_scores)
-        return accuracy
+        return accuracy, pred_scores
 
 
 class STVQAANLSEvaluator:

@@ -151,38 +151,135 @@ def torch_broadcast_adj_matrix(adj_matrix, label_num=11,
     return result
 
 
-# def torch_broadcast_adj_matrix2(adj_matrix, label_num=11,
-#                                device=torch.device("cuda")):
-#     """
-#
-#     # (YK): Operates on a single element as opposed to batch
-#
-#     broudcast spatial relation graph
-#
-#     Args:
-#         adj_matrix: [batch_size,num_boxes, num_boxes]
-#
-#     Returns:
-#         result: [batch_size,num_boxes, num_boxes, label_num]
-#
-#
-#     # (YK): Build one-hot from classes [1-12] to [0-11]
-#
-#     """
-#     import pdb
-#     pdb.set_trace()
-#     result = []
-#     for i in range(1, label_num+1):
-#         index = torch.nonzero((adj_matrix == i).view(-1).data).squeeze()
-#         curr_result = torch.zeros(
-#             adj_matrix.shape[0], adj_matrix.shape[1], adj_matrix.shape[2])
-#         curr_result = curr_result.view(-1)
-#         curr_result[index] += 1
-#         result.append(curr_result.view(
-#             (adj_matrix.shape[0], adj_matrix.shape[1],
-#              adj_matrix.shape[2], 1)))
-#     result = torch.cat(result, dim=3)
-#     return result
+def build_graph_using_normalized_boxes_new(bbox, label_num=11, distance_threshold=0.5):
+    """ Build spatial graph
+    Args:
+        bbox: [num_boxes, 4]
+    Returns:
+        adj_matrix: [num_boxes, num_boxes, label_num]
+
+    # (YK): Fixed by @harsh
+    Remember
+        - Adjacency matrix [j, i] means relationship of j (target/blue) with respect to i (origin/red) (j is W-NW of i and so on)
+        - j_box is blue
+        - i_box is red
+        - blue arrow is from i_box (red box) to j_box (blue box) i.e from  origin to target
+        - red arrow is from j_box (blue box) to i_box (red box) i.e from target to origin
+    """
+    num_box = bbox.shape[0]
+    adj_matrix = np.zeros((num_box, num_box))
+    adj_matrix_share3_1 = np.zeros((num_box, num_box))
+    adj_matrix_share3_2 = np.zeros((num_box, num_box))
+
+    # Replacement matrices
+    spatial_adj_matrix_share3_1_replace_dict = {}
+    for quad in [4, 5, 6, 7, 8, 9, 10]:
+        spatial_adj_matrix_share3_1_replace_dict[quad] = quad + 1
+    spatial_adj_matrix_share3_1_replace_dict[11] = 4
+
+    spatial_adj_matrix_share3_2_replace_dict = {}
+    for quad in [5, 6, 7, 8, 9, 10, 11]:
+        spatial_adj_matrix_share3_2_replace_dict[quad] = quad - 1
+    spatial_adj_matrix_share3_2_replace_dict[4] = 11
+
+    xmin, ymin, xmax, ymax = np.split(bbox, 4, axis=1)
+    # [num_boxes, 1]
+    # bbox_width = xmax - xmin
+    # bbox_height = ymax - ymin
+    # normalized coordinates
+    image_h = 1.0
+    image_w = 1.0
+    center_x = 0.5 * (xmin + xmax)
+    center_y = 0.5 * (ymin + ymax)
+    image_diag = math.sqrt(image_h ** 2 + image_w ** 2)
+    for i in range(num_box):
+        bbA = bbox[i]
+        # (YK): Padded bbox
+        if sum(bbA) == 0:
+            continue
+        adj_matrix[i, i] = 12
+        for j in range(i + 1, num_box):
+            bbB = bbox[j]
+            # (YK): Padded bbox
+            if sum(bbB) == 0:
+                continue
+            # class 1: inside (j inside i)
+            if xmin[i] < xmin[j] and xmax[i] > xmax[j] and ymin[i] < ymin[j] and ymax[i] > ymax[j]:
+                adj_matrix[i, j] = 1  # covers
+                adj_matrix[j, i] = 2  # inside
+            # class 2: cover (j covers i)
+            elif (xmin[j] < xmin[i] and xmax[j] > xmax[i] and
+                  ymin[j] < ymin[i] and ymax[j] > ymax[i]):
+                adj_matrix[i, j] = 2
+                adj_matrix[j, i] = 1
+            else:
+                ioU = bb_intersection_over_union(bbA, bbB)
+
+                # class 3: i and j overlap
+                if ioU >= 0.5:
+                    adj_matrix[i, j] = 3
+                    adj_matrix[j, i] = 3
+                else:
+                    y_diff = center_y[i] - center_y[j]
+                    x_diff = center_x[i] - center_x[j]
+                    diag = math.sqrt((y_diff) ** 2 + (x_diff) ** 2)
+                    if diag < distance_threshold * image_diag:
+                        sin_ij = y_diff / diag
+                        cos_ij = x_diff / diag
+                        # first quadrant
+                        if sin_ij >= 0 and cos_ij >= 0:
+                            label_i = np.arcsin(sin_ij)
+                            label_j = math.pi + label_i
+                        # fourth quadrant
+                        elif sin_ij < 0 and cos_ij >= 0:
+                            label_i = np.arcsin(sin_ij) + 2 * math.pi
+                            label_j = label_i - math.pi
+                        # second quadrant
+                        elif sin_ij >= 0 and cos_ij < 0:
+                            label_i = np.arccos(cos_ij)
+                            label_j = label_i + math.pi
+                        # third quadrant
+                        else:
+                            label_i = 2 * math.pi - np.arccos(cos_ij)
+                            label_j = label_i - math.pi
+                        # goes from [1-8] + 3 -> [4-11]
+                        # if (adj_matrix[i, j] > 0):
+                        adj_matrix[i, j] = int(np.ceil(label_i / (math.pi / 4))) + 3
+                        adj_matrix[j, i] = int(np.ceil(label_j / (math.pi / 4))) + 3
+
+                        # fill in share spatial-matrices
+                        adj_matrix_share3_1[i, j] = spatial_adj_matrix_share3_1_replace_dict.get(adj_matrix[i, j], 0)
+                        adj_matrix_share3_2[i, j] = spatial_adj_matrix_share3_2_replace_dict.get(adj_matrix[i, j], 0)
+                        adj_matrix_share3_1[j, i] = spatial_adj_matrix_share3_1_replace_dict.get(adj_matrix[j, i], 0)
+                        adj_matrix_share3_2[j, i] = spatial_adj_matrix_share3_2_replace_dict.get(adj_matrix[j, i], 0)
+
+    return adj_matrix.astype(np.int8), adj_matrix_share3_1.astype(np.int8), adj_matrix_share3_2.astype(np.int8)
+
+
+def random_spatial_processor(pad_obj_ocr_bboxes):
+    randomize = [1, 3]
+    adj_matrix_random1_shape = (len(pad_obj_ocr_bboxes), len(pad_obj_ocr_bboxes), 1)
+    adj_matrix_random3_shape = (len(pad_obj_ocr_bboxes), len(pad_obj_ocr_bboxes), 3)
+    adj_matrix_random1 = np.zeros(adj_matrix_random1_shape, dtype=np.int8)
+    adj_matrix_random3 = np.zeros(adj_matrix_random3_shape, dtype=np.int8)
+    spatial_relations_types = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+
+    for matrix, _randomize in zip([adj_matrix_random1, adj_matrix_random3], randomize):
+        for row in range(matrix.shape[0]):
+            for col in range(matrix.shape[1]):
+                random_indices = np.random.choice(spatial_relations_types, size=_randomize, replace=False)
+                # remove none-edges
+                if 0 not in random_indices:
+                    matrix[row][col] = random_indices
+
+    # Remove masked relations
+    masked_inds = np.where(pad_obj_ocr_bboxes.sum(axis=-1) == 0)
+    adj_matrix_random1[masked_inds] = 0
+    adj_matrix_random1[:, masked_inds] = 0
+    adj_matrix_random3[masked_inds] = 0
+    adj_matrix_random3[:, masked_inds] = 0
+    return adj_matrix_random1.astype(np.int8), adj_matrix_random3.astype(np.int8)
+
 
 
 def torch_extract_position_embedding(position_mat, feat_dim, wave_length=1000,
