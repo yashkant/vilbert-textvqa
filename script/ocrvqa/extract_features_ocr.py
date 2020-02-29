@@ -243,4 +243,3 @@ if __name__ == "__main__":
         imdb_data = imdb_data[int(len(imdb_data)/2):]
         # imdb_data = imdb_data[1:int(len(imdb_data)/2)]
         feature_extractor.extract_features(imdb_data, OCR_FEATURES_OCRVQA, IMAGES_OCRVQA)
-        np.save(imdb_file, imdb_data)

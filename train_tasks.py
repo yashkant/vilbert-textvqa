@@ -425,7 +425,7 @@ def main():
                                      "mix_list"]
                 elif model_type == "m4c" or model_type == "m4c_rd":
                     # Transfer keys from config to BertConfig
-                    transfer_keys = ["num_hidden_layers"]
+                    transfer_keys = ["num_hidden_layers", "top_k"]
                 else:
                     raise ValueError
 

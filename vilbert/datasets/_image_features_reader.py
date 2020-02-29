@@ -91,8 +91,11 @@ class ImageFeaturesH5Reader(object):
                 - read and generate normalized and un-normalized features and cache them
         """
 
+        # import pdb
+        # pdb.set_trace()
+
         # Todo: remove this dirty code
-        if "scene-text" in image_id:
+        if "scene-text" in image_id or "ocr-vqa" in image_id:
             sample_id = self._image_ids[0].decode()
             sample_id = splitall(sample_id)
             image_id = splitall(image_id)

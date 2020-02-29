@@ -46,7 +46,11 @@ if __name__ == "__main__":
     env = lmdb.open(OCR_LMDB_OCRVQA, map_size=MAP_SIZE)
     with env.begin(write=True) as txn:
         for infile in tqdm.tqdm(feature_files):
-            reader = np.load(infile, allow_pickle=True).item()
+            try:
+                reader = np.load(infile, allow_pickle=True).item()
+            except:
+                print(f"Couldn't read/find: {infile}")
+
             image_id = os.path.split(infile)[1].split(".")[0]
             assert image_id in image_id_vs_path_dict
             image_path = image_id_vs_path_dict[image_id]
