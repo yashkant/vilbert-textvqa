@@ -22,8 +22,8 @@ TASK19:
   grad_clip_mode: all
   optim: Adam
   lr_scheduler: pythia_warmup_decay
-  warmup_iters: 1000
-  lr_decay_iters: [14000, 19000]
+  warmup_iters: 7678
+  lr_decay_iters: [38390, 61424]
   warmpu_factors: 0.1
   lr_decay: 0.2
   max_grad_norm: 0.25
