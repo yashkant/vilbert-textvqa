@@ -64,7 +64,7 @@ def _load_dataset(name, debug):
 
     logger.info(f"Building Entries for {name}")
     for instance in imdb_data:
-        entry = dict([(key, instance[key]) for key in store_keys])
+        entry = dict([(key, instance[key]) for key in store_keys if key in instance])
         # Also need to add features-dir
         entry["image_id"] = entry["image_path"].split(".")[0] + ".npy"
         entries.append(entry)
@@ -95,12 +95,22 @@ class STVQADataset(TextVQADataset):
         dataroot = extra_args["stvqa_dataroot"]
         self.split = split
         self._max_seq_length = max_seq_length
-        self.obj_features_reader = ImageFeaturesH5Reader(
-            features_path=extra_args["stvqa_features_h5path1"], in_memory=True
-        )
-        self.ocr_features_reader = ImageFeaturesH5Reader(
-            features_path=extra_args["stvqa_features_h5path2"], in_memory=True
-        )
+
+        if self.split == "test":
+            self.obj_features_reader = ImageFeaturesH5Reader(
+                features_path="/srv/share/ykant3/scene-text/features/obj/lmdbs/test_task3_fixed.lmdb", in_memory=True
+            )
+            self.ocr_features_reader = ImageFeaturesH5Reader(
+                features_path="/srv/share/ykant3/scene-text/features/ocr/lmdbs/test_task3_fixed.lmdb", in_memory=True
+            )
+        else:
+            self.obj_features_reader = ImageFeaturesH5Reader(
+                features_path=extra_args["stvqa_features_h5path1"], in_memory=True
+            )
+            self.ocr_features_reader = ImageFeaturesH5Reader(
+                features_path=extra_args["stvqa_features_h5path2"], in_memory=True
+            )
+
         self._tokenizer = tokenizer
         self._padding_index = padding_index
         self.max_obj_num = extra_args["max_obj_num"]

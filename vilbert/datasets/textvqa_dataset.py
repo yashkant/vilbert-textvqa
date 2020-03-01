@@ -66,7 +66,7 @@ def _load_dataset(dataroot, name, debug):
 
     logger.info(f"Building Entries for {name}")
     for instance in imdb_data:
-        entry = dict([(key, instance[key]) for key in store_keys])
+        entry = dict([(key, instance[key]) for key in store_keys if key in instance])
         entries.append(entry)
 
     return entries, imdb_data.metadata
@@ -92,12 +92,21 @@ class TextVQADataset(Dataset):
         dataroot = extra_args["dataroot"]
         self.split = split
         self._max_seq_length = max_seq_length
-        self.obj_features_reader = ImageFeaturesH5Reader(
-            features_path=extra_args["features_h5path1"], in_memory=True
-        )
-        self.ocr_features_reader = ImageFeaturesH5Reader(
-            features_path=extra_args["features_h5path2"], in_memory=True
-        )
+
+        if self.split == "test":
+            self.obj_features_reader = ImageFeaturesH5Reader(
+                features_path="/srv/share/ykant3/vilbert-mt/features/obj/test_obj.lmdb", in_memory=True
+            )
+            self.ocr_features_reader = ImageFeaturesH5Reader(
+                features_path="/srv/share/ykant3/vilbert-mt/features/ocr/test_ocr.lmdb", in_memory=True
+            )
+        else:
+            self.obj_features_reader = ImageFeaturesH5Reader(
+                features_path=extra_args["features_h5path1"], in_memory=True
+            )
+            self.ocr_features_reader = ImageFeaturesH5Reader(
+                features_path=extra_args["features_h5path2"], in_memory=True
+            )
         self._tokenizer = tokenizer
         self._padding_index = padding_index
         self.max_obj_num = extra_args["max_obj_num"]
@@ -409,18 +418,18 @@ class TextVQADataset(Dataset):
 
         item["co_attention_mask"] = co_attention_mask
 
-        # process answers (dynamic sampling)
-        if self.clean_answers:
-            cleaned_answers = [Processors.word_cleaner(word) for word in entry["answers"]]
-        else:
-            cleaned_answers = entry["answers"]
-
-        cleaned_ocr_tokens = entry["cleaned_ocr_tokens"]
-        processed_answers = self.processors.answer_processor({
-            "answers": cleaned_answers,
-            "context_tokens": cleaned_ocr_tokens,
-        })
-        entry.update(processed_answers)
+        if "answers" in entry:
+            # process answers (dynamic sampling)
+            if self.clean_answers:
+                cleaned_answers = [Processors.word_cleaner(word) for word in entry["answers"]]
+            else:
+                cleaned_answers = entry["answers"]
+            cleaned_ocr_tokens = entry["cleaned_ocr_tokens"]
+            processed_answers = self.processors.answer_processor({
+                "answers": cleaned_answers,
+                "context_tokens": cleaned_ocr_tokens,
+            })
+            entry.update(processed_answers)
 
 
         if self.heads_type in ["mix", "share3", "quad4"] or self.randomize > 0 or "spatial_adj_matrix" in entry:

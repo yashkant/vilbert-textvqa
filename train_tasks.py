@@ -137,7 +137,7 @@ def main():
     parser.add_argument(
         "--num_workers",
         type=int,
-        default=0,
+        default=16,
         help="Number of workers in the dataloader.",
     )
     parser.add_argument(
@@ -268,6 +268,9 @@ def main():
     elif model_type == "m4c_spatial":
         logger.info("Using M4C-Spatial model")
         from vilbert.m4c_spatial import BertConfig, M4C
+    elif model_type == "m4c_topk":
+        logger.info("Using M4C-Topk model")
+        from vilbert.m4c_topk import BertConfig, M4C
     elif model_type == "m4c_spatial_que_cond":
         logger.info("Using M4C-Spatial Question Cond. model")
         from vilbert.m4c_spatial_que_cond import BertConfig, M4C
@@ -408,8 +411,9 @@ def main():
                     default_gpu=default_gpu,
                 )
             else:
-                if "m4c_spatial" in model_type:
-                    assert "attention_mask_quadrants" in task_cfg["TASK19"]
+                if "m4c_spatial" in model_type or "m4c_topk" in model_type:
+                    if "m4c_spatial" in model_type:
+                        assert "attention_mask_quadrants" in task_cfg["TASK19"]
                     # assert "spatial_type" in task_cfg["TASK19"]
                     # Transfer keys from config to BertConfig
                     transfer_keys = ["attention_mask_quadrants",
@@ -425,7 +429,7 @@ def main():
                                      "mix_list"]
                 elif model_type == "m4c" or model_type == "m4c_rd":
                     # Transfer keys from config to BertConfig
-                    transfer_keys = ["num_hidden_layers", "top_k"]
+                    transfer_keys = ["num_hidden_layers"]
                 else:
                     raise ValueError
 
@@ -546,7 +550,7 @@ def main():
     # TRAINING LOOP
     for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
         model.train()
-        for step in tqdm(range(100), desc="Iters"):
+        for step in tqdm(range(median_num_iter), desc="Iters"):
             iterId = startIterID + step + (epochId * median_num_iter)
             first_task = True
 

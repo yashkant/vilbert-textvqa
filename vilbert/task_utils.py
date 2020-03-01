@@ -326,8 +326,10 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False):
 
     task_datasets_train = {}
     task_datasets_val = {}
+    task_datasets_test = {}
     task_dataloader_train = {}
     task_dataloader_val = {}
+    task_dataloader_test = {}
     task_ids = []
     task_batch_size = {}
     task_num_iters = {}
@@ -394,7 +396,21 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False):
         max_region_num=task_cfg[task]["max_region_num"],
         extra_args=task_cfg[task]
     )
-    
+
+    if "test" in split:
+        logger.info(
+            f"Loading Test Dataset(s) {task_cfg[task]['val_on']}  with batch size {batch_size}"
+        )
+        task_datasets_test[task] = DatasetMapTrain[val_task_name](
+            split="test",
+            tokenizer=tokenizer,
+            bert_model=args.bert_model,
+            padding_index=0,
+            max_seq_length=task_cfg[task]["max_seq_length"],
+            max_region_num=task_cfg[task]["max_region_num"],
+            extra_args=task_cfg[task]
+        )
+
     # Make sure we are using correct-vocabs
     if val_task_name == "TextVQA":
         assert task_cfg[task]["vocab_type"] != "5k_stvqa"
@@ -433,6 +449,26 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False):
             batch_size=32,
             num_workers=2,
             pin_memory=True,
+        )
+
+    if "test" in split:
+        task_dataloader_test[task] = DataLoader(
+            task_datasets_val[task],
+            shuffle=False,
+            batch_size=32,
+            num_workers=2,
+            pin_memory=True,
+        )
+        return (
+            task_batch_size,
+            task_num_iters,
+            task_ids,
+            task_datasets_train,
+            task_datasets_val,
+            task_datasets_test,
+            task_dataloader_train,
+            task_dataloader_val,
+            task_dataloader_test,
         )
 
     return (

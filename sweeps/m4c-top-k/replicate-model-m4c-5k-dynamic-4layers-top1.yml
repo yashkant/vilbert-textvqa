@@ -23,7 +23,7 @@ TASK19:
   debug: false
   grad_clip_mode: all
   max_grad_norm: 0.25
-  model_type: m4c
+  model_type: m4c_topk
   lr_scheduler: pythia_warmup_decay
   optim: Adam
   lr_decay_iters: [14000, 19000]
@@ -33,4 +33,4 @@ TASK19:
   vocab_type: 5k
   dynamic_sampling: true
   num_hidden_layers: 6
-  top_k: 1
+  layer_type_list: [n, n, t1, t1, t1, t1]

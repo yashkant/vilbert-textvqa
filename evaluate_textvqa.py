@@ -457,15 +457,31 @@ def main():
     registry['vocab'] = vocab
 
     # Load Dataset
-    (
-        task_batch_size,
-        task_num_iters,
-        task_ids,
-        task_datasets_train,
-        task_datasets_val,
-        task_dataloader_train,
-        task_dataloader_val
-    ) = LoadDatasets(args, task_cfg, args.tasks.split("-"), split=args.split, only_val=True)
+    return_tuple = LoadDatasets(args, task_cfg, args.tasks.split("-"), split=args.split, only_val=True)
+
+    if "test" in args.split:
+        (
+            task_batch_size,
+            task_num_iters,
+            task_ids,
+            task_datasets_train,
+            task_datasets_val,
+            task_datasets_test,
+            task_dataloader_train,
+            task_dataloader_val,
+            task_dataloader_test
+        ) = return_tuple
+    else:
+        (
+            task_batch_size,
+            task_num_iters,
+            task_ids,
+            task_datasets_train,
+            task_datasets_val,
+            task_dataloader_train,
+            task_dataloader_val
+        ) = tuple
+
     task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
 
     # tvqa_eval_df = load_data_for_evaluation_tvqa()
@@ -477,6 +493,9 @@ def main():
     # pd.to_pickle(tvqa_eval_df_test, eval_df_path_tvqa_test)
     # pd.to_pickle(stvqa_eval_df, eval_df_path_stvqa)
     # pd.to_pickle(stvqa_eval_df_test, eval_df_path_stvqa_test)
+
+    import pdb
+    pdb.set_trace()
 
     if task_cfg["TASK19"]["val_on"][0] == "textvqa":
         path = eval_df_path_tvqa
@@ -495,66 +514,76 @@ def main():
     # Load Model
     model = load_model()
 
-    # Run evaluation
-    curr_val_score = evaluate(
-        args,
-        task_dataloader_val,
-        None,
-        task_cfg,
-        device,
-        "TASK19",
-        model,
-        task_losses
-    )
+    for split in ["test", "val"]:
 
-    curr_val_score['complete_seqs'] = np.concatenate(
-        [x.reshape(-1, 12) for x in curr_val_score['complete_seqs']], axis=0
-    ).tolist()
-    curr_val_score['topkscores'] = np.concatenate(curr_val_score['topkscores'], axis=0).tolist()
-    curr_val_score['question_id'] = np.concatenate(curr_val_score['question_id'], axis=0).tolist()
+        if "test" in split:
+            dataloader = task_dataloader_test
+        elif "val" in split:
+            dataloader = task_dataloader_val
 
-    # Compute VQA Accuracies
-    results_df = pd.DataFrame.from_dict(curr_val_score, orient='columns')
-    # pd.to_pickle(results, '/srv/share3/hagrawal9/data/bs_results.pkl')
+        import pdb
+        pdb.set_trace()
 
+        logger.info(f"Processing split: {split}")
+        if split in args.split:
+            # Run evaluation
+            curr_score = evaluate(
+                args,
+                dataloader,
+                None,
+                task_cfg,
+                device,
+                "TASK19",
+                model,
+                task_losses
+            )
+            curr_score['complete_seqs'] = np.concatenate(
+                [x.reshape(-1, 12) for x in curr_score['complete_seqs']], axis=0
+            ).tolist()
+            curr_score['topkscores'] = np.concatenate(curr_score['topkscores'], axis=0).tolist()
+            curr_score['question_id'] = np.concatenate(curr_score['question_id'], axis=0).tolist()
 
-    # Get both type of accuracies!
-    accuracies = evaluate_predictions(eval_df, results_df, acc_type="vqa")
-    logger.info(
-        "{} Accuracy: {} for {} questions, split {}, dataset {}".format(
-            "vqa",
-            accuracies['vqa_accuracy'],
-            accuracies['accuracies_df'].shape,
-            args.split,
-            task_cfg["TASK19"]["val_on"][0])
-    )
+            # Compute VQA Accuracies
+            results_df = pd.DataFrame.from_dict(curr_score, orient='columns')
 
-    accuracies = evaluate_predictions(eval_df, results_df, acc_type="anls")
-    logger.info(
-        "{} Accuracy: {} for {} questions, split {}, dataset {}".format(
-            "anls",
-            accuracies['vqa_accuracy'],
-            accuracies['accuracies_df'].shape,
-            args.split,
-            task_cfg["TASK19"]["val_on"][0])
-    )
-    evalai_file = os.path.join(os.path.dirname(args.model_ckpt),'{}_evalai_beam_{}.json'.format(args.split, args.beam_size))
+            # Get both type of accuracies!
+            accuracies = evaluate_predictions(eval_df, results_df, acc_type="vqa")
+            logger.info(
+                "{} Accuracy: {} for {} questions, split {}, dataset {}".format(
+                    "vqa",
+                    accuracies['vqa_accuracy'],
+                    accuracies['accuracies_df'].shape,
+                    args.split,
+                    task_cfg["TASK19"]["val_on"][0])
+            )
 
-    # EvalAI/ST-VQA file
-    answer_dict = []
-    for i, pred in accuracies['best_result_df'].iterrows():
-        answer_dict.append({
-            'question_id': pred['question_id'],
-            'answer': pred['pred_answer'].strip()
-        })
+            accuracies = evaluate_predictions(eval_df, results_df, acc_type="anls")
+            logger.info(
+                "{} Accuracy: {} for {} questions, split {}, dataset {}".format(
+                    "anls",
+                    accuracies['vqa_accuracy'],
+                    accuracies['accuracies_df'].shape,
+                    args.split,
+                    task_cfg["TASK19"]["val_on"][0])
+            )
+            evalai_file = os.path.join(os.path.dirname(args.model_ckpt),'{}_evalai_beam_{}.json'.format(split, args.beam_size))
 
-    with open(evalai_file, 'w') as f:
-        json.dump(answer_dict, f)
+            # EvalAI/ST-VQA file
+            answer_dict = []
+            for i, pred in accuracies['best_result_df'].iterrows():
+                answer_dict.append({
+                    'question_id': pred['question_id'],
+                    'answer': pred['pred_answer'].strip()
+                })
 
-    print(f"Dumping file: {evalai_file}")
+            with open(evalai_file, 'w') as f:
+                json.dump(answer_dict, f)
 
+            print(f"Dumping file: {evalai_file}")
 
 if __name__ == "__main__":
-    main()
-    import pdb
-    pdb.set_trace()
+    try:
+        main()
+    finally:
+        import pdb
+        pdb.set_trace()
