@@ -56,17 +56,21 @@ class BeamSearch():
         batch_dict['pad_obj_mask'] = batch_dict['pad_obj_mask'].repeat_interleave(self._decode_size, dim=0)
         batch_dict['pad_ocr_mask'] = batch_dict['pad_ocr_mask'].repeat_interleave(self._decode_size, dim=0)
 
-        batch_dict['spatial_adj_matrix_share3'] = batch_dict['spatial_adj_matrix_share3'].repeat_interleave(
-            self._decode_size, dim=0)
-        batch_dict['spatial_adj_matrix_quad4'] = batch_dict['spatial_adj_matrix_quad4'].repeat_interleave(
-            self._decode_size, dim=0)
-        batch_dict['spatial_adj_matrix'] = batch_dict['spatial_adj_matrix'].repeat_interleave(self._decode_size, dim=0)
+        if "spatial_adj_matrix_share3" in batch_dict:
+            batch_dict['spatial_adj_matrix_share3'] = batch_dict['spatial_adj_matrix_share3'].repeat_interleave(
+                self._decode_size, dim=0)
+
+        if "spatial_adj_matrix_quad4" in batch_dict:
+            batch_dict['spatial_adj_matrix_quad4'] = batch_dict['spatial_adj_matrix_quad4'].repeat_interleave(
+                self._decode_size, dim=0)
+
+        if "spatial_adj_matrix" in batch_dict:
+            batch_dict['spatial_adj_matrix'] = batch_dict['spatial_adj_matrix'].repeat_interleave(
+                self._decode_size, dim=0)
 
         batch_dict['ocr_mmt_in'] = batch_dict['ocr_mmt_in'].repeat_interleave(self._decode_size, dim=0)
         batch_dict['obj_mmt_in'] = batch_dict['obj_mmt_in'].repeat_interleave(self._decode_size, dim=0)
-
         batch_dict['question_id'] = batch_dict['question_id'].repeat_interleave(self._decode_size, dim=0)
-
         batch_dict['train_prev_inds'] = batch_dict['train_prev_inds'].repeat_interleave(self._decode_size, dim=0)
         return batch_dict
 

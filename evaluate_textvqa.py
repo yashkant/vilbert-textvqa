@@ -538,7 +538,7 @@ def main():
             args.split,
             task_cfg["TASK19"]["val_on"][0])
     )
-    evalai_file = os.path.join(os.path.dirname(args.model_ckpt),'evalai_beam_{}.json'.format(args.beam_size))
+    evalai_file = os.path.join(os.path.dirname(args.model_ckpt),'{}_evalai_beam_{}.json'.format(args.split, args.beam_size))
 
     # EvalAI/ST-VQA file
     answer_dict = []
@@ -551,6 +551,10 @@ def main():
     with open(evalai_file, 'w') as f:
         json.dump(answer_dict, f)
 
+    print(f"Dumping file: {evalai_file}")
+
 
 if __name__ == "__main__":
     main()
+    import pdb
+    pdb.set_trace()

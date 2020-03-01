@@ -423,7 +423,7 @@ class TextVQADataset(Dataset):
         entry.update(processed_answers)
 
 
-        if self.heads_type in ["mix", "share3", "quad4"] or self.randomize > 0:
+        if self.heads_type in ["mix", "share3", "quad4"] or self.randomize > 0 or "spatial_adj_matrix" in entry:
             # In the first iteration expand all the spatial relation matrices
             if not isinstance(entry["spatial_adj_matrix"], torch.Tensor):
                 if self.randomize > 0:
@@ -525,6 +525,7 @@ class TextVQADataset(Dataset):
                 try:
                     item[key] = enc_obj2bytes(value)
                 except:
+                    print(key)
                     import pdb
                     pdb.set_trace()
 
