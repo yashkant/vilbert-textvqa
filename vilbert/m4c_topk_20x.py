@@ -594,6 +594,82 @@ class SpatialBertSelfAttention(nn.Module):
         return outputs
 
 
+class TopkBertSelfAttention(nn.Module):
+    """
+    Todo: Keep 768 and build zero-mask for 12th head (not needed with identity relation)
+    """
+
+    def __init__(self, config):
+        super(TopkBertSelfAttention, self).__init__()
+        if config.hidden_size % config.num_attention_heads != 0:
+            raise ValueError(
+                "The hidden size (%d) is not a multiple of the number of attention "
+                "heads (%d)" % (config.hidden_size, config.num_attention_heads))
+        self.output_attentions = config.output_attentions
+
+        self.num_attention_heads = config.num_attention_heads
+        self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
+        self.all_head_size = self.num_attention_heads * self.attention_head_size
+
+        self.query = nn.Linear(config.hidden_size, self.all_head_size)
+        self.key = nn.Linear(config.hidden_size, self.all_head_size)
+        self.value = nn.Linear(config.hidden_size, self.all_head_size)
+
+        self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
+
+    def transpose_for_scores(self, x):
+        new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
+        x = x.view(*new_x_shape)
+        return x.permute(0, 2, 1, 3)
+
+    def forward(self, hidden_states, attention_mask, top_k, head_mask=None):
+        mixed_query_layer = self.query(hidden_states)
+        mixed_key_layer = self.key(hidden_states)
+        mixed_value_layer = self.value(hidden_states)
+
+        query_layer = self.transpose_for_scores(mixed_query_layer)
+        key_layer = self.transpose_for_scores(mixed_key_layer)
+        value_layer = self.transpose_for_scores(mixed_value_layer)
+
+        # Take the dot product between "query" and "key" to get the raw attention scores.
+        attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
+        attention_scores = attention_scores / math.sqrt(self.attention_head_size)
+
+        if top_k > 0:
+            obj_ocr_attention_scores = attention_scores[:, :, 20:170, 20:170]
+            _, top_indices = torch.topk(obj_ocr_attention_scores, top_k, dim=-1)
+            obj_ocr_top_k_mask = torch.zeros_like(obj_ocr_attention_scores, dtype=attention_mask.dtype) + (-10000.0)
+            obj_ocr_top_k_mask = obj_ocr_top_k_mask.scatter_(-1, top_indices, 0)
+            full_top_k_mask = torch.zeros_like(attention_scores, dtype=attention_mask.dtype)
+            full_top_k_mask[:, :, 20:170, 20:170] = full_top_k_mask[:, :, 20:170, 20:170] + obj_ocr_top_k_mask
+            # Prevent imbalanced masking
+            attention_mask = torch.min(attention_mask, full_top_k_mask)
+            assert len(torch.unique(attention_mask)) == 2
+
+        # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
+        attention_scores = attention_scores + attention_mask
+
+        # Normalize the attention scores to probabilities.
+        attention_probs = nn.Softmax(dim=-1)(attention_scores)
+
+        # This is actually dropping out entire tokens to attend to, which might
+        # seem a bit unusual, but is taken from the original Transformer paper.
+        attention_probs = self.dropout(attention_probs)
+
+        # Mask heads if we want to
+        if head_mask is not None:
+            attention_probs = attention_probs * head_mask
+
+        context_layer = torch.matmul(attention_probs, value_layer)
+
+        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
+        new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
+        context_layer = context_layer.view(*new_context_layer_shape)
+
+        outputs = (context_layer, attention_probs) if self.output_attentions else (context_layer,)
+        return outputs
+
+
 class SpatialBertAttention(nn.Module):
     def __init__(self, config, use_implicit=False):
         super(SpatialBertAttention, self).__init__()
@@ -631,6 +707,43 @@ class SpatialBertAttention(nn.Module):
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
         return outputs
 
+class TopkBertAttention(nn.Module):
+    def __init__(self, config):
+        super(TopkBertAttention, self).__init__()
+        self.self = TopkBertSelfAttention(config)
+        from pytorch_transformers.modeling_bert import BertSelfOutput
+        self.output = BertSelfOutput(config)
+        self.pruned_heads = set()
+
+    def prune_heads(self, heads):
+        if len(heads) == 0:
+            return
+        mask = torch.ones(self.self.num_attention_heads, self.self.attention_head_size)
+        heads = set(heads) - self.pruned_heads  # Convert to set and emove already pruned heads
+        for head in heads:
+            # Compute how many pruned heads are before the head and move the index accordingly
+            head = head - sum(1 if h < head else 0 for h in self.pruned_heads)
+            mask[head] = 0
+        mask = mask.view(-1).contiguous().eq(1)
+        index = torch.arange(len(mask))[mask].long()
+
+        # Prune linear layers
+        self.self.query = prune_linear_layer(self.self.query, index)
+        self.self.key = prune_linear_layer(self.self.key, index)
+        self.self.value = prune_linear_layer(self.self.value, index)
+        self.output.dense = prune_linear_layer(self.output.dense, index, dim=1)
+
+        # Update hyper params and store pruned heads
+        self.self.num_attention_heads = self.self.num_attention_heads - len(heads)
+        self.self.all_head_size = self.self.attention_head_size * self.self.num_attention_heads
+        self.pruned_heads = self.pruned_heads.union(heads)
+
+    def forward(self, input_tensor, attention_mask, top_k, head_mask=None):
+        self_outputs = self.self(input_tensor, attention_mask, top_k, head_mask)
+        attention_output = self.output(self_outputs[0], input_tensor)
+        outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
+        return outputs
+
 
 class SpatialBertLayer(nn.Module):
     def __init__(self, config, use_implicit=False):
@@ -650,6 +763,24 @@ class SpatialBertLayer(nn.Module):
         outputs = (layer_output,) + attention_outputs[1:]  # add attentions if we output them
         return outputs
 
+class TopkBertLayer(nn.Module):
+    def __init__(self, config):
+        super(TopkBertLayer, self).__init__()
+        from pytorch_transformers.modeling_bert import BertIntermediate, BertOutput
+        self.attention = TopkBertAttention(config)
+        self.intermediate = BertIntermediate(config)
+        self.output = BertOutput(config)
+
+    def forward(self, hidden_states, attention_mask, top_k, head_mask=None):
+        attention_outputs = self.attention(hidden_states, attention_mask, top_k, head_mask)
+        attention_output = attention_outputs[0]
+        # Intermediate is dense + activation
+        intermediate_output = self.intermediate(attention_output)
+        # Output is dense + dropout + residual + layernorm
+        layer_output = self.output(intermediate_output, attention_output)
+        outputs = (layer_output,) + attention_outputs[1:]  # add attentions if we output them
+        return outputs
+
 
 class BertSpatialEncoder(nn.Module):
     def __init__(self, config):
@@ -661,6 +792,7 @@ class BertSpatialEncoder(nn.Module):
 
         # backward compatibility
         if config.layer_type_list is None:
+            raise ValueError
             logger.info("layer_type_list not passed, generating it!")
             self.layer_type_list = ["n"]*config.num_hidden_layers
 
@@ -682,10 +814,14 @@ class BertSpatialEncoder(nn.Module):
         self.num_spatial_layers = counter["s"]
         self.num_normal_layers = counter["n"]
         self.num_implicit_layers = counter["i"]
+        self.top1_layers = counter["t1"]
+        self.top3_layers = counter["t3"]
 
         logger.info(f"Num Spatial Layers: {self.num_spatial_layers}")
         logger.info(f"Num Normal Layers: {self.num_normal_layers}")
         logger.info(f"Num Implicit Layers: {self.num_implicit_layers}")
+        logger.info(f"Num Top1 Layers: {self.top1_layers}")
+        logger.info(f"Num Top3 Layers: {self.top3_layers}")
 
         if config.mix_list is None:
             self.mix_list = ["none"]*len(self.layer_type_list)
@@ -697,6 +833,8 @@ class BertSpatialEncoder(nn.Module):
         self.normal_layers = nn.ModuleList([BertLayer(config) for _ in range(self.num_normal_layers)])
         self.spatial_layers = nn.ModuleList([SpatialBertLayer(config) for _ in range(self.num_spatial_layers)])
         self.implicit_layers = nn.ModuleList([SpatialBertLayer(config, True) for _ in range(self.num_implicit_layers)])
+        self.top1_layers = nn.ModuleList([TopkBertLayer(config) for _ in range(self.top1_layers)])
+        self.top3_layers = nn.ModuleList([TopkBertLayer(config) for _ in range(self.top3_layers)])
 
     def forward(self, hidden_states, attention_mask, batch_dict, head_mask=None):
         all_hidden_states = ()
@@ -705,6 +843,8 @@ class BertSpatialEncoder(nn.Module):
         normal_iter = iter(self.normal_layers)
         spatial_iter = iter(self.spatial_layers)
         implicit_iter = iter(self.implicit_layers)
+        top1_iter = iter(self.top1_layers)
+        top3_iter = iter(self.top3_layers)
 
         for layer_type, mix_type in zip(self.layer_type_list, self.mix_list):
             if self.output_hidden_states:
@@ -718,8 +858,6 @@ class BertSpatialEncoder(nn.Module):
                     spatial_adj_matrix = batch_dict["spatial_adj_matrix_share3"]
                 elif mix_type == "quad4":
                     spatial_adj_matrix = batch_dict["spatial_adj_matrix_quad4"]
-                elif mix_type == "share5":
-                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_share5"]
                 else:
                     spatial_adj_matrix = batch_dict["spatial_adj_matrix"]
                 layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
@@ -727,13 +865,17 @@ class BertSpatialEncoder(nn.Module):
                 layer_module = next(implicit_iter)
                 if mix_type == "share3":
                     spatial_adj_matrix = batch_dict["spatial_adj_matrix_share3"]
-                elif mix_type == "share5":
-                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_share5"]
                 elif mix_type == "quad4":
                     spatial_adj_matrix = batch_dict["spatial_adj_matrix_quad4"]
                 else:
                     spatial_adj_matrix = batch_dict["spatial_adj_matrix"]
                 layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
+            elif layer_type == "t1":
+                layer_module = next(top1_iter)
+                layer_outputs = layer_module(hidden_states, attention_mask, 20)
+            elif layer_type == "t3":
+                layer_module = next(top3_iter)
+                layer_outputs = layer_module(hidden_states, attention_mask, 60)
             else:
                 raise ValueError
             hidden_states = layer_outputs[0]

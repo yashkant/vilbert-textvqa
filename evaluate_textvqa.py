@@ -110,6 +110,10 @@ def parse_args():
         "--split", default="val", type=str, help="Which split do you want to evaluate"
     )
 
+    parser.add_argument(
+        "--use_share2", default=False, type=bool, help="Which split do you want to evaluate"
+    )
+
     command_args = parser.parse_args()
 
     # if default value is going to change, add those in command line arguments.
@@ -120,7 +124,7 @@ def parse_args():
         'do_lower_case': True,
         'in_memory': True,
         'gradient_accumulation_steps': 1,
-        'num_workers': 0,
+        'num_workers': 8,
         'local_rank': -1,
         'clean_train_sets': False,
         'num_train_epochs': 100,
@@ -151,6 +155,12 @@ def load_model():
     elif model_type == "m4c_spatial":
         logger.info("Using M4C-Spatial model")
         from vilbert.m4c_spatial import BertConfig, M4C
+    elif model_type == "m4c_topk":
+        logger.info("Using M4C-Topk model")
+        from vilbert.m4c_topk import BertConfig, M4C
+    elif model_type == "m4c_topk_20x":
+        logger.info("Using M4C-Topk model")
+        from vilbert.m4c_topk_20x import BertConfig, M4C
     elif model_type == "m4c_spatial_que_cond":
         logger.info("Using M4C-Spatial Question Cond. model")
         from vilbert.m4c_spatial_que_cond import BertConfig, M4C
@@ -286,7 +296,7 @@ def evaluate(
             sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
             sys.stdout.flush()
 
-            if args.short_eval and i == 3:
+            if args.short_eval and i == 1:
                 break
 
     return predictions
@@ -301,7 +311,6 @@ def vqa_calculate(batch_dict):
 
     predictions = []
 
-    # TODO: This is a single list - remove for loop
     for idx, question_id in enumerate([batch_dict["question_id"]]):
         context_tokens = ocr_tokens_enc[idx]
         answer_words = []
@@ -381,7 +390,12 @@ def anls_calculate(batch_dict):
             "topkscores": topkscores
         })
 
-    accuracy, pred_scores = anls_evaluator.eval_pred_list(predictions)
+    try:
+        accuracy, pred_scores = anls_evaluator.eval_pred_list(predictions)
+    except:
+        import pdb
+        pdb.set_trace()
+
     return {
         'question_id': predictions[0]['question_id'],
         'accuracy': accuracy,
@@ -457,7 +471,11 @@ def main():
     registry['vocab'] = vocab
 
     # Load Dataset
-    return_tuple = LoadDatasets(args, task_cfg, args.tasks.split("-"), split=args.split, only_val=True)
+    return_tuple = LoadDatasets(args, task_cfg, args.tasks.split("-"),
+                                split=args.split,
+                                only_val=True,
+                                test_val_bs=64,
+                                test_val_workers=8)
 
     if "test" in args.split:
         (
@@ -480,7 +498,7 @@ def main():
             task_datasets_val,
             task_dataloader_train,
             task_dataloader_val
-        ) = tuple
+        ) = return_tuple
 
     task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
 
@@ -494,8 +512,6 @@ def main():
     # pd.to_pickle(stvqa_eval_df, eval_df_path_stvqa)
     # pd.to_pickle(stvqa_eval_df_test, eval_df_path_stvqa_test)
 
-    import pdb
-    pdb.set_trace()
 
     if task_cfg["TASK19"]["val_on"][0] == "textvqa":
         path = eval_df_path_tvqa
@@ -516,13 +532,13 @@ def main():
 
     for split in ["test", "val"]:
 
+        if split not in args.split:
+            continue
+
         if "test" in split:
             dataloader = task_dataloader_test
         elif "val" in split:
             dataloader = task_dataloader_val
-
-        import pdb
-        pdb.set_trace()
 
         logger.info(f"Processing split: {split}")
         if split in args.split:
@@ -537,36 +553,44 @@ def main():
                 model,
                 task_losses
             )
+
             curr_score['complete_seqs'] = np.concatenate(
                 [x.reshape(-1, 12) for x in curr_score['complete_seqs']], axis=0
             ).tolist()
             curr_score['topkscores'] = np.concatenate(curr_score['topkscores'], axis=0).tolist()
             curr_score['question_id'] = np.concatenate(curr_score['question_id'], axis=0).tolist()
 
+            if 'answers' not in eval_df:
+                eval_df["answers"] = [["none"]*10]*len((eval_df["question_id"]))
+
             # Compute VQA Accuracies
             results_df = pd.DataFrame.from_dict(curr_score, orient='columns')
 
             # Get both type of accuracies!
             accuracies = evaluate_predictions(eval_df, results_df, acc_type="vqa")
-            logger.info(
-                "{} Accuracy: {} for {} questions, split {}, dataset {}".format(
-                    "vqa",
-                    accuracies['vqa_accuracy'],
-                    accuracies['accuracies_df'].shape,
-                    args.split,
-                    task_cfg["TASK19"]["val_on"][0])
-            )
 
-            accuracies = evaluate_predictions(eval_df, results_df, acc_type="anls")
-            logger.info(
-                "{} Accuracy: {} for {} questions, split {}, dataset {}".format(
-                    "anls",
-                    accuracies['vqa_accuracy'],
-                    accuracies['accuracies_df'].shape,
-                    args.split,
-                    task_cfg["TASK19"]["val_on"][0])
-            )
-            evalai_file = os.path.join(os.path.dirname(args.model_ckpt),'{}_evalai_beam_{}.json'.format(split, args.beam_size))
+            if "test" not in split:
+                logger.info(
+                    "{} Accuracy: {} for {} questions, split {}, dataset {}".format(
+                        "vqa",
+                        accuracies['vqa_accuracy'],
+                        accuracies['accuracies_df'].shape,
+                        args.split,
+                        task_cfg["TASK19"]["val_on"][0])
+                )
+
+                accuracies = evaluate_predictions(eval_df, results_df, acc_type="anls")
+                logger.info(
+                    "{} Accuracy: {} for {} questions, split {}, dataset {}".format(
+                        "anls",
+                        accuracies['vqa_accuracy'],
+                        accuracies['accuracies_df'].shape,
+                        args.split,
+                        task_cfg["TASK19"]["val_on"][0])
+                )
+
+            evalai_file = os.path.join(os.path.dirname(args.model_ckpt),'{}_evalai_beam_{}_short_eval_{}_share2_{}.json'.
+                                       format(split, args.beam_size, args.short_eval, args.use_share2))
 
             # EvalAI/ST-VQA file
             answer_dict = []
@@ -575,15 +599,14 @@ def main():
                     'question_id': pred['question_id'],
                     'answer': pred['pred_answer'].strip()
                 })
-
             with open(evalai_file, 'w') as f:
                 json.dump(answer_dict, f)
-
             print(f"Dumping file: {evalai_file}")
 
 if __name__ == "__main__":
-    try:
-        main()
-    finally:
-        import pdb
-        pdb.set_trace()
+    main()
+    # try:
+    #     main()
+    # finally:
+    #     import pdb
+    #     pdb.set_trace()

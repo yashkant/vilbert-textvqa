@@ -444,7 +444,7 @@ class SpatialBertSelfAttention(nn.Module):
     Todo: Keep 768 and build zero-mask for 12th head (not needed with identity relation)
     """
 
-    def __init__(self, config, use_implicit=False):
+    def __init__(self, config, use_implicit=False, use_regat=False):
         super(SpatialBertSelfAttention, self).__init__()
         assert hasattr(config, "num_spatial_relations")
 
@@ -484,6 +484,12 @@ class SpatialBertSelfAttention(nn.Module):
             self.use_bias = True
             logger.info("using head biases")
             self.biases = torch.nn.Embedding(1, config.hidden_size)
+
+        self.use_regat = use_regat
+        if self.use_regat:
+            self.regat_attention_bias = nn.Embedding(12, 1)
+            self.regat_value_bias = nn.Embedding(12, config.hidden_size)
+
 
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
@@ -556,9 +562,14 @@ class SpatialBertSelfAttention(nn.Module):
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
 
-        # Prevent imbalanced masking
-        combined_mask = torch.min(attention_mask, spatial_attention_mask)
-        assert len(torch.unique(combined_mask)) == 2
+        if not self.use_regat:
+            # Prevent imbalanced masking
+            combined_mask = torch.min(attention_mask, spatial_attention_mask)
+            assert len(torch.unique(combined_mask)) == 2
+        else:
+            # no spatial masking
+            combined_mask = attention_mask
+
 
         # for entities that are totally masked
         entity_probs_mask = (combined_mask.max(dim=-1)[0] + 10000.0)/10000.0
@@ -566,6 +577,13 @@ class SpatialBertSelfAttention(nn.Module):
 
         # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
         attention_scores = attention_scores + combined_mask
+
+        if self.use_regat:
+            adj_matrix = spatial_adj_matrix.argmax(dim=-1) * spatial_adj_matrix.sum(dim=-1)
+            attention_bias = self.regat_attention_bias(adj_matrix)
+            attention_scores[:, self.max_seq_len:self.max_seq_len + ocr_obj_num,
+                self.max_seq_len:self.max_seq_len + ocr_obj_num, :] += attention_bias
+
 
         # Normalize the attention scores to probabilities.
         attention_probs = nn.Softmax(dim=-1)(attention_scores)
@@ -581,7 +599,15 @@ class SpatialBertSelfAttention(nn.Module):
         if head_mask is not None:
             attention_probs = attention_probs * head_mask
 
+        if self.use_regat:
+            # Modify value_layer
+            import pdb
+            pdb.set_trace()
+
         context_layer = torch.matmul(attention_probs, value_layer)
+
+
+
 
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
@@ -595,9 +621,9 @@ class SpatialBertSelfAttention(nn.Module):
 
 
 class SpatialBertAttention(nn.Module):
-    def __init__(self, config, use_implicit=False):
+    def __init__(self, config, use_implicit=False, use_regat):
         super(SpatialBertAttention, self).__init__()
-        self.self = SpatialBertSelfAttention(config, use_implicit)
+        self.self = SpatialBertSelfAttention(config, use_implicit, use_regat)
         from pytorch_transformers.modeling_bert import BertSelfOutput
         self.output = BertSelfOutput(config)
         self.pruned_heads = set()
@@ -633,10 +659,10 @@ class SpatialBertAttention(nn.Module):
 
 
 class SpatialBertLayer(nn.Module):
-    def __init__(self, config, use_implicit=False):
+    def __init__(self, config, use_implicit=False, use_regat=False):
         super(SpatialBertLayer, self).__init__()
         from pytorch_transformers.modeling_bert import BertIntermediate, BertOutput
-        self.attention = SpatialBertAttention(config, use_implicit)
+        self.attention = SpatialBertAttention(config, use_implicit, use_regat)
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
 
@@ -682,10 +708,12 @@ class BertSpatialEncoder(nn.Module):
         self.num_spatial_layers = counter["s"]
         self.num_normal_layers = counter["n"]
         self.num_implicit_layers = counter["i"]
+        self.num_regat_layers = counter["r"]
 
         logger.info(f"Num Spatial Layers: {self.num_spatial_layers}")
         logger.info(f"Num Normal Layers: {self.num_normal_layers}")
         logger.info(f"Num Implicit Layers: {self.num_implicit_layers}")
+        logger.info(f"Num Implicit Layers: {self.num_regat_layers}")
 
         if config.mix_list is None:
             self.mix_list = ["none"]*len(self.layer_type_list)
@@ -697,6 +725,7 @@ class BertSpatialEncoder(nn.Module):
         self.normal_layers = nn.ModuleList([BertLayer(config) for _ in range(self.num_normal_layers)])
         self.spatial_layers = nn.ModuleList([SpatialBertLayer(config) for _ in range(self.num_spatial_layers)])
         self.implicit_layers = nn.ModuleList([SpatialBertLayer(config, True) for _ in range(self.num_implicit_layers)])
+        self.regat_layers = nn.ModuleList([SpatialBertLayer(config, False, True) for _ in range(self.num_regat_layers)])
 
     def forward(self, hidden_states, attention_mask, batch_dict, head_mask=None):
         all_hidden_states = ()
@@ -705,6 +734,7 @@ class BertSpatialEncoder(nn.Module):
         normal_iter = iter(self.normal_layers)
         spatial_iter = iter(self.spatial_layers)
         implicit_iter = iter(self.implicit_layers)
+        regat_iter = iter(self.regat_layers)
 
         for layer_type, mix_type in zip(self.layer_type_list, self.mix_list):
             if self.output_hidden_states:
@@ -714,6 +744,17 @@ class BertSpatialEncoder(nn.Module):
                 layer_outputs = layer_module(hidden_states, attention_mask)
             elif layer_type == "s":
                 layer_module = next(spatial_iter)
+                if mix_type == "share3":
+                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_share3"]
+                elif mix_type == "quad4":
+                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_quad4"]
+                elif mix_type == "share5":
+                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_share5"]
+                else:
+                    spatial_adj_matrix = batch_dict["spatial_adj_matrix"]
+                layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
+            elif layer_type == "r":
+                layer_module = next(regat_iter)
                 if mix_type == "share3":
                     spatial_adj_matrix = batch_dict["spatial_adj_matrix_share3"]
                 elif mix_type == "quad4":

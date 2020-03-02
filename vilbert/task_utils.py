@@ -313,7 +313,7 @@ def LoadLosses(args, task_cfg, task_ids):
     return losses
 
 
-def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False):
+def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val_bs=32, test_val_workers=2):
     if "roberta" in args.bert_model:
         tokenizer = RobertaTokenizer.from_pretrained(
             args.bert_model, do_lower_case=args.do_lower_case
@@ -446,17 +446,17 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False):
         task_dataloader_val[task] = DataLoader(
             task_datasets_val[task],
             shuffle=False,
-            batch_size=32,
-            num_workers=2,
+            batch_size=test_val_bs,
+            num_workers=test_val_workers,
             pin_memory=True,
         )
 
     if "test" in split:
         task_dataloader_test[task] = DataLoader(
-            task_datasets_val[task],
+            task_datasets_test[task],
             shuffle=False,
-            batch_size=32,
-            num_workers=2,
+            batch_size=test_val_bs,
+            num_workers=test_val_workers,
             pin_memory=True,
         )
         return (

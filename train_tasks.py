@@ -271,6 +271,9 @@ def main():
     elif model_type == "m4c_topk":
         logger.info("Using M4C-Topk model")
         from vilbert.m4c_topk import BertConfig, M4C
+    elif model_type == "m4c_topk_20x":
+        logger.info("Using M4C-Topk model")
+        from vilbert.m4c_topk_20x import BertConfig, M4C
     elif model_type == "m4c_spatial_que_cond":
         logger.info("Using M4C-Spatial Question Cond. model")
         from vilbert.m4c_spatial_que_cond import BertConfig, M4C

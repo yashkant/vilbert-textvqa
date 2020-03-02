@@ -171,7 +171,7 @@ class STVQADataset(TextVQADataset):
 
         if self.heads_type != "none":
             cache_path = cache_path.split(".")[0]
-            cache_path = cache_path + f"_heads_new" + ".pkl"
+            cache_path = cache_path + f"_heads_new_share5" + ".pkl"
 
         if self.randomize > 0:
             cache_path = cache_path.split(".")[0]

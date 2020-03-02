@@ -167,7 +167,7 @@ class TextVQADataset(Dataset):
 
         if self.heads_type != "none":
             cache_path = cache_path.split(".")[0]
-            cache_path = cache_path + f"_heads_new" + ".pkl"
+            cache_path = cache_path + f"_heads_new_share5" + ".pkl"
 
         if self.randomize > 0:
             cache_path = cache_path.split(".")[0]
@@ -222,10 +222,12 @@ class TextVQADataset(Dataset):
         sp_pool.join()
         logger.info(f"Done Processsing Quadrant Spatial Relations with {self.processing_threads} threads")
         assert len(result_list) == len(mp_input)
-        for entry, (quad4, share3_1, share3_2) in zip(self.entries, result_list):
+        for entry, (quad4, share3_1, share3_2, share5_1, share5_2) in zip(self.entries, result_list):
             entry["spatial_adj_matrix_quad4"] = quad4
             entry["spatial_adj_matrix_share3_1"] = share3_1
             entry["spatial_adj_matrix_share3_2"] = share3_2
+            entry["spatial_adj_matrix_share5_1"] = share5_1
+            entry["spatial_adj_matrix_share5_2"] = share5_2
 
     def process(self):
         # Fill the boxes from readers
@@ -321,30 +323,47 @@ class TextVQADataset(Dataset):
             replace_dict[quad] = quad + 1
             replace_dict[quad + 1] = quad
 
-        spatial_adj_matrix_share3_1_replace_dict = {}
+        next_replace_dict = {}
         for quad in [4, 5, 6, 7, 8, 9, 10]:
-            spatial_adj_matrix_share3_1_replace_dict[quad] = quad + 1
-        spatial_adj_matrix_share3_1_replace_dict[11] = 4
+            next_replace_dict[quad] = quad + 1
+        next_replace_dict[11] = 4
 
-        spatial_adj_matrix_share3_2_replace_dict = {}
+        prev_replace_dict = {}
         for quad in [5, 6, 7, 8, 9, 10, 11]:
-            spatial_adj_matrix_share3_2_replace_dict[quad] = quad - 1
-        spatial_adj_matrix_share3_2_replace_dict[4] = 11
+            prev_replace_dict[quad] = quad - 1
+        prev_replace_dict[4] = 11
 
         spatial_adj_matrix_quad4 = np.copy(spatial_adj_matrix) * 0
         spatial_adj_matrix_share3_1 = np.copy(spatial_adj_matrix) * 0
         spatial_adj_matrix_share3_2 = np.copy(spatial_adj_matrix) * 0
+
+        spatial_adj_matrix_share5_1 = np.copy(spatial_adj_matrix) * 0
+        spatial_adj_matrix_share5_2 = np.copy(spatial_adj_matrix) * 0
 
         assert len(spatial_adj_matrix.shape) == 2
         rows, cols = spatial_adj_matrix.shape
         for row in range(rows):
             for col in range(cols):
                 spatial_adj_matrix_quad4[row][col] = replace_dict.get(spatial_adj_matrix[row][col], 0)
-                spatial_adj_matrix_share3_1[row][col] = spatial_adj_matrix_share3_1_replace_dict.get(
+
+                spatial_adj_matrix_share3_1[row][col] = next_replace_dict.get(
                     spatial_adj_matrix[row][col], 0)
-                spatial_adj_matrix_share3_2[row][col] = spatial_adj_matrix_share3_2_replace_dict.get(
+
+                spatial_adj_matrix_share3_2[row][col] = prev_replace_dict.get(
                     spatial_adj_matrix[row][col], 0)
-        return spatial_adj_matrix_quad4, spatial_adj_matrix_share3_1, spatial_adj_matrix_share3_2
+
+                spatial_adj_matrix_share5_1[row][col] = next_replace_dict.get(
+                    spatial_adj_matrix_share3_1[row][col], 0)
+
+                spatial_adj_matrix_share5_2[row][col] = prev_replace_dict.get(
+                    spatial_adj_matrix_share3_2[row][col], 0)
+
+        return (spatial_adj_matrix_quad4,
+                spatial_adj_matrix_share3_1,
+                spatial_adj_matrix_share3_2,
+                spatial_adj_matrix_share5_1,
+                spatial_adj_matrix_share5_2
+                )
 
     def __len__(self):
         return len(self.entries)
@@ -430,7 +449,9 @@ class TextVQADataset(Dataset):
                 "context_tokens": cleaned_ocr_tokens,
             })
             entry.update(processed_answers)
-
+        else:
+            # Empty placeholder
+            entry["train_prev_inds"] = torch.zeros(12, dtype=torch.long)
 
         if self.heads_type in ["mix", "share3", "quad4"] or self.randomize > 0 or "spatial_adj_matrix" in entry:
             # In the first iteration expand all the spatial relation matrices
@@ -465,25 +486,25 @@ class TextVQADataset(Dataset):
                         label_num=12
                     )
 
-                if self.heads_type == "quad4":
-                    spatial_adj_matrix_quad4 = torch_broadcast_adj_matrix(
-                        torch.from_numpy(entry["spatial_adj_matrix_quad4"]),
-                        label_num=12
-                    )
-                    entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_quad4)
-
-                if self.heads_type == "share3":
-                    spatial_adj_matrix_share3_1 = torch_broadcast_adj_matrix(
-                        torch.from_numpy(entry["spatial_adj_matrix_share3_1"]),
-                        label_num=12
-                    )
-
-                    spatial_adj_matrix_share3_2 = torch_broadcast_adj_matrix(
-                        torch.from_numpy(entry["spatial_adj_matrix_share3_2"]),
-                        label_num=12
-                    )
-                    entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_1)
-                    entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_2)
+                # if self.heads_type == "quad4":
+                #     spatial_adj_matrix_quad4 = torch_broadcast_adj_matrix(
+                #         torch.from_numpy(entry["spatial_adj_matrix_quad4"]),
+                #         label_num=12
+                #     )
+                #     entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_quad4)
+                #
+                # if self.heads_type == "share3":
+                #     spatial_adj_matrix_share3_1 = torch_broadcast_adj_matrix(
+                #         torch.from_numpy(entry["spatial_adj_matrix_share3_1"]),
+                #         label_num=12
+                #     )
+                #
+                #     spatial_adj_matrix_share3_2 = torch_broadcast_adj_matrix(
+                #         torch.from_numpy(entry["spatial_adj_matrix_share3_2"]),
+                #         label_num=12
+                #     )
+                #     entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_1)
+                #     entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_2)
 
                 if self.heads_type == "mix":
                     spatial_adj_matrix_quad4 = torch_broadcast_adj_matrix(
@@ -500,10 +521,28 @@ class TextVQADataset(Dataset):
                         torch.from_numpy(entry["spatial_adj_matrix_share3_2"]),
                         label_num=12
                     )
+
                     entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"],
                                                                    spatial_adj_matrix_share3_1)
-                    entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"],
+                    entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix_share3"],
                                                                    spatial_adj_matrix_share3_2)
+
+                    if registry.args["use_share2"]:
+                        entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"],
+                                                                       spatial_adj_matrix_share3_2)
+
+                    spatial_adj_matrix_share5_1 = torch_broadcast_adj_matrix(
+                        torch.from_numpy(entry["spatial_adj_matrix_share5_1"]),
+                        label_num=12
+                    )
+                    spatial_adj_matrix_share5_2 = torch_broadcast_adj_matrix(
+                        torch.from_numpy(entry["spatial_adj_matrix_share5_2"]),
+                        label_num=12
+                    )
+                    entry["spatial_adj_matrix_share5"] = torch.max(entry["spatial_adj_matrix_share3"],
+                                                                   spatial_adj_matrix_share5_1)
+                    entry["spatial_adj_matrix_share5"] = torch.max(entry["spatial_adj_matrix_share5"],
+                                                                   spatial_adj_matrix_share5_2)
             else:
                 try:
                     assert len(entry["spatial_adj_matrix"].shape) == 3
@@ -517,6 +556,8 @@ class TextVQADataset(Dataset):
         # remove unwanted keys
         unwanted_keys = ['spatial_adj_matrix_share3_1',
                          'spatial_adj_matrix_share3_2',
+                         'spatial_adj_matrix_share5_1',
+                         'spatial_adj_matrix_share5_2',
                          'cleaned_ocr_tokens',
                          'image_id',
                          'image_path']
