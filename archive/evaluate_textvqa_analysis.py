@@ -166,12 +166,6 @@ def load_model():
     elif model_type == "m4c_topk_20x":
         logger.info("Using M4C-Topk model")
         from vilbert.m4c_topk_20x import BertConfig, M4C
-    elif model_type == "m4c_regat":
-        logger.info("Using M4C-Regat model")
-        from vilbert.m4c_regat import BertConfig, M4C
-    elif model_type == "m4c_regat_spatial":
-        logger.info("Using M4C-Regat_spatial model")
-        from vilbert.m4c_regat_spatial import BertConfig, M4C
     elif model_type == "m4c_spatial_que_cond":
         logger.info("Using M4C-Spatial Question Cond. model")
         from vilbert.m4c_spatial_que_cond import BertConfig, M4C
@@ -527,7 +521,7 @@ def main():
     # pd.to_pickle(stvqa_eval_df_test, eval_df_path_stvqa_test)
 
 
-    if task_cfg["TASK19"]["val_on"][0] == "textvqa":
+    if "textvqa" in task_cfg["TASK19"]["val_on"][0]:
         vocab_path = vocab_paths["textvqa"]
         path = eval_df_path_tvqa
         if args.split == "test":
@@ -618,13 +612,8 @@ def main():
                         task_cfg["TASK19"]["val_on"][0])
                 )
 
-            evalai_file = os.path.join(os.path.dirname(args.model_ckpt),'run2_{}_evalai_beam_{}_short_eval_{}_share2_{}.json'.
+            evalai_file = os.path.join(os.path.dirname(args.model_ckpt),'reverse_{}_evalai_beam_{}_short_eval_{}_share2_{}.json'.
                                        format(split, args.beam_size, args.short_eval, args.use_share2))
-            df_file = os.path.join(os.path.dirname(args.model_ckpt),'run2_{}_evalai_beam_{}_short_eval_{}_share2_{}.df'.
-                                       format(split, args.beam_size, args.short_eval, args.use_share2))
-
-            # Accuracies DF
-            accuracies['accuracies_df'].to_json(df_file)
 
             # EvalAI/ST-VQA file
             answer_dict = []

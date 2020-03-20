@@ -17,8 +17,8 @@ TASK19:
 
   # STVQA
   ocrvqa_dataroot: datasets/ocrvqa
-  ocrvqa_features_h5path1: "/srv/share/ykant3/ocr-vqa/features/lmdbs/ocrvqa.lmdb" # object features
-  ocrvqa_features_h5path2: "/srv/share/ykant3/ocr-vqa/features/lmdbs/ocrvqa_ocr.lmdb" # ocr features
+  ocrvqa_features_h5path1: "/srv/testing/ykant3/ocrvqa.lmdb" # object features
+  ocrvqa_features_h5path2: "/srv/testing/ykant3/ocrvqa_ocr.lmdb" # ocr features
 
   max_seq_length: 20
   max_obj_num: 100 # object features + avg feature

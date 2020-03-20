@@ -580,9 +580,8 @@ class SpatialBertSelfAttention(nn.Module):
 
         if self.use_regat:
             adj_matrix = spatial_adj_matrix.argmax(dim=-1) * spatial_adj_matrix.sum(dim=-1)
-            attention_bias = self.regat_attention_bias(adj_matrix)
-            attention_scores[:, self.max_seq_len:self.max_seq_len + ocr_obj_num,
-                self.max_seq_len:self.max_seq_len + ocr_obj_num, :] += attention_bias
+            attention_bias = self.regat_attention_bias(adj_matrix).squeeze(-1).unsqueeze(1)
+            attention_scores[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num, self.max_seq_len:self.max_seq_len + ocr_obj_num] += attention_bias
 
 
         # Normalize the attention scores to probabilities.
@@ -599,20 +598,35 @@ class SpatialBertSelfAttention(nn.Module):
         if head_mask is not None:
             attention_probs = attention_probs * head_mask
 
-        if self.use_regat:
-            # Modify value_layer
-            import pdb
-            pdb.set_trace()
-
+        # if self.use_regat:
+        #     # value_bias = self.regat_value_bias(adj_matrix)
+        #     # new_value_bias_shape = value_bias.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
+        #     # value_bias = value_bias.view(*new_value_bias_shape).permute(0, 3, 1, 2, 4)
+        #     # expanded_value_layer = value_layer.unsqueeze(-2).repeat(1,1,1,182,1)
+        #     # import pdb
+        #     # pdb.set_trace()
+        #     # # expanded_value_layer = value_layer.unsqueeze(-2).expand(1,1,1,182,1)
+        #     # expanded_value_layer[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num, self.max_seq_len:self.max_seq_len + ocr_obj_num] += value_bias
+        #     # expanded_attention_probs = attention_probs.unsqueeze(-1).expand_as(expanded_value_layer)
+        #     # context_layer = expanded_attention_probs*expanded_value_layer
+        #     # context_layer = context_layer.sum(dim=-2)
+        #
+        #     adj_matrix = spatial_adj_matrix.argmax(dim=-1) * spatial_adj_matrix.sum(dim=-1)
+        #     context_layer = torch.zeros_like(value_layer)
+        #     for idx in range(150):
+        #         _attention_probs = attention_probs[:, :, idx, :]
+        #         value_bias = self.regat_value_bias(adj_matrix[:, idx, :])
+        #         value_bias = self.transpose_for_scores(value_bias)
+        #         value_bias_holder = torch.zeros_like(value_layer)
+        #         value_bias_holder[:, :, 20:170, :] += value_bias
+        #         context_layer[:, :, idx, :] = (_attention_probs.unsqueeze(-1).expand_as(value_layer)*(value_layer + value_bias_holder)).sum(dim=-2)
+        # else:
         context_layer = torch.matmul(attention_probs, value_layer)
-
-
-
 
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
         context_layer = context_layer.view(*new_context_layer_shape)
-        
+
         if self.use_bias:
             context_layer = context_layer + self.biases(context_layer.new_zeros(1).long())
 
@@ -621,7 +635,7 @@ class SpatialBertSelfAttention(nn.Module):
 
 
 class SpatialBertAttention(nn.Module):
-    def __init__(self, config, use_implicit=False, use_regat):
+    def __init__(self, config, use_implicit=False, use_regat=False):
         super(SpatialBertAttention, self).__init__()
         self.self = SpatialBertSelfAttention(config, use_implicit, use_regat)
         from pytorch_transformers.modeling_bert import BertSelfOutput

@@ -51,14 +51,14 @@ def main():
         default="bert-base-uncased",
         type=str,
         help="Bert pre-trained model selected in the list: bert-base-uncased, "
-             "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.",
+        "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.",
     )
     parser.add_argument(
         "--from_pretrained",
         default="bert-base-uncased",
         type=str,
         help="Bert pre-trained model selected in the list: bert-base-uncased, "
-             "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.",
+        "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.",
     )
     parser.add_argument(
         "--output_dir",
@@ -95,7 +95,7 @@ def main():
         default=0.1,
         type=float,
         help="Proportion of training to perform linear learning rate warmup for. "
-             "E.g., 0.1 = 10%% of training.",
+        "E.g., 0.1 = 10%% of training.",
     )
     parser.add_argument(
         "--no_cuda", action="store_true", help="Whether not to use CUDA when available"
@@ -131,8 +131,8 @@ def main():
         type=float,
         default=0,
         help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
-             "0 (default value): dynamic loss scaling.\n"
-             "Positive power of 2: static loss scaling value.\n",
+        "0 (default value): dynamic loss scaling.\n"
+        "Positive power of 2: static loss scaling value.\n",
     )
     parser.add_argument(
         "--num_workers",
@@ -222,14 +222,6 @@ def main():
         "--from_scratch", action="store_true", help="Initialize ViLBERT weights from scratch/ does it make"
                                                     "what about question encodings!?")
 
-    parser.add_argument(
-        "--only_eval", action="store_true", help="Initialize ViLBERT weights from scratch/ does it make"
-                                                 "what about question encodings!?")
-
-    parser.add_argument(
-        "--use_share2", action="store_true", help="Initialize ViLBERT weights from scratch/ does it make"
-                                                 "what about question encodings!?")
-
     args = parser.parse_args()
     with open(args.task_file, "r") as f:
         task_cfg = edict(yaml.safe_load(f))
@@ -246,30 +238,6 @@ def main():
     logger.info(f"Using seed: {seed}")
 
     model_type = task_cfg["TASK19"]["model_type"] if args.model_type is None else args.model_type
-
-    task_names = []
-    task_lr = []
-    for i, task_id in enumerate(args.tasks.split("-")):
-        task = "TASK" + task_id
-        name = task_cfg[task]["name"]
-        task_names.append(name)
-        task_lr.append(task_cfg[task]["lr"])
-
-    if args.only_eval:
-        if args.save_name:
-            prefix = "-" + args.save_name
-        else:
-            prefix = ""
-        timeStamp = (
-                "-".join(task_names)
-                + "_"
-                + args.config_file.split("/")[1].split(".")[0]
-                + prefix
-                + f"-{args.tag}"
-        )
-        savePath = os.path.join(args.output_dir, timeStamp)
-        output_checkpoint_path = os.path.join(savePath, "pytorch_ckpt_latest.tar")
-        return args.task_file, output_checkpoint_path, args.use_share2
 
     if args.baseline:
         from pytorch_transformers.modeling_bert import BertConfig
@@ -306,18 +274,19 @@ def main():
     elif model_type == "m4c_topk_20x":
         logger.info("Using M4C-Topk model")
         from vilbert.m4c_topk_20x import BertConfig, M4C
-    elif model_type == "m4c_regat":
-        logger.info("Using M4C-Regat model")
-        from vilbert.m4c_regat import BertConfig, M4C
-    elif model_type == "m4c_regat_spatial":
-        logger.info("Using M4C-Regat_spatial model")
-        from vilbert.m4c_regat_spatial import BertConfig, M4C
     elif model_type == "m4c_spatial_que_cond":
         logger.info("Using M4C-Spatial Question Cond. model")
         from vilbert.m4c_spatial_que_cond import BertConfig, M4C
     else:
         raise ValueError
 
+    task_names = []
+    task_lr = []
+    for i, task_id in enumerate(args.tasks.split("-")):
+        task = "TASK" + task_id
+        name = task_cfg[task]["name"]
+        task_names.append(name)
+        task_lr.append(task_cfg[task]["lr"])
 
     base_lr = min(task_lr)
     loss_scale = {}
@@ -330,11 +299,11 @@ def main():
     else:
         prefix = ""
     timeStamp = (
-            "-".join(task_names)
-            + "_"
-            + args.config_file.split("/")[1].split(".")[0]
-            + prefix
-            + f"-{args.tag}"
+        "-".join(task_names)
+        + "_"
+        + args.config_file.split("/")[1].split(".")[0]
+        + prefix
+        + f"-{args.tag}"
     )
     savePath = os.path.join(args.output_dir, timeStamp)
 
@@ -384,8 +353,17 @@ def main():
             print(config, file=f)
 
     # LOAD DATASETS
-    task_batch_size, task_num_iters, task_ids, task_datasets_train, task_datasets_val, task_dataloader_train, \
-    task_dataloader_val = LoadDatasets(args, task_cfg, args.tasks.split("-"), test_val_workers=16, test_val_bs=64)
+    (
+        task_batch_size,
+        task_num_iters,
+        task_ids,
+        task_datasets_train,
+        task_datasets_val,
+        task_datasets_test,
+        task_dataloader_train,
+        task_dataloader_val,
+        task_dataloader_test,
+    ) = LoadDatasets(args, task_cfg, args.tasks.split("-"), split="test", only_val=True, test_val_workers=8)
 
     logdir = os.path.join(savePath, "logs")
     tbLogger = utils.tbLogger(
@@ -423,7 +401,7 @@ def main():
     task_ave_iter_list = sorted(task_ave_iter.values())
     median_num_iter = task_ave_iter_list[-1]
     num_train_optimization_steps = (
-            median_num_iter * args.num_train_epochs // args.gradient_accumulation_steps
+        median_num_iter * args.num_train_epochs // args.gradient_accumulation_steps
     )
 
     # LOAD PRETRAINED VILBERT
@@ -445,7 +423,7 @@ def main():
                     default_gpu=default_gpu,
                 )
             else:
-                if model_type in ["m4c_spatial", "m4c_topk", "m4c_regat", "m4c_regat_spatial"]:
+                if "m4c_spatial" in model_type or "m4c_topk" in model_type:
                     if "m4c_spatial" in model_type:
                         assert "attention_mask_quadrants" in task_cfg["TASK19"]
                     # assert "spatial_type" in task_cfg["TASK19"]
@@ -475,7 +453,7 @@ def main():
                     config_dict = json.load(file)
 
                 # Adding blank keys that could be dynamically replaced later
-                config_dict["layer_type_list"] = None   
+                config_dict["layer_type_list"] = None
                 config_dict["mix_list"] = None
 
                 # Always use beam-size 1 for training
@@ -498,8 +476,6 @@ def main():
                 default_gpu=default_gpu,
             )
 
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.info(f"Training Parameters: {trainable_params}")
     # LOAD LOSSES
     task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
 
@@ -600,65 +576,65 @@ def main():
             #             logger.info(f"Turning off Dataset: {dataset}")
             #             removed_idx.append(idx)
 
-            for task_id in task_ids:
-                is_forward = True
-                if is_forward:
-                    loss, score = ForwardModelsTrain(
-                        args,
-                        task_cfg,
-                        device,
-                        task_id,
-                        task_count,
-                        task_iter_train,
-                        task_dataloader_train,
-                        model,
-                        task_losses,
-                    )
-
-                    loss.backward()
-
-                    if task_cfg["TASK19"]["grad_clip_mode"] == "all":
-                        clip_gradients(model, task_cfg["TASK19"]["max_grad_norm"], task_cfg["TASK19"]["grad_clip_mode"])
-
-                    if (step + 1) % args.gradient_accumulation_steps == 0:
-                        optimizer.step()
-
-                        if first_task and (
-                                global_step < warmpu_steps
-                                or lr_scheduler_config == "warmup_linear"
-                                or lr_scheduler_config == "pythia_warmup_decay"
-                        ):
-                            warmup_scheduler.step()
-
-
-                        model.zero_grad()
-                        if first_task:
-                            global_step += 1
-                            first_task = False
-
-                        if default_gpu:
-                            tbLogger.step_train(
-                                epochId,
-                                iterId,
-                                float(loss),
-                                float(score),
-                                optimizer.param_groups[0]["lr"],
-                                task_id,
-                                "train",
-                            )
-
-            if "cosine" in lr_scheduler_config and global_step > warmpu_steps:
-                lr_scheduler.step()
-
-            if (
-                    step % (20 * args.gradient_accumulation_steps) == 0
-                    and step != 0
-                    and default_gpu
-            ):
-                tbLogger.showLossTrain()
-                if step % (100 * args.gradient_accumulation_steps) == 0:
-                    logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}")
-
+            # for task_id in task_ids:
+            #     is_forward = True
+            #     if is_forward:
+            #         loss, score = ForwardModelsTrain(
+            #             args,
+            #             task_cfg,
+            #             device,
+            #             task_id,
+            #             task_count,
+            #             task_iter_train,
+            #             task_dataloader_train,
+            #             model,
+            #             task_losses,
+            #         )
+            #
+            #         loss.backward()
+            #
+            #         if task_cfg["TASK19"]["grad_clip_mode"] == "all":
+            #             clip_gradients(model, task_cfg["TASK19"]["max_grad_norm"], task_cfg["TASK19"]["grad_clip_mode"])
+            #
+            #         if (step + 1) % args.gradient_accumulation_steps == 0:
+            #             optimizer.step()
+            #
+            #             if first_task and (
+            #                 global_step < warmpu_steps
+            #                 or lr_scheduler_config == "warmup_linear"
+            #                 or lr_scheduler_config == "pythia_warmup_decay"
+            #             ):
+            #                 warmup_scheduler.step()
+            #
+            #
+            #             model.zero_grad()
+            #             if first_task:
+            #                 global_step += 1
+            #                 first_task = False
+            #
+            #             if default_gpu:
+            #                 tbLogger.step_train(
+            #                     epochId,
+            #                     iterId,
+            #                     float(loss),
+            #                     float(score),
+            #                     optimizer.param_groups[0]["lr"],
+            #                     task_id,
+            #                     "train",
+            #                 )
+            #
+            # if "cosine" in lr_scheduler_config and global_step > warmpu_steps:
+            #     lr_scheduler.step()
+            #
+            # if (
+            #     step % (20 * args.gradient_accumulation_steps) == 0
+            #     and step != 0
+            #     and default_gpu
+            # ):
+            #     tbLogger.showLossTrain()
+            #     if step % (100 * args.gradient_accumulation_steps) == 0:
+            #         logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}")
+            #
             # decided whether to evaluate on each tasks.
             for task_id in task_ids:
                 # don't run validation during debug runs
@@ -666,11 +642,11 @@ def main():
                     break
 
                 if (iterId != 0 and iterId % task_num_iters[task_id] == 0) or (
-                        epochId == args.num_train_epochs - 1 and step == median_num_iter - 1
+                    epochId == args.num_train_epochs - 1 and step == median_num_iter - 1
                 ):
                     curr_val_score = evaluate(
                         args,
-                        task_dataloader_val,
+                        task_dataloader_test,
                         None,
                         task_cfg,
                         device,
@@ -682,35 +658,35 @@ def main():
                         tbLogger,
                     )
 
-                    if default_gpu and not task_cfg["TASK19"]["debug"]:
-                        # Save a trained model
-                        logger.info("** ** * Saving fine - tuned model ** ** * ")
-                        model_to_save = (
-                            model.module if hasattr(model, "module") else model
-                        )  # Only save the model it-self
-                        # output_model_file = os.path.join(
-                        #     savePath, "pytorch_model_" + str(epochId) + ".bin"
-                        # )
-                        # torch.save(model_to_save.state_dict(), output_model_file)
-                        if curr_val_score > best_val_score:
-                            output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
-                            logger.info(f"Saving Checkpoint: {output_checkpoint}")
-                            logger.info(
-                                f"Current Validation Score: {curr_val_score} | Previous Best Validation Score: {best_val_score}")
-                            best_val_score = curr_val_score
-                            torch.save(
-                                {
-                                    "model_state_dict": model_to_save.state_dict(),
-                                    "optimizer_state_dict": optimizer.state_dict(),
-                                    "warmup_scheduler_state_dict": warmup_scheduler.state_dict(),
-                                    # 'lr_scheduler_state_dict': lr_scheduler.state_dict(),
-                                    "global_step": global_step,
-                                    "epoch_id": epochId,
-                                    # "task_stop_controller": task_stop_controller,
-                                    "tb_logger": tbLogger,
-                                },
-                                output_checkpoint,
-                            )
+                    # if default_gpu and not task_cfg["TASK19"]["debug"]:
+                    #     # Save a trained model
+                    #     logger.info("** ** * Saving fine - tuned model ** ** * ")
+                    #     model_to_save = (
+                    #         model.module if hasattr(model, "module") else model
+                    #     )  # Only save the model it-self
+                    #     # output_model_file = os.path.join(
+                    #     #     savePath, "pytorch_model_" + str(epochId) + ".bin"
+                    #     # )
+                    #     # torch.save(model_to_save.state_dict(), output_model_file)
+                    #     if curr_val_score > best_val_score:
+                    #         output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
+                    #         logger.info(f"Saving Checkpoint: {output_checkpoint}")
+                    #         logger.info(
+                    #             f"Current Validation Score: {curr_val_score} | Previous Best Validation Score: {best_val_score}")
+                    #         best_val_score = curr_val_score
+                    #         torch.save(
+                    #             {
+                    #                 "model_state_dict": model_to_save.state_dict(),
+                    #                 "optimizer_state_dict": optimizer.state_dict(),
+                    #                 "warmup_scheduler_state_dict": warmup_scheduler.state_dict(),
+                    #                 # 'lr_scheduler_state_dict': lr_scheduler.state_dict(),
+                    #                 "global_step": global_step,
+                    #                 "epoch_id": epochId,
+                    #                 # "task_stop_controller": task_stop_controller,
+                    #                 "tb_logger": tbLogger,
+                    #             },
+                    #             output_checkpoint,
+                    #         )
 
         if lr_scheduler_config == "automatic":
             lr_scheduler.step(sum(val_scores.values()))
@@ -719,7 +695,6 @@ def main():
             lr_scheduler.step()
 
     tbLogger.txt_close()
-    return output_checkpoint, args.task_file, args.use_share2
 
 
 def evaluate(
@@ -735,18 +710,20 @@ def evaluate(
     default_gpu,
     tbLogger,
 ):
+    import pdb
+    pdb.set_trace()
 
     model.eval()
-    for i, batch in enumerate(task_dataloader_val[task_id]):
+    for batch in tqdm(task_dataloader_val[task_id]):
         loss, score, batch_size = ForwardModelsVal(
             args, task_cfg, device, task_id, batch, model, task_losses
         )
         tbLogger.step_val(
             epochId, float(loss), float(score), task_id, batch_size, "val"
         )
-        if default_gpu:
-            sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
-            sys.stdout.flush()
+        # if default_gpu:
+        #     sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
+        #     sys.stdout.flush()
 
     score = tbLogger.showLossVal(task_id, task_stop_controller=None)
     model.train()
@@ -755,19 +732,7 @@ def evaluate(
 
 if __name__ == "__main__":
     try:
-        task_file_path, output_checkpoint_path, use_share2 = main()
-        for beam_size in [1, 5]:
-            for split in ["val"]:
-                eval_command = f"python evaluate_textvqa.py " \
-                                f"--task_file {task_file_path} " \
-                                f"--config_file config/spatial_m4c_mmt_textvqa.json " \
-                                f"--batch_size 96 --split {split} " \
-                                f"--model_ckpt {output_checkpoint_path} " \
-                                f"--beam_size {beam_size} " + (f"--use_share2 {use_share2}" if use_share2 else "")
-                print("-"*20)
-                print(f"Eval Command: {eval_command}")
-                print("-"*20)
-                os.system(eval_command)
+        main()
     finally:
         import os
         os.system("watch -n 1 session-quit-error")

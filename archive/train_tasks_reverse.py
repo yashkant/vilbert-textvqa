@@ -309,9 +309,6 @@ def main():
     elif model_type == "m4c_regat":
         logger.info("Using M4C-Regat model")
         from vilbert.m4c_regat import BertConfig, M4C
-    elif model_type == "m4c_regat_spatial":
-        logger.info("Using M4C-Regat_spatial model")
-        from vilbert.m4c_regat_spatial import BertConfig, M4C
     elif model_type == "m4c_spatial_que_cond":
         logger.info("Using M4C-Spatial Question Cond. model")
         from vilbert.m4c_spatial_que_cond import BertConfig, M4C
@@ -385,7 +382,7 @@ def main():
 
     # LOAD DATASETS
     task_batch_size, task_num_iters, task_ids, task_datasets_train, task_datasets_val, task_dataloader_train, \
-    task_dataloader_val = LoadDatasets(args, task_cfg, args.tasks.split("-"), test_val_workers=16, test_val_bs=64)
+    task_dataloader_val = LoadDatasets(args, task_cfg, args.tasks.split("-"))
 
     logdir = os.path.join(savePath, "logs")
     tbLogger = utils.tbLogger(
@@ -445,7 +442,7 @@ def main():
                     default_gpu=default_gpu,
                 )
             else:
-                if model_type in ["m4c_spatial", "m4c_topk", "m4c_regat", "m4c_regat_spatial"]:
+                if "m4c_spatial" in model_type or "m4c_topk" or "m4c_regat" in model_type:
                     if "m4c_spatial" in model_type:
                         assert "attention_mask_quadrants" in task_cfg["TASK19"]
                     # assert "spatial_type" in task_cfg["TASK19"]
@@ -475,7 +472,7 @@ def main():
                     config_dict = json.load(file)
 
                 # Adding blank keys that could be dynamically replaced later
-                config_dict["layer_type_list"] = None   
+                config_dict["layer_type_list"] = None
                 config_dict["mix_list"] = None
 
                 # Always use beam-size 1 for training
@@ -498,8 +495,6 @@ def main():
                 default_gpu=default_gpu,
             )
 
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.info(f"Training Parameters: {trainable_params}")
     # LOAD LOSSES
     task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
 
@@ -756,9 +751,12 @@ def evaluate(
 if __name__ == "__main__":
     try:
         task_file_path, output_checkpoint_path, use_share2 = main()
+        os.path.exists(task_file_path)
+        os.path.exists(output_checkpoint_path)
+
         for beam_size in [1, 5]:
             for split in ["val"]:
-                eval_command = f"python evaluate_textvqa.py " \
+                eval_command = f"python evaluate_textvqa_analysis.py " \
                                 f"--task_file {task_file_path} " \
                                 f"--config_file config/spatial_m4c_mmt_textvqa.json " \
                                 f"--batch_size 96 --split {split} " \

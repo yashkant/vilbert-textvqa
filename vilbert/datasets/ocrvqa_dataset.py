@@ -42,7 +42,7 @@ def _load_dataset(name, debug):
     if name == "train" or name == "val" or name == "test":
         imdb_path = f"/srv/share/ykant3/ocr-vqa/intermediate/ocrvqa_{name}.npy"
         if debug:
-            imdb_path = f"/srv/share/ykant3/ocr-vqa/intermediate/ocrvqa_debug.npy"
+            imdb_path = f"/srv/share/ykant3/ocr-vqa/intermediate/ocrvqa_debug_long.npy"
         logger.info(f"Loading IMDB for {name}" if not debug else f"Loading IMDB for {name} in debug mode")
         imdb_data = ImageDatabase(imdb_path)
     else:
@@ -175,13 +175,13 @@ class OCRVQADataset(TextVQADataset):
             # convert questions to tokens, create masks, segment_ids
             self.process()
 
-            if self.randomize > 0 or self.heads_type != "none":
-                self.process_spatials()
+            # if self.randomize > 0 or self.heads_type != "none":
+            #     self.process_spatials()
 
-            if not self.debug:
-                cPickle.dump(self.entries, open(cache_path, "wb"))
-                if self.randomize > 0 or self.heads_type != "none":
-                    cPickle.dump(self.spatials, open(spatial_cache_path, "wb"))
+            # if not self.debug:
+            #     cPickle.dump(self.entries, open(cache_path, "wb"))
+            #     if self.randomize > 0 or self.heads_type != "none":
+            #         cPickle.dump(self.spatials, open(spatial_cache_path, "wb"))
         else:
             if "processors_only_registry" not in registry:
                 self.processors = Processors(
@@ -206,7 +206,7 @@ class OCRVQADataset(TextVQADataset):
 
         image_id_obj_list = {}
 
-        for entry in tqdm(self.entries, desc="Reading Entries"):
+        for entry in tqdm(self.entries, desc="Reading Features"):
             if entry["image_id"] in image_id_obj_list:
                 continue
 

@@ -25,6 +25,7 @@ from .visual7w_pointing_dataset import Visual7wPointingDataset
 from .guesswhat_pointing_dataset import GuessWhatPointingDataset
 from .flickr_grounding_dataset import FlickrGroundingDataset
 from .textvqa_dataset import TextVQADataset
+from .textvqa_dataset_reverse import TextVQADataset as RevTextVQADataset
 from .stvqa_dataset import STVQADataset
 from .ocrvqa_dataset import OCRVQADataset
 # from .flickr_retreival_dataset import FlickrRetreivalDatasetTrain, FlickrRetreivalDatasetVal
@@ -71,6 +72,7 @@ DatasetMapTrain = {
     "GuessWhatPointing": GuessWhatPointingDataset,
     "FlickrGrounding": FlickrGroundingDataset,
     "TextVQA": TextVQADataset,
+    "RevTextVQA": RevTextVQADataset,
     "STVQA": STVQADataset,
     "OCRVQA": OCRVQADataset,
 }

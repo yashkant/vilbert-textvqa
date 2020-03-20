@@ -190,7 +190,7 @@ class ImageFeaturesH5Reader(object):
             # Read chunk from file everytime if not loaded in memory.
             with self.env.begin(write=False) as txn:
                 item = pickle.loads(txn.get(image_id))
-                image_id = item["image_id"]
+                # image_id = item["image_id"]
                 image_h = int(item["image_h"])
                 image_w = int(item["image_w"])
                 # num_boxes = int(item['num_boxes'])

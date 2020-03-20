@@ -338,10 +338,10 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val
     task = "TASK" + task_id
     task_ids.append(task)
     batch_size = task_cfg[task]["batch_size"] // args.gradient_accumulation_steps
-    num_workers = args.num_workers
-    if args.local_rank != -1:
-        batch_size = int(batch_size / dist.get_world_size())
-        num_workers = int(num_workers / dist.get_world_size())
+    num_workers = task_cfg[task].get("num_workers", 16)
+    # if args.local_rank != -1:
+    #     batch_size = int(batch_size / dist.get_world_size())
+    #     num_workers = int(num_workers / dist.get_world_size())
 
     if "use_datasets" not in task_cfg[task]:
         task_cfg[task]['use_datasets'] = ["textvqa"]
@@ -350,6 +350,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val
 
     key_map = {
         "textvqa": "TextVQA",
+        "rev_textvqa": "RevTextVQA",
         "stvqa": "STVQA",
         "ocrvqa": "OCRVQA"
     }
@@ -413,6 +414,8 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val
 
     # Make sure we are using correct-vocabs
     if val_task_name == "TextVQA":
+        assert task_cfg[task]["vocab_type"] != "5k_stvqa"
+    elif val_task_name == "RevTextVQA":
         assert task_cfg[task]["vocab_type"] != "5k_stvqa"
     elif val_task_name == "STVQA":
         assert task_cfg[task]["vocab_type"] == "5k_stvqa"

@@ -41,9 +41,6 @@ IMAGES_SCENETEXT = [
 IMDB_COCOTEXT = "/srv/share/ykant3/coco-text/cocotext_processed.npy"
 
 
-
-
-
 # Gist: Delete 'response', Add ['answers', 'train_val_ids', 'question', 'question_ids']
 # Check what is the difference between 'valid_answers' and 'answers'
 # Todo: Rescaling bullshit from coco-text images!

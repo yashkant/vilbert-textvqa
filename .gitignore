@@ -40,6 +40,7 @@ data/
 save/
 logs/
 results/
+datasets/
 
 # Checkpoints directory
 checkpoints/
@@ -47,4 +48,4 @@ checkpoints/
 # IPython Notebook
 .ipynb_checkpoints
 
-
+.vscode/
