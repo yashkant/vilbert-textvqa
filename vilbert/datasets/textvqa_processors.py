@@ -825,13 +825,20 @@ def RandomSpatialProcessor(pad_obj_ocr_bboxes):
     adj_matrix_shape = (len(pad_obj_ocr_bboxes), len(pad_obj_ocr_bboxes), randomize)
     adj_matrix = np.zeros(adj_matrix_shape, dtype=np.int8)
     spatial_relations_types = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    rev_replace_dict = {}
+    for quad in [4, 5, 6, 7]:
+        rev_replace_dict[quad] = quad + 4
+        rev_replace_dict[quad + 4] = quad
+    rev_replace_dict[2] = 1
+    rev_replace_dict[1] = 2
 
     for row in range(adj_matrix_shape[0]):
-        for col in range(adj_matrix_shape[1]):
+        for col in range(row, adj_matrix_shape[1]):
             random_indices = np.random.choice(spatial_relations_types, size=randomize, replace=False)
             # remove none-edges
             if 0 not in random_indices:
                 adj_matrix[row][col] = random_indices
+                adj_matrix[col][row] = [rev_replace_dict[x] for x in random_indices]
 
     # Remove masked relations
     masked_inds = np.where(pad_obj_ocr_bboxes.sum(axis=-1) == 0)
