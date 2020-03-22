@@ -687,7 +687,7 @@ class BertSpatialEncoder(nn.Module):
         logger.info(f"Num Normal Layers: {self.num_normal_layers}")
         logger.info(f"Num Implicit Layers: {self.num_implicit_layers}")
 
-        if config.mix_list is None:
+        if not hasattr(config, "mix_list") or config.mix_list is None:
             self.mix_list = ["none"]*len(self.layer_type_list)
         else:
             self.mix_list = config.mix_list

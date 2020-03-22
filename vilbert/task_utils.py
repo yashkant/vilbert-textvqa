@@ -338,7 +338,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val
     task = "TASK" + task_id
     task_ids.append(task)
     batch_size = task_cfg[task]["batch_size"] // args.gradient_accumulation_steps
-    num_workers = task_cfg[task].get("num_workers", 16)
+    num_workers = task_cfg[task].get("num_workers", 0)
     # if args.local_rank != -1:
     #     batch_size = int(batch_size / dist.get_world_size())
     #     num_workers = int(num_workers / dist.get_world_size())
