@@ -816,12 +816,13 @@ class CopyProcessor(BaseProcessor):
 
 
 def SpatialProcessor(pad_obj_ocr_bboxes):
-    adj_matrix_shared = build_graph_using_normalized_boxes_share(
+    adj_matrix_shared, gauss_bias_shared = build_graph_using_normalized_boxes_share(
         pad_obj_ocr_bboxes,
         distance_threshold=registry.distance_threshold,
         build_gauss_bias=registry.use_gauss_bias
         )
-    return adj_matrix_shared
+    return adj_matrix_shared, gauss_bias_shared
+
 
 def RandomSpatialProcessor(pad_obj_ocr_bboxes):
     randomize = registry.randomize
@@ -849,6 +850,7 @@ def RandomSpatialProcessor(pad_obj_ocr_bboxes):
     adj_matrix[:, masked_inds] = 0
 
     return adj_matrix
+
 
 class BertTokenizerProcessor:
     """

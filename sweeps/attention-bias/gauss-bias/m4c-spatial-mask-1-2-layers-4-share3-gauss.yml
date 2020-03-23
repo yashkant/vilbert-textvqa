@@ -45,5 +45,6 @@ TASK19:
   layer_type_list: [n, n, s, s, s, s]
   mix_list: [none, none, share3, share3, share3, share3]
   use_gauss_bias: True
-  # 2*std_dev = 3*45/2 (in degrees)
-  gauss_bias_dev: 33.75
+  # how many std_dev == 0.5*range
+  # higher is peakier
+  gauss_bias_dev_factor: 2

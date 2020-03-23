@@ -124,7 +124,7 @@ class TextVQADataset(Dataset):
         self.randomize = extra_args.get("randomize", -1)
         self.needs_spatial = False
         self.use_gauss_bias = extra_args.get("use_gauss_bias", False)
-        self.gauss_bias_dev = extra_args.get("gauss_bias_dev", -1.0)
+        self.gauss_bias_dev_factor = extra_args.get("gauss_bias_dev_factor", -1.0)
         self.matrix_type_map = {
             "share3": "3",
             "share5": "5",
@@ -141,8 +141,8 @@ class TextVQADataset(Dataset):
         registry.vocab_type = self.vocab_type
         registry.distance_threshold = self.distance_threshold
         registry.randomize = self.randomize
-        regsitry.use_gauss_bias = self.use_gauss_bias
-        regsitry.gauss_bias_dev = self.gauss_bias_dev
+        registry.use_gauss_bias = self.use_gauss_bias
+        registry.gauss_bias_dev_factor = self.gauss_bias_dev_factor
 
         logger.info(f"Dynamic Sampling is {self.dynamic_sampling}")
         logger.info(f"distance_threshold is {self.distance_threshold}")
@@ -151,7 +151,7 @@ class TextVQADataset(Dataset):
         logger.info(f"Randomize is {self.randomize}")
         logger.info(f"needs_spatial is {self.needs_spatial}")
         logger.info(f"use_gauss_bias is {self.use_gauss_bias}")
-        logger.info(f"gauss_bias_dev is {self.gauss_bias_dev}")
+        logger.info(f"gauss_bias_dev is {self.gauss_bias_dev_factor}")
 
         # We only randomize the spatial-adj-matrix
         if self.heads_type != "none":
@@ -192,6 +192,9 @@ class TextVQADataset(Dataset):
         elif self.needs_spatial:
             cache_path = cache_path.split(".")[0]
             cache_path = cache_path + f"_spatial" + ".pkl"
+            if self.use_gauss_bias:
+                cache_path = cache_path.split(".")[0]
+                cache_path = cache_path + f"_gauss_factor_{self.gauss_bias_dev_factor}" + ".pkl"
 
         logger.info(f"Cache Name:  {cache_path}")
 
@@ -288,8 +291,9 @@ class TextVQADataset(Dataset):
         
         assert len(results) == len(self.entries)
         for result, entry in zip(results, self.entries):
-            entry["spatial_adj_matrix_shared"] = result
-        
+            entry["spatial_adj_matrix_shared"] = result[0]
+            entry["spatial_gauss_bias_shared"] = result[1]
+
     def process_random_spatials(self):
         pad_obj_ocr_bboxes_list = []
         for entry in tqdm(self.entries, desc="Reading Entries"):
@@ -429,18 +433,28 @@ class TextVQADataset(Dataset):
                     entry["spatial_loss_mask"] = entry["spatial_ocr_relations"] = None
                 else:
                     entry["spatial_adj_matrices"] = {}
+                    entry["gauss_bias_matrices"] = {}
                     build_map = {
                         "3": ["1", "31", "32"],
                         "5": ["3", "51", "52"],
                         "7": ["5", "71", "72"],
                         "9": ["7", "91", "92"],
                     }
-                    
+
                     entry["spatial_adj_matrices"]["1"] = torch_broadcast_adj_matrix(
                         torch.from_numpy(entry["spatial_adj_matrix_shared"]["1"]),
                         label_num=12
                     )
-                    
+
+                    if self.use_gauss_bias:
+                        entry["gauss_bias_matrices"]["1"] = torch.zeros_like(entry["spatial_adj_matrices"])._scatter(
+                                entry["spatial_adj_matrix_shared"]["1"],
+                                entry["spatial_gauss_bias_shared"]["1"]
+                            )
+
+                    # Todo: Add gaussian-bias-matrix in head_types below
+                    #  Fix return value from utils function
+
                     head_types = []
                     if "mix_list" in self.extra_args:
                         for head_type in self.extra_args["mix_list"]:
@@ -462,6 +476,10 @@ class TextVQADataset(Dataset):
                         init_matrix = torch.max(init_matrix, first_matrix)
                         init_matrix = torch.max(init_matrix, second_matrix)
                         entry["spatial_adj_matrices"][head_type] = init_matrix
+                        if self.use_gauss_bias:
+                            import pdb
+                            pdb.set_trace()
+
             else:
                 pass
         item.update(entry)

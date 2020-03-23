@@ -14,6 +14,7 @@ import torch
 from torch.autograd import Variable
 from tools.registry import registry
 
+
 def bb_intersection_over_union(boxA, boxB):
     # determine the (x, y)-coordinates of the intersection rectangle
     xA = max(boxA[0], boxB[0])
@@ -150,41 +151,43 @@ def torch_broadcast_adj_matrix(adj_matrix, label_num=12,
     result = torch.cat(result, dim=-1)
     return result
 
+
 def _build_replace_dict():
     share_replace_dict = {
-    "31": {},
-    "32": {},
-    "51": {},
-    "52": {},
-    "71": {},
-    "72": {},
-    "91": {},
-    "92": {},
+        "1": {},
+        "31": {},
+        "32": {},
+        "51": {},
+        "52": {},
+        "71": {},
+        "72": {},
+        "91": {},
+        "92": {},
 
     }
-    
+
     for quad in [4, 5, 6, 7, 8, 9, 10, 11]:
         share_replace_dict["31"][quad] = quad + 1
         share_replace_dict["32"][quad] = quad - 1
-        
+
         share_replace_dict["51"][quad] = quad + 2
         share_replace_dict["52"][quad] = quad - 2
-        
+
         share_replace_dict["71"][quad] = quad + 3
         share_replace_dict["72"][quad] = quad - 3
-        
+
         share_replace_dict["91"][quad] = quad + 4
         share_replace_dict["92"][quad] = quad - 4
-    
+
     adjust_sectors = {
-        0:8,
-        1:9,
-        2:10,
-        3:11,
-        12:4,
-        13:5,
-        14:6,
-        15:7
+        0: 8,
+        1: 9,
+        2: 10,
+        3: 11,
+        12: 4,
+        13: 5,
+        14: 6,
+        15: 7
     }
 
     for _, value in share_replace_dict.items():
@@ -194,6 +197,11 @@ def _build_replace_dict():
                 value[key] = adjust_sectors[val]
 
     return share_replace_dict
+
+
+def gaussian(x, mean, std_dev):
+    return np.exp(-np.power(x - mu, 2.) / (2 * np.power(sig, 2.)))
+
 
 def build_graph_using_normalized_boxes_share(bbox, label_num=11, distance_threshold=0.5, build_gauss_bias=False):
     """ Build spatial graph
@@ -211,11 +219,11 @@ def build_graph_using_normalized_boxes_share(bbox, label_num=11, distance_thresh
         - red arrow is from j_box (blue box) to i_box (red box) i.e from target to origin
     """
     mean_map = {}
-    for sector in range(4,12):
-        mean_map[sector] = (math.pi/16.0)*(2*(sector-4) + 1)
-
+    for sector in range(4, 12):
+        mean_map[sector] = (math.pi / 16.0) * (2 * (sector - 4) + 1)
+    gauss_bias_dev_factor = registry.gauss_bias_dev_factor
     num_box = bbox.shape[0]
-    adj_matrix = np.zeros((num_box, num_box))
+    # adj_matrix = np.zeros((num_box, num_box))
     share_replace_dict = _build_replace_dict()
     adj_matrix_shared = {}
     gauss_bias_shared = {}
@@ -224,7 +232,7 @@ def build_graph_using_normalized_boxes_share(bbox, label_num=11, distance_thresh
         adj_matrix_shared[key] = np.zeros((num_box, num_box))
         if build_gauss_bias:
             gauss_bias_shared[key] = np.zeros((num_box, num_box))
-        
+
     # adj_matrix_share3_1 = np.zeros((num_box, num_box))
     # adj_matrix_share3_2 = np.zeros((num_box, num_box))
 
@@ -243,7 +251,7 @@ def build_graph_using_normalized_boxes_share(bbox, label_num=11, distance_thresh
         # (YK): Padded bbox
         if sum(bbA) == 0:
             continue
-        adj_matrix[i, i] = 12
+        adj_matrix_shared["1"][i, i] = 12
         for j in range(i + 1, num_box):
             bbB = bbox[j]
             # (YK): Padded bbox
@@ -251,20 +259,20 @@ def build_graph_using_normalized_boxes_share(bbox, label_num=11, distance_thresh
                 continue
             # class 1: inside (j inside i)
             if xmin[i] < xmin[j] and xmax[i] > xmax[j] and ymin[i] < ymin[j] and ymax[i] > ymax[j]:
-                adj_matrix[i, j] = 1  # covers
-                adj_matrix[j, i] = 2  # inside
+                adj_matrix_shared["1"][i, j] = 1  # covers
+                adj_matrix_shared["1"][j, i] = 2  # inside
             # class 2: cover (j covers i)
             elif (xmin[j] < xmin[i] and xmax[j] > xmax[i] and
                   ymin[j] < ymin[i] and ymax[j] > ymax[i]):
-                adj_matrix[i, j] = 2
-                adj_matrix[j, i] = 1
+                adj_matrix_shared["1"][i, j] = 2
+                adj_matrix_shared["1"][j, i] = 1
             else:
                 ioU = bb_intersection_over_union(bbA, bbB)
 
                 # class 3: i and j overlap
                 if ioU >= 0.5:
-                    adj_matrix[i, j] = 3
-                    adj_matrix[j, i] = 3
+                    adj_matrix_shared["1"][i, j] = 3
+                    adj_matrix_shared["1"][j, i] = 3
                 else:
                     y_diff = center_y[i] - center_y[j]
                     x_diff = center_x[i] - center_x[j]
@@ -289,22 +297,59 @@ def build_graph_using_normalized_boxes_share(bbox, label_num=11, distance_thresh
                             label_i = 2 * math.pi - np.arccos(cos_ij)
                             label_j = label_i - math.pi
                         # goes from [1-8] + 3 -> [4-11]
-                        # if (adj_matrix[i, j] > 0):
-                        adj_matrix[i, j] = int(np.ceil(label_i / (math.pi / 4))) + 3
-                        adj_matrix[j, i] = int(np.ceil(label_j / (math.pi / 4))) + 3
+                        # if (adj_matrix_shared["1"][i, j] > 0):
+                        adj_matrix_shared["1"][i, j] = int(np.ceil(label_i / (math.pi / 4))) + 3
+                        adj_matrix_shared["1"][j, i] = int(np.ceil(label_j / (math.pi / 4))) + 3
 
                         # fill in share spatial-matrices
                         for key in adj_matrix_shared.keys():
-                            adj_matrix_shared[key][i,j] = share_replace_dict[key].get(adj_matrix[i,j], 0)
-                            adj_matrix_shared[key][j,i] = share_replace_dict[key].get(adj_matrix[j,i], 0)
+
+                            if key != "1":
+                                adj_matrix_shared[key][i, j] = share_replace_dict[key].get(adj_matrix_shared["1"][i, j], 0)
+                                adj_matrix_shared[key][j, i] = share_replace_dict[key].get(adj_matrix_shared["1"][j, i], 0)
+
+                            if build_gauss_bias and adj_matrix_shared[key][i, j] in mean_map:
+                                rad_ij = label_i
+                                mean_rad = mean_map[adj_matrix_shared[key][i, j]]
+                                # half-range of head_type
+                                half_range_rad = ((int(key[0]) - 1) / 2) * (math.pi / 4.0) + math.pi / 8.0
+                                gauss_dev_rad = half_range_rad / gauss_bias_dev_factor
+                                # clockwise and anti-clockwise angles
+                                angle_1 = abs(mean_rad - rad_ij)
+                                angle_2 = 2 * math.pi - angle_1
+
+                                if len(key) == 1:
+                                    # mean and relation in same sector
+                                    gauss_weight = gaussian(min(angle_1, angle_2), mean_rad, gauss_dev_rad)
+                                else:
+                                    # mean and relation in different sectors
+                                    if key[1] == "1":
+                                        # use anti-clockwise angle from mean_rad
+                                        if mean_rad < rad_ij:
+                                            mean_rad += math.pi * 2
+                                        gauss_weight = gaussian(mean_rad - rad_ij, mean_rad, gauss_dev_rad)
+                                    else:
+                                        # use clockwise angle from mean_rad
+                                        if rad_ij < mean_rad:
+                                            rad_ij += math.pi * 2
+                                        gauss_weight = gaussian(rad_ij - mean_rad, mean_rad, gauss_dev_rad)
+
+                                # gaussian weight is symmetric
+                                gauss_bias_shared[key][i, j] = gauss_weight
+                                gauss_bias_shared[key][j, i] = gauss_weight
+
     for key in adj_matrix_shared.keys():
         adj_matrix_shared[key] = adj_matrix_shared[key].astype(np.int8)
-    
-    adj_matrix_shared["1"] = adj_matrix.astype(np.int8)
-    return adj_matrix_shared
-    
+        if build_gauss_bias:
+            gauss_bias_shared[key] = gauss_bias_shared[key].astype(np.int8)
+
+    return adj_matrix_shared, gauss_bias_shared
+
+
+
 def build_graph_using_normalized_boxes_new():
     pass
+
 
 def random_spatial_processor(pad_obj_ocr_bboxes):
     randomize = [1, 3]
@@ -329,7 +374,6 @@ def random_spatial_processor(pad_obj_ocr_bboxes):
     adj_matrix_random3[masked_inds] = 0
     adj_matrix_random3[:, masked_inds] = 0
     return adj_matrix_random1.astype(np.int8), adj_matrix_random3.astype(np.int8)
-
 
 
 def torch_extract_position_embedding(position_mat, feat_dim, wave_length=1000,
