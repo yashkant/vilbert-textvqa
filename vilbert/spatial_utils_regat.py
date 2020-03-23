@@ -12,7 +12,7 @@ import numpy as np
 import math
 import torch
 from torch.autograd import Variable
-
+from tools.registry import registry
 
 def bb_intersection_over_union(boxA, boxB):
     # determine the (x, y)-coordinates of the intersection rectangle
@@ -124,7 +124,7 @@ def build_graph_using_normalized_boxes(bbox, label_num=11, distance_threshold=0.
     return adj_matrix
 
 
-def torch_broadcast_adj_matrix(adj_matrix, label_num=11,
+def torch_broadcast_adj_matrix(adj_matrix, label_num=12,
                                device=torch.device("cuda")):
     """ broudcast spatial relation graph
 
@@ -195,7 +195,7 @@ def _build_replace_dict():
 
     return share_replace_dict
 
-def build_graph_using_normalized_boxes_new(bbox, label_num=11, distance_threshold=0.5, build_shared=[1,3,5,7,9]):
+def build_graph_using_normalized_boxes_share(bbox, label_num=11, distance_threshold=0.5, build_gauss_bias=False):
     """ Build spatial graph
     Args:
         bbox: [num_boxes, 4]
@@ -210,13 +210,20 @@ def build_graph_using_normalized_boxes_new(bbox, label_num=11, distance_threshol
         - blue arrow is from i_box (red box) to j_box (blue box) i.e from  origin to target
         - red arrow is from j_box (blue box) to i_box (red box) i.e from target to origin
     """
+    mean_map = {}
+    for sector in range(4,12):
+        mean_map[sector] = (math.pi/16.0)*(2*(sector-4) + 1)
+
     num_box = bbox.shape[0]
     adj_matrix = np.zeros((num_box, num_box))
     share_replace_dict = _build_replace_dict()
     adj_matrix_shared = {}
+    gauss_bias_shared = {}
 
     for key in share_replace_dict.keys():
         adj_matrix_shared[key] = np.zeros((num_box, num_box))
+        if build_gauss_bias:
+            gauss_bias_shared[key] = np.zeros((num_box, num_box))
         
     # adj_matrix_share3_1 = np.zeros((num_box, num_box))
     # adj_matrix_share3_2 = np.zeros((num_box, num_box))
@@ -290,13 +297,14 @@ def build_graph_using_normalized_boxes_new(bbox, label_num=11, distance_threshol
                         for key in adj_matrix_shared.keys():
                             adj_matrix_shared[key][i,j] = share_replace_dict[key].get(adj_matrix[i,j], 0)
                             adj_matrix_shared[key][j,i] = share_replace_dict[key].get(adj_matrix[j,i], 0)
-
     for key in adj_matrix_shared.keys():
         adj_matrix_shared[key] = adj_matrix_shared[key].astype(np.int8)
     
-    return adj_matrix.astype(np.int8), adj_matrix_shared
+    adj_matrix_shared["1"] = adj_matrix.astype(np.int8)
+    return adj_matrix_shared
     
-
+def build_graph_using_normalized_boxes_new():
+    pass
 
 def random_spatial_processor(pad_obj_ocr_bboxes):
     randomize = [1, 3]

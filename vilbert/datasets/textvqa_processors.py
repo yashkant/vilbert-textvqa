@@ -79,7 +79,7 @@ from tools.registry import registry
 from pytorch_transformers.tokenization_bert import BertTokenizer
 from .textvqa_vocab import VocabDict
 from ..phoc import build_phoc
-from vilbert.spatial_utils_regat import build_graph_using_normalized_boxes
+from vilbert.spatial_utils_regat import build_graph_using_normalized_boxes, build_graph_using_normalized_boxes_share
 
 
 def _pad_tokens(tokens, PAD_TOKEN, max_length):
@@ -816,9 +816,12 @@ class CopyProcessor(BaseProcessor):
 
 
 def SpatialProcessor(pad_obj_ocr_bboxes):
-    adj_matrix = build_graph_using_normalized_boxes(pad_obj_ocr_bboxes,
-                                                    distance_threshold=registry.distance_threshold).astype(np.int8)
-    return adj_matrix
+    adj_matrix_shared = build_graph_using_normalized_boxes_share(
+        pad_obj_ocr_bboxes,
+        distance_threshold=registry.distance_threshold,
+        build_gauss_bias=registry.use_gauss_bias
+        )
+    return adj_matrix_shared
 
 def RandomSpatialProcessor(pad_obj_ocr_bboxes):
     randomize = registry.randomize

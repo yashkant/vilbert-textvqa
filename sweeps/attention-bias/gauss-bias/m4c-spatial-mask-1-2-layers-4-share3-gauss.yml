@@ -43,4 +43,7 @@ TASK19:
   num_hidden_layers: 2
   num_spatial_layers: 4
   layer_type_list: [n, n, s, s, s, s]
-  mix_list: [none, none, none, none, none, none]
+  mix_list: [none, none, share3, share3, share3, share3]
+  use_gauss_bias: True
+  # 2*std_dev = 3*45/2 (in degrees)
+  gauss_bias_dev: 33.75

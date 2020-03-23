@@ -693,6 +693,13 @@ class BertSpatialEncoder(nn.Module):
             self.mix_list = config.mix_list
         assert len(self.mix_list) == len(self.layer_type_list)
         logger.info(f"Mix list: {self.mix_list}")
+        self.matrix_type_map = {
+            "none": "1",
+            "share3": "3",
+            "share5": "5",
+            "share7": "7",
+            "share9": "9",
+        }
 
         self.normal_layers = nn.ModuleList([BertLayer(config) for _ in range(self.num_normal_layers)])
         self.spatial_layers = nn.ModuleList([SpatialBertLayer(config) for _ in range(self.num_spatial_layers)])
@@ -705,7 +712,6 @@ class BertSpatialEncoder(nn.Module):
         normal_iter = iter(self.normal_layers)
         spatial_iter = iter(self.spatial_layers)
         implicit_iter = iter(self.implicit_layers)
-
         for layer_type, mix_type in zip(self.layer_type_list, self.mix_list):
             if self.output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
@@ -714,25 +720,13 @@ class BertSpatialEncoder(nn.Module):
                 layer_outputs = layer_module(hidden_states, attention_mask)
             elif layer_type == "s":
                 layer_module = next(spatial_iter)
-                if mix_type == "share3":
-                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_share3"]
-                elif mix_type == "quad4":
-                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_quad4"]
-                elif mix_type == "share5":
-                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_share5"]
-                else:
-                    spatial_adj_matrix = batch_dict["spatial_adj_matrix"]
+                matrix_type = self.matrix_type_map[mix_type]
+                spatial_adj_matrix = batch_dict["spatial_adj_matrices"][matrix_type]
                 layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
             elif layer_type == "i":
                 layer_module = next(implicit_iter)
-                if mix_type == "share3":
-                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_share3"]
-                elif mix_type == "share5":
-                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_share5"]
-                elif mix_type == "quad4":
-                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_quad4"]
-                else:
-                    spatial_adj_matrix = batch_dict["spatial_adj_matrix"]
+                matrix_type = self.matrix_type_map[mix_type]
+                spatial_adj_matrix = batch_dict["spatial_adj_matrices"][matrix_type]
                 layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
             else:
                 raise ValueError

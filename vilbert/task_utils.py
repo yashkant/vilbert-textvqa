@@ -224,9 +224,13 @@ def ForwardModelsVal(args,
                      model,
                      task_losses,
                      return_batch=False):
+    
     for key, value in batch_dict.items():
         if isinstance(value, torch.Tensor):
             batch_dict[key] = value.cuda(device=device, non_blocking=True)
+        if isinstance(value, dict):
+            for k,v in value.items():
+                batch_dict[key][k] = v.cuda(device=device, non_blocking=True)
 
     question = batch_dict["question_indices"]
     batch_size = len(batch_dict["question_id"])
@@ -279,6 +283,9 @@ def ForwardModelsTrain(
     for key, value in batch_dict.items():
         if isinstance(value, torch.Tensor):
             batch_dict[key] = value.cuda(device=device, non_blocking=True)
+        if isinstance(value, dict):
+            for k,v in value.items():
+                batch_dict[key][k] = v.cuda(device=device, non_blocking=True)
 
     question = batch_dict["question_indices"]
     batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
