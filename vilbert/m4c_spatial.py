@@ -191,8 +191,6 @@ class M4C(nn.Module):
         self.spatial_classifier = nn.Linear(32, 12)
 
     def forward(self, batch_dict):
-        # import pdb
-        # pdb.set_trace()
         # fwd_results holds intermediate forward pass results
         # TODO possibly replace it with another sample list
         # self._forward_txt_encoding(batch_dict)
@@ -485,12 +483,18 @@ class SpatialBertSelfAttention(nn.Module):
             logger.info("using head biases")
             self.biases = torch.nn.Embedding(1, config.hidden_size)
 
+        self.use_gauss_bias = registry.get("use_gauss_bias", False)
+        self.restrict_oo = registry.get("restrict_oo", False)
+        self.use_attention_bins = registry.get("use_attention_bins", False)
+        self.attention_bins = registry.get("attention_bins", False)
+
+
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
         x = x.view(*new_x_shape)
         return x.permute(0, 2, 1, 3)
 
-    def forward(self, hidden_states, attention_mask, spatial_adj_matrix, head_mask=None):
+    def forward(self, hidden_states, attention_mask, spatial_adj_matrix, gauss_bias_matrix, head_mask=None):
         """
         spatial_adj_matrix: (bs, num_ocr + num_obj, num_ocr + num_obj, type_relations == num_heads)
         TODO: Is there way you can draw some connections across these heads? Like one-head using some
@@ -505,6 +509,10 @@ class SpatialBertSelfAttention(nn.Module):
         spatial_adj_matrix has 0s across the diagonal terms, attaching an identity matrix for this
 
         """
+
+        # import pdb
+        # pdb.set_trace()
+
         # build attention-mask from spatial_adj_matrix
         batch_size, ocr_obj_num, _, num_spatial_heads = spatial_adj_matrix.shape
         num_features = hidden_states.size(1)
@@ -513,8 +521,7 @@ class SpatialBertSelfAttention(nn.Module):
         spatial_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, num_spatial_heads))
 
         # Add explicit mask
-        spatial_attention_mask[:, self.max_seq_len:self.max_seq_len + ocr_obj_num,
-        self.max_seq_len:self.max_seq_len + ocr_obj_num, :] = spatial_adj_matrix
+        spatial_attention_mask[:, self.max_seq_len:self.max_seq_len + ocr_obj_num, self.max_seq_len:self.max_seq_len + ocr_obj_num, :] = spatial_adj_matrix
 
         # Add implicit mask
         if self.num_attention_heads != self.num_spatial_relations:
@@ -570,6 +577,82 @@ class SpatialBertSelfAttention(nn.Module):
         # Normalize the attention scores to probabilities.
         attention_probs = nn.Softmax(dim=-1)(attention_scores)
 
+        # Todo: We are stealing weights from object-question attention by adding to softmax values
+        #  this can be fixed by only changing the 150x150 weights
+
+        # Add gaussian biasing
+        if self.use_gauss_bias:
+            gauss_bias_matrix = gauss_bias_matrix.permute((0,3,1,2)).type_as(attention_probs)
+
+            # Restrict only to object-ocr relationships
+            if self.restrict_oo:
+                oo_probs = attention_probs[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num, self.max_seq_len:self.max_seq_len + ocr_obj_num].detach().clone()
+                oo_probs_sum = attention_probs[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num, self.max_seq_len:self.max_seq_len + ocr_obj_num].detach().clone().sum(dim=-1, keepdims=True)
+                bias_probs_matrix = gauss_bias_matrix + attention_probs[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num, self.max_seq_len:self.max_seq_len + ocr_obj_num].detach().clone()
+                bias_probs_matrix = bias_probs_matrix + combined_mask[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num, self.max_seq_len:self.max_seq_len + ocr_obj_num].detach().clone()
+                bias_probs_matrix = nn.Softmax(dim=-1)(bias_probs_matrix)*oo_probs_sum
+                expanded_bias_probs_matrix = torch.zeros_like(attention_probs)
+                expanded_bias_probs_matrix[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num,
+                self.max_seq_len:self.max_seq_len + ocr_obj_num] = bias_probs_matrix - oo_probs
+                expanded_bias_probs_matrix = expanded_bias_probs_matrix.detach().clone()
+                attention_probs = attention_probs + expanded_bias_probs_matrix
+            else:
+                expanded_gauss_bias_matrix = torch.zeros_like(attention_probs)
+                expanded_gauss_bias_matrix[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num,
+                self.max_seq_len:self.max_seq_len + ocr_obj_num] = gauss_bias_matrix
+                attention_probs = attention_probs + expanded_gauss_bias_matrix
+                attention_probs = attention_probs + combined_mask
+                attention_probs = nn.Softmax(dim=-1)(attention_probs)
+
+        if self.use_attention_bins:
+            assert round(sum(self.attention_bins)) == 1.0
+            bins_matrix = gauss_bias_matrix.permute((0,3,1,2)).type_as(attention_probs)
+            unique_bins = bins_matrix.unique()
+            oo_probs = attention_probs[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num,
+                           self.max_seq_len:self.max_seq_len + ocr_obj_num].detach().clone()
+            oo_probs_sum = oo_probs.detach().clone().sum(dim=-1, keepdims=True)
+
+            scaled_oo_probs = torch.zeros_like(oo_probs)
+            self.attention_bins.sort(reverse=True)
+
+            # Todo: this only works for share-3
+            range_matrices = []
+            for bin_idx, (bin_type, bin_range) in enumerate(zip(unique_bins.sort()[0][1:], self.attention_bins)):
+                masked_bin_probs = oo_probs * (bins_matrix == bin_type)
+
+                # for last bin calculate using sum of other bins
+                if bin_idx == len(self.attention_bins)-1:
+                    range_matrix_sum = sum(range_matrices)
+                    range_matrices.append(torch.ones_like(range_matrix_sum)-range_matrix_sum)
+                    range_matrices[-1] = range_matrices[-1]*(masked_bin_probs.sum(dim=-1, keepdims=True) > 0)
+                    range_matrices[0] = range_matrices[0] + (1-range_matrices[0])*(masked_bin_probs.sum(dim=-1, keepdims=True) <= 0)
+                else:
+                    range_matrices.append((masked_bin_probs.sum(dim=-1, keepdims=True) > 0)*bin_range)
+
+            assert round(float(sum(range_matrices).sum())) == range_matrices[0].shape[0]*range_matrices[0].shape[1]*range_matrices[0].shape[2]
+            assert len(unique_bins.sort()[0][1:]) == len(self.attention_bins) == len(range_matrices)
+            for bin_type, range_matrix in zip(unique_bins.sort()[0][1:], range_matrices):
+                masked_bin_probs = oo_probs*(bins_matrix == bin_type)
+                masked_bin_probs_sum = masked_bin_probs.sum(dim=-1, keepdims=True)
+                masked_bin_probs_sum = masked_bin_probs_sum + 1.0*(masked_bin_probs_sum == 0)
+                scale = (range_matrix/masked_bin_probs_sum)*oo_probs_sum
+                scaled_masked_bin_probs = masked_bin_probs*scale
+                scaled_oo_probs += scaled_masked_bin_probs
+
+            # There are times when we only have bin_type-1 relations
+            assert round(float((scaled_oo_probs.sum(dim=-1, keepdims=True) - oo_probs_sum).sum())) == 0
+            expanded_scaled_oo_probs = torch.zeros_like(attention_probs)
+            expanded_scaled_oo_probs[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num,
+            self.max_seq_len:self.max_seq_len + ocr_obj_num] = scaled_oo_probs - oo_probs
+            expanded_scaled_oo_probs = expanded_scaled_oo_probs.detach().clone()
+            attention_probs = attention_probs + expanded_scaled_oo_probs
+
+        try:
+            assert round(float(attention_probs.sum().data)) == attention_probs.shape[0]*attention_probs.shape[1]*attention_probs.shape[2]
+        except:
+            import pdb
+            pdb.set_trace()
+
         # zero-out completely masked entities
         attention_probs = attention_probs*entity_probs_mask
 
@@ -586,7 +669,7 @@ class SpatialBertSelfAttention(nn.Module):
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
         context_layer = context_layer.view(*new_context_layer_shape)
-        
+
         if self.use_bias:
             context_layer = context_layer + self.biases(context_layer.new_zeros(1).long())
 
@@ -625,8 +708,8 @@ class SpatialBertAttention(nn.Module):
         self.self.all_head_size = self.self.attention_head_size * self.self.num_attention_heads
         self.pruned_heads = self.pruned_heads.union(heads)
 
-    def forward(self, input_tensor, attention_mask, spatial_adj_matrix, head_mask=None):
-        self_outputs = self.self(input_tensor, attention_mask, spatial_adj_matrix, head_mask)
+    def forward(self, input_tensor, attention_mask, spatial_adj_matrix, gauss_bias_matrix, head_mask=None):
+        self_outputs = self.self(input_tensor, attention_mask, spatial_adj_matrix, gauss_bias_matrix, head_mask)
         attention_output = self.output(self_outputs[0], input_tensor)
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
         return outputs
@@ -640,8 +723,12 @@ class SpatialBertLayer(nn.Module):
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
 
-    def forward(self, hidden_states, attention_mask, spatial_adj_matrix, head_mask=None):
-        attention_outputs = self.attention(hidden_states, attention_mask, spatial_adj_matrix, head_mask)
+    def forward(self, hidden_states, attention_mask, spatial_adj_matrix, gauss_bias_matrix, head_mask=None):
+        attention_outputs = self.attention(hidden_states,
+                                           attention_mask,
+                                           spatial_adj_matrix,
+                                           gauss_bias_matrix,
+                                           head_mask)
         attention_output = attention_outputs[0]
         # Intermediate is dense + activation
         intermediate_output = self.intermediate(attention_output)
@@ -712,6 +799,7 @@ class BertSpatialEncoder(nn.Module):
         normal_iter = iter(self.normal_layers)
         spatial_iter = iter(self.spatial_layers)
         implicit_iter = iter(self.implicit_layers)
+
         for layer_type, mix_type in zip(self.layer_type_list, self.mix_list):
             if self.output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
@@ -722,12 +810,28 @@ class BertSpatialEncoder(nn.Module):
                 layer_module = next(spatial_iter)
                 matrix_type = self.matrix_type_map[mix_type]
                 spatial_adj_matrix = batch_dict["spatial_adj_matrices"][matrix_type]
-                layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
+
+                if registry.use_gauss_bias:
+                    gauss_bias_matrix = batch_dict["gauss_bias_matrices"][matrix_type]
+                elif registry.use_attention_bins:
+                    gauss_bias_matrix = batch_dict["bins_matrices"][matrix_type]
+                else:
+                    gauss_bias_matrix = None
+
+                layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix, gauss_bias_matrix)
             elif layer_type == "i":
                 layer_module = next(implicit_iter)
                 matrix_type = self.matrix_type_map[mix_type]
                 spatial_adj_matrix = batch_dict["spatial_adj_matrices"][matrix_type]
-                layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
+
+                if registry.use_gauss_bias:
+                    gauss_bias_matrix = batch_dict["gauss_bias_matrices"][matrix_type]
+                elif registry.use_attention_bins:
+                    gauss_bias_matrix = batch_dict["bins_matrices"][matrix_type]
+                else:
+                    gauss_bias_matrix = None
+
+                layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix, gauss_bias_matrix)
             else:
                 raise ValueError
             hidden_states = layer_outputs[0]
@@ -737,31 +841,6 @@ class BertSpatialEncoder(nn.Module):
         assert next(normal_iter, None) is None
         assert next(spatial_iter, None) is None
         assert next(implicit_iter, None) is None
-
-        # # re-arrange spatial-layers if needed
-        # layers = [("normal", self.layer), ("spatial", self.spatial_layer)]
-        # if self.spatial_type == "bottom":
-        #     layers = [layers[1], layers[0]]
-        # else:
-        #     assert self.spatial_type == "top"
-        #
-        # # Run through layers
-        # for layer_type, layers_set in layers:
-        #     for i, layer_module in enumerate(layers_set):
-        #         if self.output_hidden_states:
-        #             all_hidden_states = all_hidden_states + (hidden_states,)
-        #
-        #         if layer_type == "normal":
-        #             layer_outputs = layer_module(hidden_states, attention_mask, head_mask[i])
-        #         elif layer_type == "spatial":
-        #             layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
-        #         else:
-        #             raise ValueError
-        #
-        #         hidden_states = layer_outputs[0]
-        #
-        #         if self.output_attentions:
-        #             all_attentions = all_attentions + (layer_outputs[1],)
 
         # Add last layer
         if self.output_hidden_states:

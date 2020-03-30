@@ -16,7 +16,7 @@ from tqdm import tqdm
 from .textvqa_processors import *
 from easydict import EasyDict as edict
 from ._image_features_reader import ImageFeaturesH5Reader
-from vilbert.spatial_utils_regat import torch_broadcast_adj_matrix
+from vilbert.spatial_utils_regat import torch_broadcast_adj_matrix, torch_broadcast_gauss_bias, torch_broadcast_bins
 import multiprocessing as mp
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
@@ -125,12 +125,15 @@ class TextVQADataset(Dataset):
         self.needs_spatial = False
         self.use_gauss_bias = extra_args.get("use_gauss_bias", False)
         self.gauss_bias_dev_factor = extra_args.get("gauss_bias_dev_factor", -1.0)
+        self.use_attention_bins = extra_args.get("use_attention_bins", False)
+        self.attention_bins = extra_args.get("attention_bins", [-1])
         self.matrix_type_map = {
-            "share3": "3",
-            "share5": "5",
-            "share7": "7",
-            "share9": "9",
+            "share3": ["3"],
+            "share5": ["3", "5"],
+            "share7": ["3", "5", "7"],
+            "share9": ["3", "5", "7", "9"],
         }
+        self.restrict_oo = extra_args.get("restrict_oo", False)
         self.extra_args = extra_args
 
         if ( ("num_spatial_layers" in extra_args and extra_args["num_spatial_layers"] > 0) or 
@@ -143,6 +146,10 @@ class TextVQADataset(Dataset):
         registry.randomize = self.randomize
         registry.use_gauss_bias = self.use_gauss_bias
         registry.gauss_bias_dev_factor = self.gauss_bias_dev_factor
+        registry.mix_list = extra_args.get("mix_list", ["none"])
+        registry.use_attention_bins = self.use_attention_bins
+        registry.attention_bins = self.attention_bins
+        registry.restrict_oo = self.restrict_oo
 
         logger.info(f"Dynamic Sampling is {self.dynamic_sampling}")
         logger.info(f"distance_threshold is {self.distance_threshold}")
@@ -152,6 +159,16 @@ class TextVQADataset(Dataset):
         logger.info(f"needs_spatial is {self.needs_spatial}")
         logger.info(f"use_gauss_bias is {self.use_gauss_bias}")
         logger.info(f"gauss_bias_dev is {self.gauss_bias_dev_factor}")
+        logger.info(f"restrict_oo is {self.restrict_oo}")
+
+        head_types = []
+        if "mix_list" in self.extra_args:
+            for head_type in set(self.extra_args["mix_list"]):
+                if head_type in self.matrix_type_map:
+                    head_types.extend(self.matrix_type_map[head_type])
+
+        self.head_types = list(set(head_types))
+        self.head_types.sort()
 
         # We only randomize the spatial-adj-matrix
         if self.heads_type != "none":
@@ -193,8 +210,11 @@ class TextVQADataset(Dataset):
             cache_path = cache_path.split(".")[0]
             cache_path = cache_path + f"_spatial" + ".pkl"
             if self.use_gauss_bias:
+                _types = list(set(registry.mix_list))
+                _types.sort()
+                _types = "-".join(_types)
                 cache_path = cache_path.split(".")[0]
-                cache_path = cache_path + f"_gauss_factor_{self.gauss_bias_dev_factor}" + ".pkl"
+                cache_path = cache_path + f"_gauss_factor_{self.gauss_bias_dev_factor}_heads_type_{_types}" + ".pkl"
 
         logger.info(f"Cache Name:  {cache_path}")
 
@@ -281,7 +301,7 @@ class TextVQADataset(Dataset):
             _, _, pad_ocr_bboxes = self._pad_features(
                 ocr_features, ocr_bboxes, ocr_num_boxes, self.max_ocr_num, tensorize=False
             )
-            
+
             # Append bboxes to the list
             pad_obj_ocr_bboxes_list.append(np.concatenate([pad_obj_bboxes[:, :-1], pad_ocr_bboxes[:, :-1]], axis=0))
 
@@ -434,6 +454,8 @@ class TextVQADataset(Dataset):
                 else:
                     entry["spatial_adj_matrices"] = {}
                     entry["gauss_bias_matrices"] = {}
+                    entry["bins_matrices"] = {}
+
                     build_map = {
                         "3": ["1", "31", "32"],
                         "5": ["3", "51", "52"],
@@ -447,21 +469,19 @@ class TextVQADataset(Dataset):
                     )
 
                     if self.use_gauss_bias:
-                        entry["gauss_bias_matrices"]["1"] = torch.zeros_like(entry["spatial_adj_matrices"])._scatter(
-                                entry["spatial_adj_matrix_shared"]["1"],
-                                entry["spatial_gauss_bias_shared"]["1"]
+                        entry["gauss_bias_matrices"]["1"] = torch_broadcast_gauss_bias(
+                                torch.from_numpy(entry["spatial_adj_matrix_shared"]["1"]),
+                                torch.from_numpy(entry["spatial_gauss_bias_shared"]["1"])
                             )
 
-                    # Todo: Add gaussian-bias-matrix in head_types below
-                    #  Fix return value from utils function
+                    if self.use_attention_bins:
+                        entry["bins_matrices"]["1"] = torch_broadcast_bins(
+                                torch.from_numpy(entry["spatial_adj_matrix_shared"]["1"]),
+                                1
+                            )
 
-                    head_types = []
-                    if "mix_list" in self.extra_args:
-                        for head_type in self.extra_args["mix_list"]:
-                            if head_type in self.matrix_type_map:
-                                head_types.append(self.matrix_type_map[head_type])
 
-                    for head_type in head_types:
+                    for head_type in self.head_types:
                         use_matrix_types = build_map[head_type]
                         assert use_matrix_types[0] in entry["spatial_adj_matrices"]
                         init_matrix = entry["spatial_adj_matrices"][use_matrix_types[0]]
@@ -476,26 +496,58 @@ class TextVQADataset(Dataset):
                         init_matrix = torch.max(init_matrix, first_matrix)
                         init_matrix = torch.max(init_matrix, second_matrix)
                         entry["spatial_adj_matrices"][head_type] = init_matrix
-                        if self.use_gauss_bias:
-                            import pdb
-                            pdb.set_trace()
 
-            else:
-                pass
+                        if self.use_gauss_bias:
+                            assert use_matrix_types[0] in entry["spatial_gauss_bias_shared"]
+                            gauss_init_matrix = entry["gauss_bias_matrices"][use_matrix_types[0]]
+                            gauss_first_matrix = torch_broadcast_gauss_bias(
+                                torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[1]]),
+                                torch.from_numpy(entry["spatial_gauss_bias_shared"][use_matrix_types[1]]),
+                            )
+                            gauss_second_matrix = torch_broadcast_gauss_bias(
+                                torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[2]]),
+                                torch.from_numpy(entry["spatial_gauss_bias_shared"][use_matrix_types[2]]),
+                            )
+                            gauss_init_matrix = torch.max(gauss_init_matrix, gauss_first_matrix)
+                            gauss_init_matrix = torch.max(gauss_init_matrix, gauss_second_matrix)
+                            entry["gauss_bias_matrices"][head_type] = gauss_init_matrix
+
+                        if self.use_attention_bins:
+                            bins_init_matrix = entry["bins_matrices"][use_matrix_types[0]]
+                            bins_first_matrix = torch_broadcast_bins(
+                                torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[1]]),
+                                (int(use_matrix_types[1][0]) + 1)/2
+                            )
+                            bins_second_matrix = torch_broadcast_bins(
+                                torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[2]]),
+                                (int(use_matrix_types[2][0]) + 1)/2
+                            )
+                            bins_init_matrix = torch.max(bins_init_matrix, bins_first_matrix)
+                            bins_init_matrix = torch.max(bins_init_matrix, bins_second_matrix)
+                            entry["bins_matrices"][head_type] = bins_init_matrix
+
         item.update(entry)
 
         # remove unwanted keys
-        unwanted_keys = ['spatial_adj_matrix_shared',
+        unwanted_keys_item = ['spatial_gauss_bias_shared',
+                         'spatial_adj_matrix_shared',
                          'cleaned_ocr_tokens',
                          'image_id',
                          'image_path']
 
-        if self.heads_type == "share3":
-            unwanted_keys.append("spatial_adj_matrix_quad4")
-
-        for key in unwanted_keys:
+        for key in unwanted_keys_item:
             if key in item:
                 item.pop(key, None)
+
+        unwanted_keys_entry = [
+            'spatial_adj_matrices',
+            'gauss_bias_matrices',
+            'bin_matrices',
+        ]
+
+        for key in unwanted_keys_entry:
+            if key in entry:
+                entry.pop(key, None)
 
         # Collate Function doesn't work correctly with lists
         for key, value in item.items():

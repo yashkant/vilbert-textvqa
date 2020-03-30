@@ -79,7 +79,7 @@ from tools.registry import registry
 from pytorch_transformers.tokenization_bert import BertTokenizer
 from .textvqa_vocab import VocabDict
 from ..phoc import build_phoc
-from vilbert.spatial_utils_regat import build_graph_using_normalized_boxes, build_graph_using_normalized_boxes_share
+from vilbert.spatial_utils_regat import build_graph_using_normalized_boxes_share
 
 
 def _pad_tokens(tokens, PAD_TOKEN, max_length):

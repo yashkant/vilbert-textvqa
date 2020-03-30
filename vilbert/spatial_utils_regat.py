@@ -125,7 +125,8 @@ def build_graph_using_normalized_boxes(bbox, label_num=11, distance_threshold=0.
     return adj_matrix
 
 
-def torch_broadcast_adj_matrix(adj_matrix, label_num=12,
+def torch_broadcast_adj_matrix(adj_matrix,
+                               label_num=12,
                                device=torch.device("cuda")):
     """ broudcast spatial relation graph
 
@@ -141,14 +142,26 @@ def torch_broadcast_adj_matrix(adj_matrix, label_num=12,
     # (YK): Build one-hot from classes [1-12] to [0-11]
 
     """
-    result = []
-    for i in range(1, label_num + 1):
-        index = torch.nonzero((adj_matrix == i).view(-1).data).squeeze()
-        curr_result = torch.zeros_like(adj_matrix)
-        curr_result = curr_result.view(-1)
-        curr_result[index] += 1
-        result.append(curr_result.view(adj_matrix.shape + (1,)))
-    result = torch.cat(result, dim=-1)
+    result = torch.zeros_like(adj_matrix).unsqueeze(-1).repeat(1, 1, 12)
+    _indices = (adj_matrix-1)*(adj_matrix > 0)
+    result.scatter_(2, _indices.long().unsqueeze(-1), 1)
+    result[:, :, 0] = result[:, :, 0]*(adj_matrix > 0)
+    return result
+
+
+def torch_broadcast_gauss_bias(adj_matrix, gauss_bias):
+    gauss_bias_result = torch.zeros_like(adj_matrix).unsqueeze(-1).repeat(1, 1, 12).type_as(gauss_bias)
+    _indices = (adj_matrix-1)*(adj_matrix > 0)
+    gauss_bias_result.scatter_(2, _indices.long().unsqueeze(-1), gauss_bias.unsqueeze(-1))
+    gauss_bias_result[:, :, 0] = gauss_bias_result[:, :, 0] * (adj_matrix > 0)
+    return gauss_bias_result
+
+
+def torch_broadcast_bins(adj_matrix, fill_value):
+    result = torch.zeros_like(adj_matrix).unsqueeze(-1).repeat(1, 1, 12)
+    _indices = (adj_matrix-1)*(adj_matrix > 0)
+    result.scatter_(2, _indices.long().unsqueeze(-1), fill_value)
+    result[:, :, 0] = result[:, :, 0]*(adj_matrix > 0)
     return result
 
 
@@ -200,7 +213,7 @@ def _build_replace_dict():
 
 
 def gaussian(x, mean, std_dev):
-    return np.exp(-np.power(x - mu, 2.) / (2 * np.power(sig, 2.)))
+    return np.exp(-np.power(x - mean, 2.) / (2 * np.power(std_dev, 2.)))
 
 
 def build_graph_using_normalized_boxes_share(bbox, label_num=11, distance_threshold=0.5, build_gauss_bias=False):
@@ -218,11 +231,13 @@ def build_graph_using_normalized_boxes_share(bbox, label_num=11, distance_thresh
         - blue arrow is from i_box (red box) to j_box (blue box) i.e from  origin to target
         - red arrow is from j_box (blue box) to i_box (red box) i.e from target to origin
     """
+    # map mean for each sector
     mean_map = {}
     for sector in range(4, 12):
-        mean_map[sector] = (math.pi / 16.0) * (2 * (sector - 4) + 1)
+        mean_map[sector] = (math.pi / 8.0) * (2 * (sector - 4) + 1)
     gauss_bias_dev_factor = registry.gauss_bias_dev_factor
     num_box = bbox.shape[0]
+
     # adj_matrix = np.zeros((num_box, num_box))
     share_replace_dict = _build_replace_dict()
     adj_matrix_shared = {}
@@ -303,36 +318,36 @@ def build_graph_using_normalized_boxes_share(bbox, label_num=11, distance_thresh
 
                         # fill in share spatial-matrices
                         for key in adj_matrix_shared.keys():
-
                             if key != "1":
                                 adj_matrix_shared[key][i, j] = share_replace_dict[key].get(adj_matrix_shared["1"][i, j], 0)
                                 adj_matrix_shared[key][j, i] = share_replace_dict[key].get(adj_matrix_shared["1"][j, i], 0)
 
-                            if build_gauss_bias and adj_matrix_shared[key][i, j] in mean_map:
-                                rad_ij = label_i
-                                mean_rad = mean_map[adj_matrix_shared[key][i, j]]
-                                # half-range of head_type
-                                half_range_rad = ((int(key[0]) - 1) / 2) * (math.pi / 4.0) + math.pi / 8.0
+                            if build_gauss_bias and int(adj_matrix_shared[key][i, j]) in mean_map:
+                                rad_ij = float(label_i)
+                                # print("Rad: ", rad_ij)
+                                mean_rad = mean_map[int(adj_matrix_shared[key][i, j])]
+
+                                # half-range of broadest head_type
+                                _keys = [int(head_type[-1]) for head_type in registry.mix_list if "share" in head_type]
+                                half_range_rad = ((max(_keys) - 1) / 2) * (math.pi / 4.0) + math.pi / 8.0
                                 gauss_dev_rad = half_range_rad / gauss_bias_dev_factor
-                                # clockwise and anti-clockwise angles
-                                angle_1 = abs(mean_rad - rad_ij)
-                                angle_2 = 2 * math.pi - angle_1
 
                                 if len(key) == 1:
                                     # mean and relation in same sector
-                                    gauss_weight = gaussian(min(angle_1, angle_2), mean_rad, gauss_dev_rad)
+                                    angle = abs(mean_rad - rad_ij)
+                                    gauss_weight = gaussian(min(angle, 2*math.pi - angle), 0, gauss_dev_rad)
                                 else:
                                     # mean and relation in different sectors
                                     if key[1] == "1":
                                         # use anti-clockwise angle from mean_rad
                                         if mean_rad < rad_ij:
                                             mean_rad += math.pi * 2
-                                        gauss_weight = gaussian(mean_rad - rad_ij, mean_rad, gauss_dev_rad)
+                                        gauss_weight = gaussian(mean_rad - rad_ij, 0, gauss_dev_rad)
                                     else:
                                         # use clockwise angle from mean_rad
                                         if rad_ij < mean_rad:
                                             rad_ij += math.pi * 2
-                                        gauss_weight = gaussian(rad_ij - mean_rad, mean_rad, gauss_dev_rad)
+                                        gauss_weight = gaussian(rad_ij - mean_rad, 0, gauss_dev_rad)
 
                                 # gaussian weight is symmetric
                                 gauss_bias_shared[key][i, j] = gauss_weight
@@ -340,8 +355,6 @@ def build_graph_using_normalized_boxes_share(bbox, label_num=11, distance_thresh
 
     for key in adj_matrix_shared.keys():
         adj_matrix_shared[key] = adj_matrix_shared[key].astype(np.int8)
-        if build_gauss_bias:
-            gauss_bias_shared[key] = gauss_bias_shared[key].astype(np.int8)
 
     return adj_matrix_shared, gauss_bias_shared
 

@@ -68,6 +68,12 @@ class BeamSearch():
             batch_dict['spatial_adj_matrix'] = batch_dict['spatial_adj_matrix'].repeat_interleave(
                 self._decode_size, dim=0)
 
+
+        for _key in ["spatial_adj_matrices", "gauss_bias_matrices"]:
+            if _key in batch_dict:
+                for key in batch_dict[_key]:
+                    batch_dict[_key][key] = batch_dict[_key][key].repeat_interleave(self._decode_size, dim=0)
+
         batch_dict['ocr_mmt_in'] = batch_dict['ocr_mmt_in'].repeat_interleave(self._decode_size, dim=0)
         batch_dict['obj_mmt_in'] = batch_dict['obj_mmt_in'].repeat_interleave(self._decode_size, dim=0)
         batch_dict['question_id'] = batch_dict['question_id'].repeat_interleave(self._decode_size, dim=0)
@@ -123,13 +129,18 @@ class BeamSearch():
             'question_mask',
             'pad_obj_mask',
             'pad_ocr_mask',
-            'spatial_adj_matrix',
+            'spatial_adj_matrices',
+            'gauss_bias_matrices',
             'ocr_mmt_in',
             'obj_mmt_in'
         ]
 
         for key in batch_dict_keys:
-            batch_dict[key] = batch_dict[key][prev_position]
+            if isinstance(batch_dict[key], dict):
+                for _key in batch_dict[key]:
+                    batch_dict[key][_key] = batch_dict[key][_key][prev_position]
+            else:
+                batch_dict[key] = batch_dict[key][prev_position]
 
         # Find complete sequences for each image in the batch!
         if (t + 1 < batch_dict['train_prev_inds'].shape[1]):
