@@ -385,7 +385,7 @@ def main():
 
     # LOAD DATASETS
     task_batch_size, task_num_iters, task_ids, task_datasets_train, task_datasets_val, task_dataloader_train, \
-    task_dataloader_val = LoadDatasets(args, task_cfg, args.tasks.split("-"), test_val_workers=16, test_val_bs=64)
+    task_dataloader_val = LoadDatasets(args, task_cfg, args.tasks.split("-"))
 
     logdir = os.path.join(savePath, "logs")
     tbLogger = utils.tbLogger(
@@ -582,6 +582,8 @@ def main():
     # This validation score is used for model-saving.
     best_val_score = 0
 
+    if task_cfg["TASK19"]["debug"]:
+        median_num_iter = 1
 
     # TRAINING LOOP
     for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
@@ -682,7 +684,7 @@ def main():
                         tbLogger,
                     )
 
-                    if default_gpu and not task_cfg["TASK19"]["debug"]:
+                    if default_gpu:
                         # Save a trained model
                         logger.info("** ** * Saving fine - tuned model ** ** * ")
                         model_to_save = (
@@ -719,7 +721,8 @@ def main():
             lr_scheduler.step()
 
     tbLogger.txt_close()
-    return output_checkpoint, args.task_file, args.use_share2
+
+    return args.task_file, output_checkpoint, args.use_share2
 
 
 def evaluate(
@@ -737,16 +740,21 @@ def evaluate(
 ):
 
     model.eval()
-    for i, batch in enumerate(task_dataloader_val[task_id]):
-        loss, score, batch_size = ForwardModelsVal(
-            args, task_cfg, device, task_id, batch, model, task_losses
-        )
-        tbLogger.step_val(
-            epochId, float(loss), float(score), task_id, batch_size, "val"
-        )
-        if default_gpu:
-            sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
-            sys.stdout.flush()
+
+    try:
+        for i, batch in enumerate(task_dataloader_val[task_id]):
+            loss, score, batch_size = ForwardModelsVal(
+                args, task_cfg, device, task_id, batch, model, task_losses
+            )
+            tbLogger.step_val(
+                epochId, float(loss), float(score), task_id, batch_size, "val"
+            )
+            if default_gpu:
+                sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
+                sys.stdout.flush()
+    except:
+        import pdb
+        pdb.set_trace()
 
     score = tbLogger.showLossVal(task_id, task_stop_controller=None)
     model.train()
@@ -757,7 +765,7 @@ if __name__ == "__main__":
     try:
         task_file_path, output_checkpoint_path, use_share2 = main()
         for beam_size in [1, 5]:
-            for split in ["val"]:
+            for split in ["val", "test"]:
                 eval_command = f"python evaluate_textvqa.py " \
                                 f"--task_file {task_file_path} " \
                                 f"--config_file config/spatial_m4c_mmt_textvqa.json " \
