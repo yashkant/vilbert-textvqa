@@ -59,7 +59,38 @@ def _load_dataset(dataroot, name, clean_datasets):
         answers = cPickle.load(open(answer_path, "rb"))
         answers = sorted(answers, key=lambda x: x["question_id"])
 
+    if name == "re_overlap":
+        question_path = "data/re-vqa/data/revqa_minval_intersect.json"
+        questions = sorted(json.load(open(question_path))["questions"], key=lambda x: x["question_id"])
+
+        question_rephrase_dict = {}
+        for question in questions:
+            if "rephrasing_of" in question:
+                question_rephrase_dict[question["question_id"]] = question["rephrasing_of"]
+            else:
+                question_rephrase_dict[question["question_id"]] = question["question_id"]
+
+        # used in evaluation, hack to set attribute
+        from easydict import EasyDict
+        super(EasyDict, registry).__setattr__("question_rephrase_dict", question_rephrase_dict)
+        super(EasyDict, registry).__setitem__("question_rephrase_dict", question_rephrase_dict)
+
+        answer_path_val = "datasets/VQA/cache/revqa_minval_intersect_target.pkl"
+        answers_val = cPickle.load(open(answer_path_val, "rb"))
+        answers = sorted(answers_val, key=lambda x: x["question_id"])
+
+        # d_q, d_a = [], []
+        # assert len(questions) == len(answers)
+        # for question, answer in zip(questions, answers):
+        #     assert answer["question_id"] == question["question_id"]
+        #     if "rephrasing_of" not in question:
+        #         d_q.append(question)
+        #         d_a.append(answer)
+        #
+        # questions, answers = d_q, d_a
+
     elif name == "trainval":
+        # (YK): We use train + (val - minval) questions
         # LOAD TRAIN questions and answers
         question_path_train = os.path.join(
             dataroot, "v2_OpenEnded_mscoco_%s2014_questions.json" % "train"
@@ -88,6 +119,7 @@ def _load_dataset(dataroot, name, clean_datasets):
         answers = answers_train + answers_val[:-3000]
 
     elif name == "minval":
+        # (YK): We use the last 3000 samples of the validation set
         question_path_val = os.path.join(
             dataroot, "v2_OpenEnded_mscoco_%s2014_questions.json" % "val"
         )
@@ -250,7 +282,7 @@ class VQAClassificationDataset(Dataset):
             return
 
 
-        if not os.path.exists(cache_path):
+        if True or not os.path.exists(cache_path):
             self.entries = _load_dataset(dataroot, split, clean_datasets)
             # convert questions to tokens, create masks, segment_ids
             self.tokenize(max_seq_length)

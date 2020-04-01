@@ -3,11 +3,13 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 from bisect import bisect
+from collections import defaultdict
 from io import open
 import json
 import logging
 import os
 import sys
+from itertools import combinations
 
 import numpy as np
 import torch
@@ -169,6 +171,26 @@ def ForwardModelsVal(args,
 
     results_dict = model(batch_dict)
     batch_dict.update(results_dict)
+
+    if registry["eval_only"]:
+        return batch_dict
+
+    if registry["revqa_eval"]:
+        loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
+        loss = loss.mean() * batch_dict["target"].size(1)
+        # score for each question
+        batch_dict["vqa_scores"] = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"]).sum(dim=-1).tolist()
+        qid_scores = []
+
+        for idx, qid in enumerate(batch_dict["question_id"].tolist()):
+            qid_scores.append({
+                "vqa_score": batch_dict["vqa_scores"][idx],
+                "question_id": qid,
+                "rephrasing_of": registry["question_rephrase_dict"][qid]
+            })
+            registry.revqa_bins[registry["question_rephrase_dict"][qid]].append(batch_dict["vqa_scores"][idx])
+        return
+
 
     # for different task, we use different output to calculate the loss.
     if task_cfg[task_id]["type"] == "VL-classifier":
