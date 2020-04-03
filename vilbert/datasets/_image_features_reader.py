@@ -63,6 +63,8 @@ class ImageFeaturesH5Reader(object):
         self.boxes = [None] * len(self._image_ids)
         self.boxes_ori = [None] * len(self._image_ids)
 
+        print(f"Feature Reader: in_memory is {self._in_memory}")
+
     def __len__(self):
         return len(self._image_ids)
 

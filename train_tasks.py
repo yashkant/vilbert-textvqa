@@ -137,7 +137,7 @@ def main():
     parser.add_argument(
         "--num_workers",
         type=int,
-        default=16,
+        default=8,
         help="Number of workers in the dataloader.",
     )
     parser.add_argument(
@@ -352,6 +352,8 @@ def main():
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
+    
+    assert task_cfg[task]["num_epoch"] == args.num_train_epochs
 
     task_ave_iter = {}
     # task_stop_controller = {}
@@ -440,6 +442,8 @@ def main():
                 default_gpu=default_gpu,
             )
 
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f"Training Parameters: {trainable_params}")
     # LOAD LOSSES
     task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
 
@@ -521,12 +525,14 @@ def main():
 
     # This validation score is used for model-saving.
     best_val_score = 0
-
+    import time
 
     # TRAINING LOOP
     for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
         model.train()
         for step in tqdm(range(median_num_iter), desc="Iters"):
+
+            start_time = time.time()
             iterId = startIterID + step + (epochId * median_num_iter)
             first_task = True
             for task_id in task_ids:
@@ -646,6 +652,7 @@ def main():
             logger.info("best average score is %3f" % lr_scheduler.best)
         elif lr_scheduler_config == "mannul":
             lr_scheduler.step()
+    # Todo: Add config for final_evaluation splits [re-vqa, val, test]
 
     tbLogger.txt_close()
 

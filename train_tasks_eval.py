@@ -650,6 +650,8 @@ def main():
         # elif lr_scheduler_config == "mannul":
         #     lr_scheduler.step()
 
+    # Todo: Add config for final_evaluation splits [re-vqa, val, test]
+
     tbLogger.txt_close()
 
 

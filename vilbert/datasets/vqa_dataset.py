@@ -7,6 +7,7 @@ import os
 import json
 import _pickle as cPickle
 import logging
+import time
 
 import numpy as np
 import torch
@@ -59,7 +60,7 @@ def _load_dataset(dataroot, name, clean_datasets):
         answers = cPickle.load(open(answer_path, "rb"))
         answers = sorted(answers, key=lambda x: x["question_id"])
 
-    if name == "re_overlap":
+    elif name == "re_overlap":
         question_path = "data/re-vqa/data/revqa_minval_intersect.json"
         questions = sorted(json.load(open(question_path))["questions"], key=lambda x: x["question_id"])
 
@@ -282,7 +283,7 @@ class VQAClassificationDataset(Dataset):
             return
 
 
-        if True or not os.path.exists(cache_path):
+        if not os.path.exists(cache_path):
             self.entries = _load_dataset(dataroot, split, clean_datasets)
             # convert questions to tokens, create masks, segment_ids
             self.tokenize(max_seq_length)
@@ -295,6 +296,8 @@ class VQAClassificationDataset(Dataset):
             logger.info("Loading from %s" % cache_path)
             self.entries = cPickle.load(open(cache_path, "rb"))
 
+        self.mean_read_time = 0.0
+        self.num_samples = 0
 
     def process_spatials(self):
         logger.info(f"Processsing Share/Single/Random Spatial Relations with {self.processing_threads} threads")
@@ -433,6 +436,17 @@ class VQAClassificationDataset(Dataset):
                     entry["answer"]["labels"] = None
                     entry["answer"]["scores"] = None
 
+    def _debug(self):
+        import pdb
+        pdb.set_trace()
+        for idx in tqdm(range(len(self.entries))):
+            x, y, z, _ = self._image_features_reader[self.entries[idx]["image_id"]]
+
+        import pdb
+        pdb.set_trace()
+
+
+
     def __getitem__(self, index):
         """
         1. Get image-features/bboxes and image mask (as nump-arrays), tensorize them.
@@ -443,10 +457,20 @@ class VQAClassificationDataset(Dataset):
         # import  time
         # time_start = time.time()
 
+        # self._debug()
+
+        start_time = time.time()
+
         entry = self.entries[index]
+
+        entry_load_time = time.time()
+
         image_id = entry["image_id"]
         question_id = entry["question_id"]
         features, num_boxes, boxes, _ = self._image_features_reader[image_id]
+
+        features_load_time = time.time()
+
 
         mix_num_boxes = min(int(num_boxes), self._max_region_num)
         mix_boxes_pad = np.zeros((self._max_region_num, 5))
@@ -534,11 +558,9 @@ class VQAClassificationDataset(Dataset):
                     #         pdb.set_trace()
                     del entry[key]
 
-
         if self.heads_type == "mix":
             assert image_id in self.spatial_dict
             item_dict.update(self.spatial_dict[image_id])
-
 
         if "test" not in self.split:
             answer = entry["answer"]
@@ -558,8 +580,17 @@ class VQAClassificationDataset(Dataset):
             "target": target,
         })
 
-        # time_end = time.time()
-        # print(f"Time taken: {time_start - time_end}")
+        time_end = time.time()
+        total_time = (time_end-start_time)
+
+        # if total_time > self.mean_read_time*3:
+        #     import pdb
+        #     pdb.set_trace()
+
+        self.mean_read_time = ((self.mean_read_time*self.num_samples) + total_time)/(self.num_samples+1)
+        self.num_samples += 1
+
+
         return item_dict
 
     def __len__(self):

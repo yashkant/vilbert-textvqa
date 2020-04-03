@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 from itertools import combinations
+import time
 
 import numpy as np
 import torch
@@ -226,8 +227,11 @@ def ForwardModelsTrain(
     if task_count[task_id] % len(task_dataloader_train[task_id]) == 0:
         task_iter_train[task_id] = iter(task_dataloader_train[task_id])
 
+    start_time = time.time()
     task_count[task_id] += 1
     batch_dict = task_iter_train[task_id].next()
+    # print(f"Build Batch Time: {time.time()-start_time}")
+
 
     for key, value in batch_dict.items():
         if isinstance(value, torch.Tensor):
@@ -235,7 +239,11 @@ def ForwardModelsTrain(
     question = batch_dict["question_indices"]
     batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
     batch_size = len(question)
+
+    start_time = time.time()
     results_dict = model(batch_dict)
+    # print(f"Time Forward Pass: {time.time()-start_time}")
+
     batch_dict.update(results_dict)
 
     # for different task, we use different output to calculate the loss.
