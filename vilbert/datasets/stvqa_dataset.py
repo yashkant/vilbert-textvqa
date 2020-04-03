@@ -126,16 +126,53 @@ class STVQADataset(TextVQADataset):
         self.heads_type = extra_args.get("heads_type", "none")
         self.clean_answers = extra_args.get("clean_answers", True)
         self.randomize = extra_args.get("randomize", -1)
+        self.needs_spatial = False
+        self.use_gauss_bias = extra_args.get("use_gauss_bias", False)
+        self.gauss_bias_dev_factor = extra_args.get("gauss_bias_dev_factor", -1.0)
+        self.use_attention_bins = extra_args.get("use_attention_bins", False)
+        self.attention_bins = extra_args.get("attention_bins", [-1])
+        self.matrix_type_map = {
+            "share3": ["3"],
+            "share5": ["3", "5"],
+            "share7": ["3", "5", "7"],
+            "share9": ["3", "5", "7", "9"],
+        }
+        self.restrict_oo = extra_args.get("restrict_oo", False)
+        self.extra_args = extra_args
+
+        if ( ("num_spatial_layers" in extra_args and extra_args["num_spatial_layers"] > 0) or
+             ("layer_type_list" in extra_args and "s" in extra_args["layer_type_list"]) ):
+            self.needs_spatial = True
+
 
         registry.vocab_type = self.vocab_type
         registry.distance_threshold = self.distance_threshold
         registry.randomize = self.randomize
+        registry.use_gauss_bias = self.use_gauss_bias
+        registry.gauss_bias_dev_factor = self.gauss_bias_dev_factor
+        registry.mix_list = extra_args.get("mix_list", ["none"])
+        registry.use_attention_bins = self.use_attention_bins
+        registry.attention_bins = self.attention_bins
+        registry.restrict_oo = self.restrict_oo
 
         logger.info(f"Dynamic Sampling is {self.dynamic_sampling}")
         logger.info(f"distance_threshold is {self.distance_threshold}")
         logger.info(f"heads_type: {self.heads_type}")
         logger.info(f"Clean Answers is {self.clean_answers}")
         logger.info(f"Randomize is {self.randomize}")
+        logger.info(f"needs_spatial is {self.needs_spatial}")
+        logger.info(f"use_gauss_bias is {self.use_gauss_bias}")
+        logger.info(f"gauss_bias_dev is {self.gauss_bias_dev_factor}")
+        logger.info(f"restrict_oo is {self.restrict_oo}")
+
+        head_types = []
+        if "mix_list" in self.extra_args:
+            for head_type in set(self.extra_args["mix_list"]):
+                if head_type in self.matrix_type_map:
+                    head_types.extend(self.matrix_type_map[head_type])
+
+        self.head_types = list(set(head_types))
+        self.head_types.sort()
 
         # We only randomize the spatial-adj-matrix
         if self.heads_type != "none":
@@ -166,16 +203,22 @@ class STVQADataset(TextVQADataset):
             )
 
         if self.distance_threshold != 0.5:
+            raise AssertionError
             cache_path = cache_path.split(".")[0]
             cache_path = cache_path + f"_threshold_{self.distance_threshold}" + ".pkl"
-
-        if self.heads_type != "none":
-            cache_path = cache_path.split(".")[0]
-            cache_path = cache_path + f"_heads_new" + ".pkl"
 
         if self.randomize > 0:
             cache_path = cache_path.split(".")[0]
             cache_path = cache_path + f"_randomize_{self.randomize}" + ".pkl"
+        elif self.needs_spatial:
+            cache_path = cache_path.split(".")[0]
+            cache_path = cache_path + f"_spatial" + ".pkl"
+            if self.use_gauss_bias:
+                _types = list(set(registry.mix_list))
+                _types.sort()
+                _types = "-".join(_types)
+                cache_path = cache_path.split(".")[0]
+                cache_path = cache_path + f"_gauss_factor_{self.gauss_bias_dev_factor}_heads_type_{_types}" + ".pkl"
 
         logger.info(f"Cache Name:  {cache_path}")
 
@@ -193,12 +236,11 @@ class STVQADataset(TextVQADataset):
             self.process()
 
             if self.randomize > 0:
+                raise AssertionError
                 self.process_random_spatials()
-            else:
+            elif self.needs_spatial:
                 self.process_spatials()
 
-            if self.heads_type != "none":
-                self.process_spatial_extras()
             if not self.debug:
                 cPickle.dump(self.entries, open(cache_path, "wb"))
         else:

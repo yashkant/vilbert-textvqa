@@ -105,7 +105,7 @@ class BeamSearch():
         prev_position = indices / vocab_size
         new_position = indices % vocab_size
 
-        prev_position = prev_position.view(-1) + self._offset_mat
+        prev_position = prev_position.view(-1) + self._offset_mat.to(prev_position.device)
         new_position = new_position.view(-1)
 
         # New positions and prev_positions found!

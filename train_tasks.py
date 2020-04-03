@@ -23,6 +23,7 @@ import sys
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
+from evaluator import Evaluator
 
 from vilbert.task_utils import (
     LoadDatasets,
@@ -721,7 +722,7 @@ def main():
             lr_scheduler.step()
 
     tbLogger.txt_close()
-
+    del model
     return args.task_file, output_checkpoint, args.use_share2
 
 
@@ -764,18 +765,21 @@ def evaluate(
 if __name__ == "__main__":
     try:
         task_file_path, output_checkpoint_path, use_share2 = main()
+        assert os.path.exists(task_file_path)
+        assert os.path.exists(output_checkpoint_path)
+
+        evaluator = Evaluator(
+            task_file=task_file_path,
+            config_file="config/spatial_m4c_mmt_textvqa.json",
+            batch_size=64,
+            model_ckpt=output_checkpoint_path,
+            short_eval=False,
+            use_share2=False,
+        )
         for beam_size in [1, 5]:
             for split in ["val", "test"]:
-                eval_command = f"python evaluate_textvqa.py " \
-                                f"--task_file {task_file_path} " \
-                                f"--config_file config/spatial_m4c_mmt_textvqa.json " \
-                                f"--batch_size 96 --split {split} " \
-                                f"--model_ckpt {output_checkpoint_path} " \
-                                f"--beam_size {beam_size} " + (f"--use_share2 {use_share2}" if use_share2 else "")
-                print("-"*20)
-                print(f"Eval Command: {eval_command}")
-                print("-"*20)
-                os.system(eval_command)
+                evaluator.load_split(split, beam_size)
+                evaluator.evaluate()
     finally:
         import os
         os.system("watch -n 1 session-quit-error")

@@ -63,6 +63,12 @@ class M4C(nn.Module):
         # build the models
         self.build()
 
+    def set_beam_size(self, beam_size):
+        self.beam_size = beam_size
+        self.bsdecoder = BeamSearch(self.beam_size)
+        logger.info(f"Using beam size: {self.beam_size}")
+
+
     def build(self):
         # modules requiring custom learning rates (usually for finetuning)
         self.finetune_modules = []
