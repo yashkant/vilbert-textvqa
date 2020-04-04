@@ -235,6 +235,8 @@ def main():
     with open(args.task_file, "r") as f:
         task_cfg = edict(yaml.safe_load(f))
 
+    assert os.path.exists(args.config_file)
+
     logger.info("-"*20 + "Config Start" + "-"*20)
     print(vars(args))
     print(task_cfg["TASK19"])
