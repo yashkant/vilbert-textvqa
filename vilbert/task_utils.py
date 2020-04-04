@@ -173,10 +173,10 @@ def ForwardModelsVal(args,
     results_dict = model(batch_dict)
     batch_dict.update(results_dict)
 
-    if registry["eval_only"]:
+    if registry.get("eval_only", False):
         return batch_dict
 
-    if registry["revqa_eval"]:
+    if registry.get("revqa_eval", False):
         loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
         loss = loss.mean() * batch_dict["target"].size(1)
         # score for each question
@@ -403,7 +403,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
             task_dataloader_val[task] = DataLoader(
                 task_datasets_val[task],
                 shuffle=False,
-                batch_size=batch_size,
+                batch_size=64,
                 num_workers=2,
                 pin_memory=True,
             )
