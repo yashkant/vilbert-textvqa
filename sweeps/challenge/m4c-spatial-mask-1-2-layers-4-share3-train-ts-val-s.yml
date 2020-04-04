@@ -50,5 +50,5 @@ TASK19:
   heads_type: mix
   layer_type_list: [n,n,s,s,s,s]
   mix_list: [none, none, share3, share3, share3, share3]
-  use_datasets: ["stvqa"]
+  use_datasets: ["stvqa", "textvqa"]
   val_on: ["stvqa"]
