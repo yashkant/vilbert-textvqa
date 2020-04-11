@@ -701,11 +701,14 @@ def evaluate(
 
     revqa_bins_scores = {}
     if registry.revqa_eval:
+        total_vqa_scores = []
         for key, value in registry.revqa_bins.items():
             k_values = range(1, 1+len(value))
             revqa_bins_scores[key] = {
                 "vqa_scores": value,
             }
+
+            total_vqa_scores.extend(value)
 
             for k_value in k_values:
                 value_subsets = list(combinations(value, k_value))
@@ -718,16 +721,18 @@ def evaluate(
                 revqa_bins_scores[key][k_value] = sum(value_subset_scores)/len(value_subsets)
 
         # Consistency Score Calculation
-        for k_value in k_values:
+        for k_value in range(1, 5):
             scores = []
             for key, value in revqa_bins_scores.items():
                 scores.append(value[k_value])
             print(f"Consensus Score with K={k_value} is {sum(scores)/len(scores)}")
 
-    save_file_path = f"save/{args.tag}"
-    os.makedirs(save_file_path, exist_ok=True)
-    save_file_path = f"{save_file_path}/test_evalai.json"
-    json.dump(results, open(save_file_path, "w"))
+        print(f"VQA Accuracy: {np.mean(total_vqa_scores)}")
+
+    # save_file_path = f"save/{args.tag}"
+    # os.makedirs(save_file_path, exist_ok=True)
+    # save_file_path = f"{save_file_path}/test_evalai.json"
+    # json.dump(results, open(save_file_path, "w"))
 
     # for i, batch in enumerate(task_dataloader_val[task_id]):
     #     loss, score, batch_size = ForwardModelsVal(

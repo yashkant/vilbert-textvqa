@@ -365,7 +365,7 @@ class tbLogger(object):
         logger.info(progressInfo)
         logger.info(lossInfo)
         print(lossInfo, file=self.txt_f)
-        return score
+        return score, loss
 
     def showLossTrain(self):
         # show the current loss, once showed, reset the loss.

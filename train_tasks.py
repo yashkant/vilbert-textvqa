@@ -24,13 +24,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 
-from vilbert.task_utils import (
-    LoadDatasets,
-    LoadLosses,
-    ForwardModelsTrain,
-    ForwardModelsVal,
-    clip_gradients,
-    get_optim_scheduler)
+from tools.registry import registry
 
 import vilbert.utils as utils
 import torch.distributed as dist
@@ -137,7 +131,7 @@ def main():
     parser.add_argument(
         "--num_workers",
         type=int,
-        default=8,
+        default=12,
         help="Number of workers in the dataloader.",
     )
     parser.add_argument(
@@ -236,6 +230,19 @@ def main():
     np.random.seed(seed)
     torch.manual_seed(seed)
     logger.info(f"Using seed: {seed}")
+
+    # Add registry variables for NTXent Loss
+    registry.batch_size = task_cfg["TASK19"]["batch_size"]
+    registry.loss_params = task_cfg["TASK19"].get("loss_params", None)
+    registry.val_batch_size = task_cfg["TASK19"].get("val_batch_size", 64)
+    registry.val_workers = task_cfg["TASK19"].get("val_workers", 8)
+
+    from vilbert.task_utils import (
+        LoadDatasets,
+        LoadLosses,
+        ForwardModelsTrain,
+        clip_gradients,
+        get_optim_scheduler)
 
     model_type = task_cfg["TASK19"]["model_type"] if args.model_type is None else args.model_type
 
@@ -412,7 +419,7 @@ def main():
                     raise ValueError
 
                 # Common keys
-                transfer_keys.extend(["aux_spatial_fusion", "use_aux_heads"])
+                transfer_keys.extend(["aux_spatial_fusion", "use_aux_heads", "contrastive", "contrast_out_dim"])
 
                 # Load config-file M4C
                 with open(args.config_file, "r") as file:
@@ -523,8 +530,9 @@ def main():
         logger.info("Resetting Train Epochs to 0")
         start_epoch = 0
 
-    # This validation score is used for model-saving.
+    # This validation score/loss is used for model-saving.
     best_val_score = 0
+    best_val_loss = np.inf
     import time
 
     # TRAINING LOOP
@@ -597,8 +605,8 @@ def main():
             # decided whether to evaluate on each tasks.
             for task_id in task_ids:
                 # don't run validation during debug runs
-                if task_cfg["TASK19"]["debug"]:
-                    break
+                # if task_cfg["TASK19"]["debug"]:
+                #     break
 
                 if (iterId != 0 and iterId % task_num_iters[task_id] == 0) or (
                     epochId == args.num_train_epochs - 1 and step == median_num_iter - 1
@@ -617,7 +625,7 @@ def main():
                         tbLogger,
                     )
 
-                    if default_gpu and not task_cfg["TASK19"]["debug"]:
+                    if default_gpu:
                         # Save a trained model
                         logger.info("** ** * Saving fine - tuned model ** ** * ")
                         model_to_save = (
@@ -627,12 +635,32 @@ def main():
                         #     savePath, "pytorch_model_" + str(epochId) + ".bin"
                         # )
                         # torch.save(model_to_save.state_dict(), output_model_file)
-                        if curr_val_score > best_val_score:
+                        if curr_val_score >= best_val_score and task_cfg["TASK19"].get("monitor_value", "val_score") == "val_score":
                             output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
                             logger.info(f"Saving Checkpoint: {output_checkpoint}")
                             logger.info(
                                 f"Current Validation Score: {curr_val_score} | Previous Best Validation Score: {best_val_score}")
                             best_val_score = curr_val_score
+                            torch.save(
+                                {
+                                    "model_state_dict": model_to_save.state_dict(),
+                                    "optimizer_state_dict": optimizer.state_dict(),
+                                    "warmup_scheduler_state_dict": warmup_scheduler.state_dict(),
+                                    # 'lr_scheduler_state_dict': lr_scheduler.state_dict(),
+                                    "global_step": global_step,
+                                    "epoch_id": epochId,
+                                    # "task_stop_controller": task_stop_controller,
+                                    "tb_logger": tbLogger,
+                                },
+                                output_checkpoint,
+                            )
+
+                        elif curr_val_loss <= best_val_loss and task_cfg["TASK19"].get("monitor_value", "val_loss") == "val_loss":
+                            output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
+                            logger.info(f"Saving Checkpoint: {output_checkpoint}")
+                            logger.info(
+                                f"Current Validation Loss: {curr_val_loss} | Previous Best Validation Loss: {best_val_loss}")
+                            best_val_loss = curr_val_loss
                             torch.save(
                                 {
                                     "model_state_dict": model_to_save.state_dict(),
@@ -670,7 +698,7 @@ def evaluate(
     default_gpu,
     tbLogger,
 ):
-
+    from vilbert.task_utils import ForwardModelsVal
     model.eval()
     for i, batch in enumerate(task_dataloader_val[task_id]):
         loss, score, batch_size = ForwardModelsVal(
@@ -683,9 +711,9 @@ def evaluate(
             sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
             sys.stdout.flush()
 
-    score = tbLogger.showLossVal(task_id, task_stop_controller=None)
+    score, loss = tbLogger.showLossVal(task_id, task_stop_controller=None)
     model.train()
-    return score
+    return score, loss
 
 
 if __name__ == "__main__":

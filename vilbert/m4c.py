@@ -106,6 +106,9 @@ class M4C(nn.Module):
         )
         self.dropout = nn.Dropout(self.mmt_config.hidden_dropout_prob)
 
+        if hasattr(self.mmt_config, "contrastive") and self.mmt_config.contrastive in ["simclr", "better"]:
+            self.contrastive_projection = ContrastiveProjection(self.mmt_config)
+
 
     def _build_aux_heads(self):
         from vilbert.vilbert import SimpleClassifier
@@ -117,8 +120,11 @@ class M4C(nn.Module):
     def forward(self, batch_dict):
         self._forward_mmt_and_text(batch_dict)
         self._forward_output(batch_dict)
+
         results_dict = {
             "vil_prediction": batch_dict["vil_prediction"],
+            "contrastive_projection_norm": batch_dict["contrastive_projection_norm"]
+            if (hasattr(self.mmt_config, "contrastive") and self.mmt_config.contrastive in ["simclr", "better"]) else None,
         }
         return results_dict
 
@@ -141,6 +147,9 @@ class M4C(nn.Module):
             assert False
         batch_dict["vil_prediction"] = self.vil_prediction(batch_dict["pooled_output"])
         # batch_dict["vil_prediction_gqa"] = self.vil_prediction_gqa(batch_dict["pooled_output"])
+
+        if (hasattr(self.mmt_config, "contrastive") and self.mmt_config.contrastive in ["simclr", "better"]):
+            self.contrastive_projection(batch_dict)
 
     def get_optimizer_parameters(self, base_lr):
         optimizer_param_groups = []
@@ -213,6 +222,17 @@ class BertImageEmbeddings(nn.Module):
         return embeddings
 
 
+class ContrastiveProjection(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        self.linear1 = nn.Linear(config.hidden_size, config.hidden_size)
+        self.linear2 = nn.Linear(config.hidden_size, config.contrast_out_dim)
+
+    def forward(self, batch_dict):
+        batch_dict["contrastive_projection_norm"] = F.normalize(
+            self.linear2(F.relu(self.linear1(batch_dict["pooled_output"]))), dim=-1
+        )
 
 class MMT_VQA(BertPreTrainedModel):
     def __init__(self, config):

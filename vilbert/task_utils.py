@@ -18,7 +18,8 @@ import torch.nn.functional as F
 import torch.nn as nn
 import torch.distributed as dist
 from torch.optim import Adam
-from torch.utils.data import DataLoader, Dataset, RandomSampler, ConcatDataset
+from torch.utils.data import DataLoader, Dataset, ConcatDataset
+from vilbert.samplers import RandomSampler, NegativeSampler
 from torch.utils.data.distributed import DistributedSampler
 from pytorch_transformers.tokenization_bert import BertTokenizer
 from pytorch_transformers.tokenization_roberta import RobertaTokenizer
@@ -36,6 +37,8 @@ from pytorch_transformers.optimization import (
     WarmupConstantSchedule,
     WarmupLinearSchedule,
 )
+
+from vilbert.losses import NTXentLoss
 from vilbert.optimization import RAdam
 from tools.registry import registry
 
@@ -44,6 +47,8 @@ logger = logging.getLogger(__name__)
 LossMap = {
     "BCEWithLogitLoss": nn.BCEWithLogitsLoss(reduction="mean"),
     "CrossEntropyLoss": nn.CrossEntropyLoss(),
+    "NTXentLoss": NTXentLoss(registry.batch_size),
+    "NTXentLossval": NTXentLoss(registry.val_batch_size),
 }
 
 def clip_gradients(model, max_grad_l2_norm, clip_norm_mode):
@@ -154,24 +159,25 @@ def ForwardModelsVal(args,
                      model,
                      task_losses,
                      return_batch=False):
-    for key, value in batch_dict.items():
-        if isinstance(value, torch.Tensor):
-            batch_dict[key] = value.cuda(device=device, non_blocking=True)
-
-    question = batch_dict["question_indices"]
-    batch_size = len(batch_dict["question_id"])
-    batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
-
-    results_dict = model(batch_dict)
-    batch_dict.update(results_dict)
 
 
-    question = batch_dict["question_indices"]
-    batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
-    batch_size = len(question)
+    if not isinstance(batch_dict, tuple) and not isinstance(batch_dict, list):
+        batch_dict = [batch_dict]
 
-    results_dict = model(batch_dict)
-    batch_dict.update(results_dict)
+    for batch in batch_dict:
+        for key, value in batch.items():
+            if isinstance(value, torch.Tensor):
+                batch[key] = value.cuda(device=device, non_blocking=True)
+
+        question = batch["question_indices"]
+        batch["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
+        batch_size = len(question)
+        results_dict = model(batch)
+        batch.update(results_dict)
+
+    if len(batch_dict) == 1:
+        batch_dict = batch_dict[0]
+
 
     if registry.get("eval_only", False):
         return batch_dict
@@ -192,9 +198,13 @@ def ForwardModelsVal(args,
             registry.revqa_bins[registry["question_rephrase_dict"][qid]].append(batch_dict["vqa_scores"][idx])
         return
 
+    if task_cfg[task_id]["type"] == "ContrastiveProjection":
+        assert len(batch_dict) == 2
+        loss, batch_score = LossMap["NTXentLossval"](batch_dict[0]["contrastive_projection_norm"],
+                                        batch_dict[1]["contrastive_projection_norm"])
 
     # for different task, we use different output to calculate the loss.
-    if task_cfg[task_id]["type"] == "VL-classifier":
+    elif task_cfg[task_id]["type"] == "VL-classifier":
         loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
         loss = loss.mean() * batch_dict["target"].size(1)
         batch_score = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"]).sum() / float(
@@ -232,22 +242,40 @@ def ForwardModelsTrain(
     batch_dict = task_iter_train[task_id].next()
     # print(f"Build Batch Time: {time.time()-start_time}")
 
+    if not isinstance(batch_dict, tuple) and not isinstance(batch_dict, list):
+        batch_dict = [batch_dict]
 
-    for key, value in batch_dict.items():
-        if isinstance(value, torch.Tensor):
-            batch_dict[key] = value.cuda(device=device, non_blocking=True)
-    question = batch_dict["question_indices"]
-    batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
-    batch_size = len(question)
+    # Sanity check negatives
+    if not registry.debug:
+        for batch in batch_dict:
+            rephrasing_of = []
+            # iterate over question-ids
+            for question_id in batch["question_id"].tolist():
+                assert registry.question_rephrase_dict_train[question_id] not in rephrasing_of
+                rephrasing_of.append(registry.question_rephrase_dict_train[question_id])
 
-    start_time = time.time()
-    results_dict = model(batch_dict)
-    # print(f"Time Forward Pass: {time.time()-start_time}")
 
-    batch_dict.update(results_dict)
+    for batch in batch_dict:
+        for key, value in batch.items():
+            if isinstance(value, torch.Tensor):
+                batch[key] = value.cuda(device=device, non_blocking=True)
+
+        question = batch["question_indices"]
+        batch["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
+        batch_size = len(question)
+        results_dict = model(batch)
+        batch.update(results_dict)
+
+    if len(batch_dict) == 1:
+        batch_dict = batch_dict[0]
+
+    if task_cfg[task_id]["type"] == "ContrastiveProjection":
+        assert len(batch_dict) == 2
+        loss, batch_score = task_losses[task_id](batch_dict[0]["contrastive_projection_norm"],
+                                    batch_dict[1]["contrastive_projection_norm"])
 
     # for different task, we use different output to calculate the loss.
-    if task_cfg[task_id]["type"] == "VL-classifier":
+    elif task_cfg[task_id]["type"] == "VL-classifier":
         loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
         loss = loss.mean() * batch_dict["target"].size(1)
         batch_score = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"]).sum() / float(
@@ -381,7 +409,14 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
         task_num_iters[task] = 0
         task_batch_size[task] = 0
         if "train" in split:
-            if args.local_rank == -1:
+            if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"]:
+                train_sampler = NegativeSampler(
+                    task_datasets_train[task],
+                    batch_size,
+                    task_cfg,
+                    args
+                )
+            elif args.local_rank == -1:
                 train_sampler = RandomSampler(task_datasets_train[task])
             else:
                 # TODO: check if this works with current data generator from disk that relies on next(file)
@@ -394,6 +429,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
                 batch_size=batch_size,
                 num_workers=num_workers,
                 pin_memory=True,
+                drop_last=True
             )
 
             task_num_iters[task] = len(task_dataloader_train[task])
@@ -403,9 +439,10 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
             task_dataloader_val[task] = DataLoader(
                 task_datasets_val[task],
                 shuffle=False,
-                batch_size=64,
-                num_workers=2,
+                batch_size=registry.val_batch_size,
+                num_workers=registry.val_workers,
                 pin_memory=True,
+                drop_last=True
             )
 
     return (

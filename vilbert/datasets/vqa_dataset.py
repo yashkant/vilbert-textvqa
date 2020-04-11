@@ -8,6 +8,8 @@ import json
 import _pickle as cPickle
 import logging
 import time
+from copy import deepcopy
+from itertools import cycle
 
 import numpy as np
 import torch
@@ -36,6 +38,9 @@ def _create_entry(question, answer):
         "question": question["question"],
         "answer": answer,
     }
+    if "rephrasing_ids" in question:
+        entry["rephrasing_ids"] = question["rephrasing_ids"]
+
     return entry
 
 
@@ -77,6 +82,73 @@ def _load_dataset(dataroot, name, clean_datasets):
         super(EasyDict, registry).__setitem__("question_rephrase_dict", question_rephrase_dict)
 
         answer_path_val = "datasets/VQA/cache/revqa_minval_intersect_target.pkl"
+        answers_val = cPickle.load(open(answer_path_val, "rb"))
+        answers = sorted(answers_val, key=lambda x: x["question_id"])
+
+        # d_q, d_a = [], []
+        # assert len(questions) == len(answers)
+        # for question, answer in zip(questions, answers):
+        #     assert answer["question_id"] == question["question_id"]
+        #     if "rephrasing_of" not in question:
+        #         d_q.append(question)
+        #         d_a.append(answer)
+        #
+        # questions, answers = d_q, d_a
+
+    elif name == "re_train" or name == "re_val":
+        split = name.split("_")[-1]
+        questions_path = f"data/re-vqa/data/revqa_{split}_proc.json"
+        answers_path = f"datasets/VQA/cache/revqa_{split}_target.pkl"
+
+        questions = sorted(json.load(open(questions_path))["questions"], key=lambda x: x["question_id"])
+
+        if registry.debug:
+            questions = questions[:1000]
+
+        question_rephrase_dict = {}
+        for question in questions:
+            if "rephrasing_of" in question:
+                question_rephrase_dict[question["question_id"]] = question["rephrasing_of"]
+            else:
+                question_rephrase_dict[question["question_id"]] = question["question_id"]
+
+        # used in evaluation, hack to set attribute
+        from easydict import EasyDict
+        super(EasyDict, registry).__setattr__(f"question_rephrase_dict_{split}", question_rephrase_dict)
+        super(EasyDict, registry).__setitem__(f"question_rephrase_dict_{split}", question_rephrase_dict)
+
+
+        answers = cPickle.load(open(answers_path, "rb"))
+        answers = sorted(answers, key=lambda x: x["question_id"])
+
+        if registry.debug:
+            answers = answers[:1000]
+
+        assert len(questions) == len(answers)
+        for question, answer in zip(questions, answers):
+            try:
+                assert answer["question_id"] == question["question_id"]
+            except:
+                import pdb
+                pdb.set_trace()
+
+    elif name == "re_total":
+        question_path = "data/re-vqa/data/revqa_total.json"
+        questions = sorted(json.load(open(question_path))["questions"], key=lambda x: x["question_id"])
+
+        question_rephrase_dict = {}
+        for question in questions:
+            if "rephrasing_of" in question:
+                question_rephrase_dict[question["question_id"]] = question["rephrasing_of"]
+            else:
+                question_rephrase_dict[question["question_id"]] = question["question_id"]
+
+        # used in evaluation, hack to set attribute
+        from easydict import EasyDict
+        super(EasyDict, registry).__setattr__("question_rephrase_dict", question_rephrase_dict)
+        super(EasyDict, registry).__setitem__("question_rephrase_dict", question_rephrase_dict)
+
+        answer_path_val = "datasets/VQA/cache/revqa_total_target.pkl"
         answers_val = cPickle.load(open(answer_path_val, "rb"))
         answers = sorted(answers_val, key=lambda x: x["question_id"])
 
@@ -243,6 +315,7 @@ class VQAClassificationDataset(Dataset):
         self.randomize = extra_args.get("randomize", -1)
         self.processing_threads = processing_threads
         self.spatial_dict = {}
+        self.extra_args = extra_args
 
         logger.info(f"heads_type: {self.heads_type}")
         logger.info(f"Randomize is {self.randomize}")
@@ -274,16 +347,17 @@ class VQAClassificationDataset(Dataset):
             cache_path = cache_path.split(".")[0]
             cache_path = cache_path + "_heads_new.pkl"
 
-        if self.debug:
-            cache_path = "/nethome/ykant3/vilbert-multi-task/datasets/VQA/cache/VQA_trainval_23_debug.pkl"
-            logger.info("Loading in debug mode from %s" % cache_path)
-            self.entries = cPickle.load(open(cache_path, "rb"))
-            if self.heads_type != "none" or self.randomize > 0:
-                self.process_spatials()
-            return
+        # if self.debug:
+        #     cache_path = "/nethome/ykant3/vilbert-multi-task/datasets/VQA/cache/VQA_trainval_23_debug.pkl"
+        #     logger.info("Loading in debug mode from %s" % cache_path)
+        #     self.entries = cPickle.load(open(cache_path, "rb"))
+        #     if self.heads_type != "none" or self.randomize > 0:
+        #         self.process_spatials()
+        #     return
 
 
-        if not os.path.exists(cache_path):
+        if not os.path.exists(cache_path) or extra_args.get("revqa_eval", False) or extra_args.get("contrastive", None) \
+                in ["simclr", "better"]:
             self.entries = _load_dataset(dataroot, split, clean_datasets)
             # convert questions to tokens, create masks, segment_ids
             self.tokenize(max_seq_length)
@@ -298,6 +372,20 @@ class VQAClassificationDataset(Dataset):
 
         self.mean_read_time = 0.0
         self.num_samples = 0
+
+    #     if extra_args.get("revqa_eval", False) or extra_args.get("contrastive", None) in ["simclr", "better"]:
+    #         self.build_map()
+    #
+    # def build_map(self):
+    #     self.entry_map = {}
+    #     for entry in self.entries:
+    #         question_ids = list(set(deepcopy(entry["rephrasing_ids"]) + [entry["question_id"]]))
+    #         question_ids.sort()
+    #         self.entry_map[min(question_ids)] = {
+    #             "ids": question_ids,
+    #             "iter": cycle(question_ids)
+    #         }
+    #     self.map_items = sorted(self.entry_map.items(), key=lambda x: x[0])
 
     def process_spatials(self):
         logger.info(f"Processsing Share/Single/Random Spatial Relations with {self.processing_threads} threads")
@@ -336,14 +424,12 @@ class VQAClassificationDataset(Dataset):
             entry["spatial_adj_matrix_random1"] = adj_matrix_random1
             entry["spatial_adj_matrix_random3"] = adj_matrix_random3
 
-
     @staticmethod
     def process_all_spatials(pad_obj_bboxes):
         adj_matrix, adj_matrix_share3_1, adj_matrix_share3_2 \
             = build_graph_using_normalized_boxes(pad_obj_bboxes, distance_threshold=0.5)
         adj_matrix_random1, adj_matrix_random3 = random_spatial_processor(pad_obj_bboxes)
         return adj_matrix, adj_matrix_share3_1, adj_matrix_share3_2, adj_matrix_random1, adj_matrix_random3
-
 
     def _pad_features(self, features, bboxes, num_boxes, max_feat_num, tensorize=True):
         mix_num_boxes = min(int(num_boxes), max_feat_num)
@@ -367,14 +453,15 @@ class VQAClassificationDataset(Dataset):
 
         return pad_features, mask_features, pad_bboxes
 
-
     def tokenize(self, max_length=16):
         """Tokenizes the questions.
 
         (YK): This will add (q_token, q_input_mask, q_segment_ids) in each entry of the dataset.
         -1 represent nil, and should be treated as padding_index in embedding
         """
-        for entry in tqdm(self.entries, desc="Tokenizing..."):
+        self.question_map = {}
+        for _idx, entry in enumerate(tqdm(self.entries, desc="Tokenizing...")):
+            self.question_map[entry["question_id"]] = _idx
             tokens = self._tokenizer.encode(entry["question"])
             tokens = tokens[: max_length - 2]
             tokens = self._tokenizer.add_special_tokens_single_sentence(tokens)
@@ -437,15 +524,10 @@ class VQAClassificationDataset(Dataset):
                     entry["answer"]["scores"] = None
 
     def _debug(self):
-        import pdb
-        pdb.set_trace()
         for idx in tqdm(range(len(self.entries))):
             x, y, z, _ = self._image_features_reader[self.entries[idx]["image_id"]]
-
         import pdb
         pdb.set_trace()
-
-
 
     def __getitem__(self, index):
         """
@@ -461,6 +543,10 @@ class VQAClassificationDataset(Dataset):
 
         start_time = time.time()
 
+        # # Can't have rephrasings as negatives
+        # if self.extra_args.get("contrastive", None) in ["simclr", "better"]:
+        #     _question_id = next(self.map_items[index][1]["iter"])
+        #     index = self.question_map[_question_id]
         entry = self.entries[index]
 
         entry_load_time = time.time()
@@ -590,8 +676,33 @@ class VQAClassificationDataset(Dataset):
         self.mean_read_time = ((self.mean_read_time*self.num_samples) + total_time)/(self.num_samples+1)
         self.num_samples += 1
 
+        if self.extra_args.get("contrastive", None) == "simclr":
+            item_pos_dict = deepcopy(item_dict)
+
+            if registry.debug:
+                return item_dict, item_pos_dict
+
+            pos_id = np.random.choice(entry["rephrasing_ids"])
+            pos_entry = self.entries[self.question_map[pos_id]]
+            try:
+                assert pos_entry["image_id"] == entry["image_id"]
+                if pos_entry["answer"]["labels"] is not None:
+                    assert all(pos_entry["answer"]["labels"] == entry["answer"]["labels"])
+            except:
+                import pdb
+                pdb.set_trace()
+
+            item_pos_dict.update({
+                "question_indices": pos_entry["q_token"],
+                "question_mask": pos_entry["q_input_mask"],
+                "question_id": pos_entry["question_id"],
+            })
+            return (item_dict, item_pos_dict)
 
         return item_dict
 
     def __len__(self):
+        # if self.extra_args.get("contrastive", None) in ["simclr", "better"]:
+        #     return len(self.map_items)
+        # else:
         return len(self.entries)
