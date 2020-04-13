@@ -5,6 +5,7 @@
 
 from io import open
 import json
+import gc
 import logging
 from functools import wraps
 from hashlib import sha256
@@ -1030,3 +1031,20 @@ class PreTrainedModel(nn.Module):
             return model, loading_info
 
         return model
+
+def debug_gpu():
+    print("Memory Usage:")
+    for obj in gc.get_objects():
+        try:
+            if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
+                # filter out model parameters
+                if isinstance(obj, torch.nn.parameter.Parameter):
+                    pass
+                    # print("Model Parameter:", type(obj), obj.size(), obj.device)
+                else:
+                    # print("Tensor:", type(obj), obj.size(), obj.device)
+                    if obj.is_cuda:
+                        print("Tensor:", type(obj), obj.size(), obj.device)
+        except:
+            pass
+

@@ -14,20 +14,20 @@ TASK19:
   val_annotations_jsonpath: ''
   max_seq_length: 23
   max_region_num: 101
-  batch_size: 212
+  batch_size: 208
   eval_batch_size: 1024
   train_split: re_train
   val_split: re_val
-  lr: 0.0003
+  lr: 0.00001
   # Change at both places num_epochs
   num_epoch: 20
-  debug: False
+  debug: false
   model_type: m4c
   grad_clip_mode: all
   optim: Adam
   lr_scheduler: pythia_warmup_decay
-  warmup_iters: 7678
-  lr_decay_iters: [38390, 61424]
+  warmup_iters: 1364 # 2 epochs
+  lr_decay_iters: [4774, 9548] # 7, 14  epochs
   warmpu_factors: 0.1
   lr_decay: 0.2
   max_grad_norm: 0.25
@@ -35,8 +35,11 @@ TASK19:
   revqa_eval: false
   contrastive: simclr
   contrast_out_dim: 512
-  val_batch_size: 64
+  val_batch_size: 208
   monitor_value: val_loss
+  weight_decay: 0.00001
+  # don't load the optimizer, lr-scheduler states
+#  load_state: false
   #  contrastive: better
   #  contrastive_supervised: true/false (use answers to filter negatives)
   #  better_params: [50,50]

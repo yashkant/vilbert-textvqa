@@ -86,13 +86,14 @@ def get_optim_scheduler(args,
                         ):
     optim_config = config["TASK19"]["optim"] if args.optim is None else args.optim
     scheduler_config = config["TASK19"]["lr_scheduler"] if args.lr_scheduler is None else args.lr_scheduler
+    weight_decay = config["TASK19"].get("weight_decay", 0.0)
 
     if optim_config == "AdamW":
         optimizer = AdamW(optimizer_grouped_parameters, lr=base_lr, correct_bias=False)
     elif optim_config == "RAdam":
-        optimizer = RAdam(optimizer_grouped_parameters, lr=base_lr)
+        optimizer = RAdam(optimizer_grouped_parameters, lr=base_lr, weight_decay=weight_decay)
     elif optim_config == "Adam":
-        optimizer = Adam(optimizer_grouped_parameters, lr=base_lr)
+        optimizer = Adam(optimizer_grouped_parameters, lr=base_lr, weight_decay=weight_decay)
     else:
         raise ValueError
 
@@ -164,6 +165,15 @@ def ForwardModelsVal(args,
     if not isinstance(batch_dict, tuple) and not isinstance(batch_dict, list):
         batch_dict = [batch_dict]
 
+    # Sanity check negatives
+    if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"] and not task_cfg["TASK19"]["debug"]:
+        for batch in batch_dict:
+            rephrasing_of = []
+            # iterate over question-ids
+            for question_id in batch["question_id"].tolist():
+                assert registry.question_rephrase_dict_val[question_id] not in rephrasing_of
+                rephrasing_of.append(registry.question_rephrase_dict_val[question_id])
+
     for batch in batch_dict:
         for key, value in batch.items():
             if isinstance(value, torch.Tensor):
@@ -195,6 +205,7 @@ def ForwardModelsVal(args,
                 "question_id": qid,
                 "rephrasing_of": registry["question_rephrase_dict"][qid]
             })
+            # todo: below line might lead to leakage
             registry.revqa_bins[registry["question_rephrase_dict"][qid]].append(batch_dict["vqa_scores"][idx])
         return
 
@@ -217,6 +228,9 @@ def ForwardModelsVal(args,
         batch_score = compute_score_with_logits(
             batch_dict["vil_prediction_gqa"], batch_dict["target"]
         ).sum() / float(batch_size)
+
+    del results_dict
+    del batch_dict
 
     return float(loss), float(batch_score), batch_size
 
@@ -246,7 +260,7 @@ def ForwardModelsTrain(
         batch_dict = [batch_dict]
 
     # Sanity check negatives
-    if not registry.debug:
+    if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"] and not task_cfg["TASK19"]["debug"]:
         for batch in batch_dict:
             rephrasing_of = []
             # iterate over question-ids
@@ -274,6 +288,11 @@ def ForwardModelsTrain(
         loss, batch_score = task_losses[task_id](batch_dict[0]["contrastive_projection_norm"],
                                     batch_dict[1]["contrastive_projection_norm"])
 
+        for key in results_dict.keys():
+            del batch_dict[0][key]
+            del batch_dict[1][key]
+
+
     # for different task, we use different output to calculate the loss.
     elif task_cfg[task_id]["type"] == "VL-classifier":
         loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
@@ -281,6 +300,9 @@ def ForwardModelsTrain(
         batch_score = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"]).sum() / float(
             batch_size
         )
+        for key in results_dict.keys():
+            del batch_dict[key]
+
 
     elif task_cfg[task_id]["type"] == "VL-classifier-GQA":
         loss = task_losses[task_id](batch_dict["vil_prediction_gqa"], batch_dict["target"])
@@ -289,7 +311,15 @@ def ForwardModelsTrain(
             batch_dict["vil_prediction_gqa"], batch_dict["target"]
         ).sum() / float(batch_size)
 
-    return loss, batch_score
+        for key in results_dict.keys():
+            del batch_dict[key]
+
+    del results_dict
+    del batch_dict
+    # # we are storing tensors in batch-dict, refs to which cause OOM (I think)
+
+
+    return loss, float(batch_score)
 
 
 def LoadLosses(args, task_cfg, task_ids):
@@ -410,11 +440,13 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
         task_batch_size[task] = 0
         if "train" in split:
             if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"]:
+                logger.info("Using Negative Train Sampler")
                 train_sampler = NegativeSampler(
                     task_datasets_train[task],
                     batch_size,
                     task_cfg,
-                    args
+                    args,
+                    split="train"
                 )
             elif args.local_rank == -1:
                 train_sampler = RandomSampler(task_datasets_train[task])
@@ -436,9 +468,22 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
             task_batch_size[task] = batch_size
 
         if "val" in split:
+            if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"]:
+                logger.info("Using Negative Validation Sampler")
+                val_sampler = NegativeSampler(
+                    task_datasets_val[task],
+                    batch_size,
+                    task_cfg,
+                    args,
+                    split="val"
+                )
+            else:
+                val_sampler=None
+
             task_dataloader_val[task] = DataLoader(
                 task_datasets_val[task],
                 shuffle=False,
+                sampler=val_sampler,
                 batch_size=registry.val_batch_size,
                 num_workers=registry.val_workers,
                 pin_memory=True,

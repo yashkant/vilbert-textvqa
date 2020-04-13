@@ -38,8 +38,17 @@ def _create_entry(question, answer):
         "question": question["question"],
         "answer": answer,
     }
-    if "rephrasing_ids" in question:
-        entry["rephrasing_ids"] = question["rephrasing_ids"]
+
+    retain_keys = ["rephrasing_ids",
+                   "top_k_questions",
+                   "top_k_questions_neg",
+                   "same_image_questions",
+                   "same_image_questions_neg"
+                   ]
+
+    for key in retain_keys:
+        if key in question:
+            entry[key] = question[key]
 
     return entry
 

@@ -90,7 +90,7 @@ class M4C(nn.Module):
     def _build_mmt(self):
         self.mmt = MMT_VQA(self.mmt_config)
 
-        # allow specifying a different/scaled lr for multimodal transformer
+        # allow specifying a different/scaled lr for  multimodal transformer
         self.finetune_modules.append({
             'module': self.mmt,
             'lr_scale': self.mmt_config.lr_scale_mmt,
@@ -106,7 +106,7 @@ class M4C(nn.Module):
         )
         self.dropout = nn.Dropout(self.mmt_config.hidden_dropout_prob)
 
-        if hasattr(self.mmt_config, "contrastive") and self.mmt_config.contrastive in ["simclr", "better"]:
+        if hasattr(self.mmt_config, "contrastive") and self.mmt_config.contrastive in ["simclr", "better", "finetune"]:
             self.contrastive_projection = ContrastiveProjection(self.mmt_config)
 
 
@@ -153,8 +153,6 @@ class M4C(nn.Module):
 
     def get_optimizer_parameters(self, base_lr):
         optimizer_param_groups = []
-
-        # base_lr = config.optimizer_attributes.params.lr
         # collect all the parameters that need different/scaled lr
         finetune_params_set = set()
         for m in self.finetune_modules:
@@ -233,6 +231,7 @@ class ContrastiveProjection(nn.Module):
         batch_dict["contrastive_projection_norm"] = F.normalize(
             self.linear2(F.relu(self.linear1(batch_dict["pooled_output"]))), dim=-1
         )
+
 
 class MMT_VQA(BertPreTrainedModel):
     def __init__(self, config):

@@ -4,6 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import argparse
+import gc
 import json
 import logging
 import os
@@ -233,7 +234,7 @@ def main():
 
     # Add registry variables for NTXent Loss
     registry.batch_size = task_cfg["TASK19"]["batch_size"]
-    registry.loss_params = task_cfg["TASK19"].get("loss_params", None)
+    registry.loss_params = task_cfg["TASK19"].get("loss_params", {"temperature": None, "use_cosine_similarity": None})
     registry.val_batch_size = task_cfg["TASK19"].get("val_batch_size", 64)
     registry.val_workers = task_cfg["TASK19"].get("val_workers", 8)
 
@@ -296,6 +297,7 @@ def main():
         device = torch.device(
             "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
         )
+        torch.backends.cudnn.benchmark = True
         n_gpu = torch.cuda.device_count()
     else:
         torch.cuda.set_device(args.local_rank)
@@ -419,7 +421,7 @@ def main():
                     raise ValueError
 
                 # Common keys
-                transfer_keys.extend(["aux_spatial_fusion", "use_aux_heads", "contrastive", "contrast_out_dim"])
+                transfer_keys.extend(["aux_spatial_fusion", "use_aux_heads", "contrastive", "contrast_out_dim", "lr_scale_mmt"])
 
                 # Load config-file M4C
                 with open(args.config_file, "r") as file:
@@ -476,7 +478,11 @@ def main():
     startIterID = 0
     global_step = 0
     start_epoch = 0
-
+    
+    # for finetuning we need resume-file
+    if task_cfg["TASK19"].get("contrastive", None) == "finetune":
+        assert args.resume_file != ""
+    
     if args.resume_file != "" and os.path.exists(args.resume_file):
         logger.info(f"Resuming from Checkpoint: {args.resume_file}")
         checkpoint = torch.load(args.resume_file, map_location="cpu")
@@ -489,15 +495,19 @@ def main():
             else:
                 new_dict[attr] = checkpoint["model_state_dict"][attr]
         model.load_state_dict(new_dict)
-        warmup_scheduler.load_state_dict(checkpoint["warmup_scheduler_state_dict"])
-        # lr_scheduler.load_state_dict(checkpoint['lr_scheduler_state_dict'])
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        global_step = checkpoint["global_step"]
-        start_epoch = int(checkpoint["epoch_id"]) + 1
-        # task_stop_controller = checkpoint["task_stop_controller"]
-        tbLogger = checkpoint["tb_logger"]
-        del checkpoint
 
+        if task_cfg["TASK19"].get("load_state", False):
+            print("Loading Optimizer and Scheduler States")
+            warmup_scheduler.load_state_dict(checkpoint["warmup_scheduler_state_dict"])
+            # lr_scheduler.load_state_dict(checkpoint['lr_scheduler_state_dict'])
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            global_step = checkpoint["global_step"]
+            start_epoch = int(checkpoint["epoch_id"]) + 1
+            # task_stop_controller = checkpoint["task_stop_controller"]
+            tbLogger = checkpoint["tb_logger"]
+        else:
+            print("Not loading optimizer and scheduler states")
+        del checkpoint
     model.to(device)
 
     for state in optimizer.state.values():
@@ -539,7 +549,7 @@ def main():
     for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
         model.train()
         for step in tqdm(range(median_num_iter), desc="Iters"):
-
+            # logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}")
             start_time = time.time()
             iterId = startIterID + step + (epochId * median_num_iter)
             first_task = True
@@ -558,23 +568,27 @@ def main():
                         task_losses,
                     )
 
+                    # We add Parameter.grad variables after this step
                     loss.backward()
 
                     if task_cfg["TASK19"]["grad_clip_mode"] == "all":
                         clip_gradients(model, task_cfg["TASK19"]["max_grad_norm"], task_cfg["TASK19"]["grad_clip_mode"])
 
                     if (step + 1) % args.gradient_accumulation_steps == 0:
+                        # Some tensors are added to GPU here! Not sure why \_(;-;)_/
                         optimizer.step()
 
                         if first_task and (
                             global_step < warmpu_steps
                             or lr_scheduler_config == "warmup_linear"
-                            or lr_scheduler_config == "pythia_warmup_decay"
+                            or lr_scheduler_config == "pythia_warmup_decay" # always true
                         ):
                             warmup_scheduler.step()
 
 
                         model.zero_grad()
+                        optimizer.zero_grad()
+
                         if first_task:
                             global_step += 1
                             first_task = False
@@ -589,6 +603,9 @@ def main():
                                 task_id,
                                 "train",
                             )
+                    del loss
+                    del score
+            gc.collect()
 
             if "cosine" in lr_scheduler_config and global_step > warmpu_steps:
                 lr_scheduler.step()
@@ -611,7 +628,8 @@ def main():
                 if (iterId != 0 and iterId % task_num_iters[task_id] == 0) or (
                     epochId == args.num_train_epochs - 1 and step == median_num_iter - 1
                 ):
-                    curr_val_score = evaluate(
+                    logger.info("Starting Validation Run....")
+                    curr_val_score, curr_val_loss = evaluate(
                         args,
                         task_dataloader_val,
                         None,
@@ -699,11 +717,12 @@ def evaluate(
     tbLogger,
 ):
     from vilbert.task_utils import ForwardModelsVal
-    model.eval()
+    model.eval()  # turn off dropout/batch-norm
     for i, batch in enumerate(task_dataloader_val[task_id]):
-        loss, score, batch_size = ForwardModelsVal(
-            args, task_cfg, device, task_id, batch, model, task_losses
-        )
+        with torch.no_grad():  # turn off autograd engine
+            loss, score, batch_size = ForwardModelsVal(
+                args, task_cfg, device, task_id, batch, model, task_losses
+            )
         tbLogger.step_val(
             epochId, float(loss), float(score), task_id, batch_size, "val"
         )
