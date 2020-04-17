@@ -47,11 +47,10 @@ TASK19:
 
   # loss attributes
   contrastive: simclr
+  use_gt_answer: true
 
   # don't load the optimizer, lr-scheduler states
-#  load_state: false
+  # load_state: false
   #  contrastive: better
   #  contrastive_supervised: true/false (use answers to filter negatives)
   #  better_params: [50,50]
-
-

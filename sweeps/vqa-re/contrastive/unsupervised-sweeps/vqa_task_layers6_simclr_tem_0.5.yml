@@ -3,7 +3,7 @@ TASK19:
   type: ContrastiveProjection
   loss: NTXentLoss
   loss_params:
-    temperature: 0.1
+    temperature: 0.5
     use_cosine_similarity: True
   process: normal
   task_id: 1

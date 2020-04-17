@@ -25,7 +25,7 @@ TASK19:
   grad_clip_mode: all
   max_grad_norm: 0.25
   # weight-decay (doesn't apply on batch-norm and biases)
-  weight_decay: 0.00001
+  weight_decay: 0.00
 
   # optimizer
   optim: Adam

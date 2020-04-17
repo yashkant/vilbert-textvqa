@@ -19,7 +19,7 @@ TASK19:
   debug: false
 
   # Change at both places num_epochs
-  num_epoch: 20
+  num_epoch: 100
 
   # grad-clipping
   grad_clip_mode: all
@@ -46,7 +46,14 @@ TASK19:
   monitor_value: val_loss
 
   # loss attributes
-  contrastive: simclr
+  contrastive: better
+  init_batch_size: 16
+  neg_type_weights: [0.0, 0.9, 0.1]
+  # increase this threshold as you decrease the init_batch_size
+  neg_question_thresh: 210
+  use_gt_answer: false
+  neg_replace: true
+
 
   # don't load the optimizer, lr-scheduler states
 #  load_state: false
