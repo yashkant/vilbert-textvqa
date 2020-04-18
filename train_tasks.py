@@ -238,6 +238,8 @@ def main():
     registry.val_batch_size = task_cfg["TASK19"].get("val_batch_size", 64)
     registry.val_workers = task_cfg["TASK19"].get("val_workers", 8)
 
+    assert task_cfg["TASK19"]["num_epoch"] == args.num_train_epochs
+
     from vilbert.task_utils import (
         LoadDatasets,
         LoadLosses,
@@ -339,6 +341,7 @@ def main():
     task_batch_size, task_num_iters, task_ids, task_datasets_train, task_datasets_val, task_dataloader_train, \
     task_dataloader_val = LoadDatasets(args, task_cfg, args.tasks.split("-"))
 
+
     logdir = os.path.join(savePath, "logs")
     tbLogger = utils.tbLogger(
         logdir,
@@ -362,7 +365,6 @@ def main():
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
     
-    assert task_cfg[task]["num_epoch"] == args.num_train_epochs
 
     task_ave_iter = {}
     # task_stop_controller = {}
@@ -421,7 +423,14 @@ def main():
                     raise ValueError
 
                 # Common keys
-                transfer_keys.extend(["aux_spatial_fusion", "use_aux_heads", "contrastive", "contrast_out_dim", "lr_scale_mmt"])
+                transfer_keys.extend(["aux_spatial_fusion",
+                                      "use_aux_heads",
+                                      "contrastive",
+                                      "weight_decay",
+                                      "freeze_mmt_and_textbert",
+                                      "lr_scale_text_bert",
+                                      "contrast_out_dim",
+                                      "lr_scale_mmt"])
 
                 # Load config-file M4C
                 with open(args.config_file, "r") as file:
@@ -441,7 +450,13 @@ def main():
                         logger.info(f"Transferring keys:  {key}, {config_dict[key]}")
                 mmt_config = BertConfig.from_dict(config_dict)
 
-                text_bert_config = BertConfig.from_json_file("config/m4c_textbert_vqa.json")
+                text_bert_config = "config/m4c_textbert_vqa.json"
+
+                if task_cfg["TASK19"].get("freeze_text_bert", False):
+                    logger.info("TextBert Frozen")
+                    text_bert_config = "config/m4c_textbert_vqa_frozen.json"
+
+                text_bert_config = BertConfig.from_json_file(text_bert_config)
                 model = M4C(mmt_config, text_bert_config)
         else:
             model = VILBertForVLTasks.from_pretrained(
@@ -616,8 +631,7 @@ def main():
                 and default_gpu
             ):
                 tbLogger.showLossTrain()
-                if step % (100 * args.gradient_accumulation_steps) == 0:
-                    logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}")
+                logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}")
 
             # decided whether to evaluate on each tasks.
             for task_id in task_ids:

@@ -41,6 +41,7 @@ from pytorch_transformers.optimization import (
 from vilbert.losses import NTXentLoss
 from vilbert.optimization import RAdam
 from tools.registry import registry
+from vilbert.utils import debug_sampler
 
 logger = logging.getLogger(__name__)
 
@@ -86,14 +87,15 @@ def get_optim_scheduler(args,
                         ):
     optim_config = config["TASK19"]["optim"] if args.optim is None else args.optim
     scheduler_config = config["TASK19"]["lr_scheduler"] if args.lr_scheduler is None else args.lr_scheduler
-    weight_decay = config["TASK19"].get("weight_decay", 0.0)
+    # moved to model-file
+    # weight_decay = config["TASK19"].get("weight_decay", 0.0)
 
     if optim_config == "AdamW":
         optimizer = AdamW(optimizer_grouped_parameters, lr=base_lr, correct_bias=False)
     elif optim_config == "RAdam":
-        optimizer = RAdam(optimizer_grouped_parameters, lr=base_lr, weight_decay=weight_decay)
+        optimizer = RAdam(optimizer_grouped_parameters, lr=base_lr)
     elif optim_config == "Adam":
-        optimizer = Adam(optimizer_grouped_parameters, lr=base_lr, weight_decay=weight_decay)
+        optimizer = Adam(optimizer_grouped_parameters, lr=base_lr)
     else:
         raise ValueError
 
@@ -171,8 +173,12 @@ def ForwardModelsVal(args,
             rephrasing_of = []
             # iterate over question-ids
             for question_id in batch["question_id"].tolist():
-                assert registry.question_rephrase_dict_val[question_id] not in rephrasing_of
-                rephrasing_of.append(registry.question_rephrase_dict_val[question_id])
+                try:
+                    assert registry.question_rephrase_dict_val[question_id] not in rephrasing_of
+                    rephrasing_of.append(registry.question_rephrase_dict_val[question_id])
+                except:
+                    import pdb
+                    pdb.set_trace()
 
     for batch in batch_dict:
         for key, value in batch.items():
@@ -265,9 +271,12 @@ def ForwardModelsTrain(
             rephrasing_of = []
             # iterate over question-ids
             for question_id in batch["question_id"].tolist():
-                assert registry.question_rephrase_dict_train[question_id] not in rephrasing_of
-                rephrasing_of.append(registry.question_rephrase_dict_train[question_id])
-
+                try:
+                    assert registry.question_rephrase_dict_train[question_id] not in rephrasing_of
+                    rephrasing_of.append(registry.question_rephrase_dict_train[question_id])
+                except:
+                    import pdb
+                    pdb.set_trace()
 
     for batch in batch_dict:
         for key, value in batch.items():
@@ -489,6 +498,9 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
                 pin_memory=True,
                 drop_last=True
             )
+
+    # debug_sampler(train_sampler)
+    # debug_sampler(val_sampler)
 
     return (
         task_batch_size,

@@ -685,7 +685,7 @@ class VQAClassificationDataset(Dataset):
         self.mean_read_time = ((self.mean_read_time*self.num_samples) + total_time)/(self.num_samples+1)
         self.num_samples += 1
 
-        if self.extra_args.get("contrastive", None) == "simclr":
+        if self.extra_args.get("contrastive", None) in ["simclr", "better"]:
             item_pos_dict = deepcopy(item_dict)
 
             if registry.debug:

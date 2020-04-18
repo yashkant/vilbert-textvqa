@@ -41,6 +41,13 @@ class M4C(nn.Module):
         self.fusion_method = self.mmt_config.fusion_method
         logger.info(f"Fusion Method is : {self.fusion_method}")
 
+        # weight-decay
+        self.weight_decay = mmt_config.weight_decay if hasattr(mmt_config, "weight_decay") else 0.0
+
+        self.freeze_mmt_and_textbert = mmt_config.freeze_mmt_and_textbert if hasattr(mmt_config, "freeze_mmt_and_textbert") else False
+        if self.freeze_mmt_and_textbert:
+            logger.info(f"Freezing MMT and TextBERT")
+
         # build the models
         self.build()
 
@@ -129,13 +136,15 @@ class M4C(nn.Module):
         return results_dict
 
     def _forward_mmt_and_text(self, batch_dict):
+        if self.freeze_mmt_and_textbert:
+            self.text_bert.eval()
+            self.mmt.eval()
+
         # first forward the text BERT layers
         text_bert_out = self.text_bert(batch_dict)
         batch_dict['text_bert_emb'] = self.text_bert_out_linear(text_bert_out)
 
-        mmt_results = self.mmt(
-            batch_dict,
-        )
+        mmt_results = self.mmt(batch_dict)
         batch_dict.update(mmt_results)
 
     def _forward_output(self, batch_dict):
@@ -155,19 +164,53 @@ class M4C(nn.Module):
         optimizer_param_groups = []
         # collect all the parameters that need different/scaled lr
         finetune_params_set = set()
-        for m in self.finetune_modules:
+
+        for fine_module in self.finetune_modules:
+            use_wd, no_wd =[], []
+            for name, param in fine_module["module"].named_parameters():
+                if param.requires_grad:
+                    if len(param.shape) == 1 or name.endswith(".bias"):
+                        no_wd.append(param)
+                    else:
+                        use_wd.append(param)
+
+            # Add parameters with weight-decay
             optimizer_param_groups.append({
-                "params": list(m['module'].parameters()),
-                "lr": base_lr * m['lr_scale']
+                "params": use_wd,
+                "lr": base_lr * fine_module['lr_scale'],
+                "weight_decay": self.weight_decay
             })
-            finetune_params_set.update(list(m['module'].parameters()))
+
+            # Add parameters without weight-decay
+            optimizer_param_groups.append({
+                "params": no_wd,
+                "lr": base_lr * fine_module['lr_scale'],
+                "weight_decay": 0.0
+            })
+
+            # build a set of parameters handled, remaining will be handled next
+            finetune_params_set.update(list(fine_module["module"].parameters()))
+
         # remaining_params are those parameters w/ default lr
-        remaining_params = [
-             p for p in self.parameters() if p not in finetune_params_set
-        ]
-        # put the default lr parameters at the beginning
-        # so that the printed lr (of group 0) matches the default lr
-        optimizer_param_groups.insert(0, {"params": remaining_params})
+        use_wd, no_wd = [], []
+        for name, param in self.named_parameters():
+            if param in finetune_params_set:
+                continue
+            if param.requires_grad:
+                if len(param.shape) == 1 or name.endswith(".bias"):
+                    no_wd.append(param)
+                else:
+                    use_wd.append(param)
+        # Add parameters with weight-decay
+        optimizer_param_groups.append({
+            "params": use_wd,
+            "weight_decay": self.weight_decay
+        })
+        # Add parameters without weight-decay
+        optimizer_param_groups.append({
+            "params": no_wd,
+            "weight_decay": 0.0
+        })
 
         return optimizer_param_groups
 
