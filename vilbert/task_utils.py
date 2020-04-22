@@ -180,6 +180,13 @@ def ForwardModelsVal(args,
                     import pdb
                     pdb.set_trace()
 
+    # import pdb
+    # pdb.set_trace()
+    #
+    # # sanity checks
+    # batch_dict[0]['question_indices'] = batch_dict[0]['question_indices'][torch.randperm(208), :]
+    # batch_dict[1]['question_indices'] = batch_dict[1]['question_indices'][torch.randperm(208), :]
+
     for batch in batch_dict:
         for key, value in batch.items():
             if isinstance(value, torch.Tensor):
@@ -217,8 +224,8 @@ def ForwardModelsVal(args,
 
     if task_cfg[task_id]["type"] == "ContrastiveProjection":
         assert len(batch_dict) == 2
-        loss, batch_score = LossMap["NTXentLossval"](batch_dict[0]["contrastive_projection_norm"],
-                                        batch_dict[1]["contrastive_projection_norm"])
+        loss, batch_score = task_losses[task_id](batch_dict[0]["contrastive_projection_norm"],
+                                    batch_dict[1]["contrastive_projection_norm"], batch_dict[0]["mask"])
 
     # for different task, we use different output to calculate the loss.
     elif task_cfg[task_id]["type"] == "VL-classifier":
@@ -295,7 +302,7 @@ def ForwardModelsTrain(
     if task_cfg[task_id]["type"] == "ContrastiveProjection":
         assert len(batch_dict) == 2
         loss, batch_score = task_losses[task_id](batch_dict[0]["contrastive_projection_norm"],
-                                    batch_dict[1]["contrastive_projection_norm"])
+                                    batch_dict[1]["contrastive_projection_norm"], batch_dict[0]["mask"])
 
         for key in results_dict.keys():
             del batch_dict[0][key]

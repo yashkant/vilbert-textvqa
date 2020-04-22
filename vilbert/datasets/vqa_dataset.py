@@ -104,10 +104,17 @@ def _load_dataset(dataroot, name, clean_datasets):
         #
         # questions, answers = d_q, d_a
 
-    elif name == "re_train" or name == "re_val":
-        split = name.split("_")[-1]
-        questions_path = f"data/re-vqa/data/revqa_{split}_proc.json"
-        answers_path = f"datasets/VQA/cache/revqa_{split}_target.pkl"
+    elif name in ["re_train", "re_val", "re_train_negs", "re_val_negs"]:
+        split_path_dict = {
+            "re_train": ["data/re-vqa/data/revqa_train_proc.json", "datasets/VQA/cache/revqa_train_target.pkl", "train"],
+            "re_val": ["data/re-vqa/data/revqa_val_proc.json", "datasets/VQA/cache/revqa_val_target.pkl", "val"],
+            "re_train_negs": ["data/re-vqa/data/revqa_train_proc_image_negs.json", "datasets/VQA/cache/revqa_train_target_image_negs.pkl", "train"],
+            "re_val_negs": ["data/re-vqa/data/revqa_val_proc_image_negs.json", "datasets/VQA/cache/revqa_val_target_image_negs.pkl", "val"],
+        }
+
+        questions_path = split_path_dict[name][0]
+        answers_path = split_path_dict[name][1]
+        split = split_path_dict[name][-1]
 
         questions = sorted(json.load(open(questions_path))["questions"], key=lambda x: x["question_id"])
 
@@ -673,6 +680,7 @@ class VQAClassificationDataset(Dataset):
             "image_id": image_id,
             "question_id": question_id,
             "target": target,
+            "mask": torch.tensor(1)
         })
 
         time_end = time.time()
@@ -691,8 +699,13 @@ class VQAClassificationDataset(Dataset):
             if registry.debug:
                 return item_dict, item_pos_dict
 
-            pos_id = np.random.choice(entry["rephrasing_ids"])
-            pos_entry = self.entries[self.question_map[pos_id]]
+            if len(entry["rephrasing_ids"]) == 0:
+                item_dict["mask"] = item_dict["mask"]*0
+                item_pos_dict["mask"] = item_pos_dict["mask"]*0
+                return (item_dict, item_pos_dict)
+
+            que_id = np.random.choice(entry["rephrasing_ids"])
+            pos_entry = self.entries[self.question_map[que_id]]
             try:
                 assert pos_entry["image_id"] == entry["image_id"]
                 if pos_entry["answer"]["labels"] is not None:

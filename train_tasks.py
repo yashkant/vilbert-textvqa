@@ -560,6 +560,20 @@ def main():
     best_val_loss = np.inf
     import time
 
+    # # Sanity Check
+    # sanity_checks(
+    #     args,
+    #     task_dataloader_val,
+    #     task_cfg,
+    #     device,
+    #     task_ids[0],
+    #     model,
+    #     task_losses,
+    #     -1,
+    #     default_gpu,
+    #
+    # )
+
     # TRAINING LOOP
     for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
         model.train()
@@ -747,6 +761,33 @@ def evaluate(
     score, loss = tbLogger.showLossVal(task_id, task_stop_controller=None)
     model.train()
     return score, loss
+
+
+def sanity_checks(
+    args,
+    task_dataloader_val,
+    task_cfg,
+    device,
+    task_id,
+    model,
+    task_losses,
+    epochId,
+    default_gpu,
+):
+    from vilbert.task_utils import ForwardModelsVal
+    model.eval()  # turn off dropout/batch-norm
+    for i, batch in enumerate(task_dataloader_val[task_id]):
+        with torch.no_grad():  # turn off autograd engine
+            loss, score, batch_size = ForwardModelsVal(
+                args, task_cfg, device, task_id, batch, model, task_losses
+            )
+        if default_gpu:
+            sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
+            sys.stdout.flush()
+
+    model.train()
+    return score, loss
+
 
 
 if __name__ == "__main__":

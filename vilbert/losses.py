@@ -14,7 +14,7 @@ class NTXentLoss(torch.nn.Module):
         self.softmax = torch.nn.Softmax(dim=-1)
         self.mask_samples_from_same_repr = self._get_correlated_mask().type(torch.bool)
         self.similarity_function = self._get_similarity_function(registry.loss_params.use_cosine_similarity)
-        self.criterion = torch.nn.CrossEntropyLoss(reduction="sum")
+        self.criterion = torch.nn.CrossEntropyLoss(reduction="none")
 
     def _get_similarity_function(self, use_cosine_similarity):
         if use_cosine_similarity:
@@ -47,7 +47,10 @@ class NTXentLoss(torch.nn.Module):
         v = self._cosine_similarity(x.unsqueeze(1), y.unsqueeze(0))
         return v
 
-    def forward(self, zis, zjs):
+    def forward(self, zis, zjs, mask):
+        """
+        mask: For samples that don't have positives, we mask the entire row!
+        """
         representations = torch.cat([zjs, zis], dim=0)
         similarity_matrix = self.similarity_function(representations, representations)
 
@@ -68,9 +71,16 @@ class NTXentLoss(torch.nn.Module):
         labels = torch.zeros(2 * self.batch_size).to(zis.device).long()
         loss = self.criterion(logits, labels)
 
+        # mask helps to fix issues with image-negatives (that do not have rephrasings)
+        assert len(mask) == self.batch_size
+        extended_mask = torch.cat([mask, mask], dim=0)
+        loss = loss * extended_mask
+        loss = loss.sum()
+
         # calculating score
         preds = torch.argmax(logits, 1)
         scores = (preds == 0).float()
-        batch_score = scores.sum()/len(scores)
+        scores = scores * extended_mask
+        batch_score = scores.sum()/extended_mask.sum()
 
         return loss / (2 * self.batch_size), batch_score
