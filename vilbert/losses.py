@@ -84,3 +84,114 @@ class NTXentLoss(torch.nn.Module):
         batch_score = scores.sum()/extended_mask.sum()
 
         return loss / (2 * self.batch_size), batch_score
+
+
+class SCLLoss(torch.nn.Module):
+
+    def __init__(self):
+        super(SCLLoss, self).__init__()
+        self.temperature = registry.loss_params.temperature
+        self.softmax = torch.nn.Softmax(dim=-1)
+        self.similarity_function = self._get_similarity_function(registry.loss_params.use_cosine_similarity)
+        self.criterion = torch.nn.CrossEntropyLoss(reduction="none")
+
+    def _get_similarity_function(self, use_cosine_similarity):
+        if use_cosine_similarity:
+            self._cosine_similarity = torch.nn.CosineSimilarity(dim=-1)
+            return self._cosine_simililarity
+        else:
+            return self._dot_simililarity
+
+
+    @staticmethod
+    def _dot_simililarity(x, y):
+        v = torch.tensordot(x.unsqueeze(1), y.T.unsqueeze(0), dims=2)
+        # x shape: (N, 1, C)
+        # y shape: (1, C, 2N)
+        # v shape: (N, 2N)
+        return v
+
+    def _cosine_simililarity(self, x, y):
+        # x shape: (N, 1, C)
+        # y shape: (1, 2N, C)
+        # v shape: (N, 2N)
+        v = self._cosine_similarity(x.unsqueeze(1), y.unsqueeze(0))
+        return v
+
+    def row_loss_score(self, row_idx, row, row_mask):
+        try:
+            row_mask = row_mask.bool()
+            row_negatives = torch.masked_select(row, row_mask)
+            # select positives
+            positives_mask = (row_mask != True)
+            positives_mask[row_idx] = False
+            logits_positives = torch.masked_select(row, positives_mask).view(-1, 1)
+        except:
+            import pdb
+            pdb.set_trace()
+
+        # calculate loss
+        logits_negatives = row_negatives.repeat(len(logits_positives), 1)
+        logits = torch.cat([logits_positives, logits_negatives], dim=1)
+        targets = torch.zeros(len(logits), dtype=torch.long).to(logits.device)
+        try:
+            loss = self.criterion(logits, targets)
+        except:
+            import pdb
+            pdb.set_trace()
+        # calculate score
+        preds = torch.argmax(logits, dim=1)
+        scores = (preds == 0).float()
+        score = scores.sum()/len(scores)
+        loss = loss.sum()/len(loss)
+        return loss, score
+
+
+
+    def forward(self, zis, zjs, scl_mask):
+        """
+        mask: For samples that don't have positives, we mask the entire row!
+        """
+        representations = torch.cat([zjs, zis], dim=0)
+        similarity_matrix = self.similarity_function(representations, representations)
+
+        total_loss = []
+        total_score = []
+
+        # todo: can be optimized by clubbing rows with same answer together
+        for row_idx, (row, row_mask) in enumerate(zip(similarity_matrix, scl_mask)):
+            row_loss, row_score = self.row_loss_score(row_idx, row, row_mask)
+            total_loss.append(row_loss)
+            total_score.append(row_score)
+
+        total_loss, total_score = sum(total_loss)/len(total_loss), sum(total_score)/len(total_score)
+
+        return total_loss, total_score
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

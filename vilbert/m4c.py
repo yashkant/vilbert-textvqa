@@ -62,6 +62,14 @@ class M4C(nn.Module):
 
 
     def _build_txt_encoding(self):
+
+        # from sentence_transformers import SentenceTransformer
+        # Todo: Modify SentenceTransformer such that we can use three layers from it.
+        #  the idea is — it will have better sensitivity to rephrasings.
+        # model_type = 'bert-base-uncased'
+        # if registry.use_sent_bert:
+        #     model_type = ""
+
         TEXT_BERT_HIDDEN_SIZE = 768
         # self.text_bert_config = BertConfig(**self.config.text_bert)
         if self.text_bert_config.text_bert_init_from_bert_base:
@@ -242,6 +250,33 @@ class TextBert(BertPreTrainedModel):
         return seq_output
 
 
+class TextBert(BertPreTrainedModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.embeddings = BertEmbeddings(config)
+        self.encoder = BertEncoder(config)
+        # self.apply(self.init_weights)  # old versions of pytorch_transformers
+        self.init_weights()
+
+    def forward(self, batch_dict):
+        encoder_inputs = self.embeddings(batch_dict["question_indices"])
+        attention_mask = batch_dict["question_mask"]
+
+        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+        assert not extended_attention_mask.requires_grad
+        head_mask = [None] * self.config.num_hidden_layers
+
+        encoder_outputs = self.encoder(
+            encoder_inputs,
+            extended_attention_mask,
+            head_mask=head_mask
+        )
+        seq_output = encoder_outputs[0]
+
+        return seq_output
+
+
 class BertImageEmbeddings(nn.Module):
     """Construct the embeddings from image, spatial location (omit now) and token_type embeddings.
     """
@@ -271,6 +306,8 @@ class ContrastiveProjection(nn.Module):
         self.linear2 = nn.Linear(config.hidden_size, config.contrast_out_dim)
 
     def forward(self, batch_dict):
+        # l2-normalization to unit-hypersphere
+        # Todo: SCL folks normalize embeddings right out of the CNN, I can normalize the image-features ?
         batch_dict["contrastive_projection_norm"] = F.normalize(
             self.linear2(F.relu(self.linear1(batch_dict["pooled_output"]))), dim=-1
         )

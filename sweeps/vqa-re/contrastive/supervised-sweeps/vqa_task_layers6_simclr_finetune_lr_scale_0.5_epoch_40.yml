@@ -28,6 +28,22 @@ TASK19:
   lr_decay: 0.2
   max_grad_norm: 0.25
   num_hidden_layers: 6
-  revqa_eval: true
+  revqa_eval: false
+  contrastive: finetune
+  contrast_out_dim: 512
   val_batch_size: 196
   monitor_value: val_score
+
+  # finetune MMT during training
+  lr_scale_mmt: 0.5
+
+  # don't load the optimizer, lr-scheduler states
+  load_state: false
+
+
+
+  #  contrastive: better
+  #  contrastive_supervised: true/false (use answers to filter negatives)
+  #  better_params: [50,50]
+
+

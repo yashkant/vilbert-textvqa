@@ -319,6 +319,9 @@ class VQAClassificationDataset(Dataset):
         label2ans_path = os.path.join(dataroot, "cache", "trainval_label2ans.pkl")
         self.ans2label = cPickle.load(open(ans2label_path, "rb"))
         self.label2ans = cPickle.load(open(label2ans_path, "rb"))
+        # attach to registry
+        registry.ans2label = self.ans2label
+        registry.label2ans = self.label2ans
         self.num_labels = len(self.ans2label)
         self._max_region_num = max_region_num
         self._max_seq_length = max_seq_length
@@ -332,6 +335,7 @@ class VQAClassificationDataset(Dataset):
         self.processing_threads = processing_threads
         self.spatial_dict = {}
         self.extra_args = extra_args
+        self.mask_image = registry.mask_image
 
         logger.info(f"heads_type: {self.heads_type}")
         logger.info(f"Randomize is {self.randomize}")
@@ -670,6 +674,10 @@ class VQAClassificationDataset(Dataset):
             scores = answer["scores"]
             if labels is not None:
                 target.scatter_(0, labels, scores)
+
+        # remove all the images via masking!
+        if self.mask_image:
+            image_mask = torch.zeros_like(image_mask)
 
         item_dict.update({
             "input_imgs": features,

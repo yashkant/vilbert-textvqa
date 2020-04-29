@@ -16,7 +16,7 @@ TASK19:
   val_split: re_val_negs
   lr: 0.0001
   # Change at both places num_epochs
-  num_epoch: 40
+  num_epoch: 30
   debug: False
   model_type: m4c
   grad_clip_mode: all
@@ -28,6 +28,8 @@ TASK19:
   lr_decay: 0.2
   max_grad_norm: 0.25
   num_hidden_layers: 6
-  revqa_eval: true
+  revqa_eval: false
   val_batch_size: 196
   monitor_value: val_score
+  use_sent_bert: true
+

@@ -329,7 +329,7 @@ class tbLogger(object):
     def getValScore(self, task_id):
         return self.task_score_val[task_id] / float(self.task_datasize_val[task_id])
 
-    def showLossVal(self, task_id, task_stop_controller=None):
+    def showLossVal(self, task_id, task_stop_controller=None, c_scores=None):
         progressInfo = "Eval task %s on iteration %d " % (
             task_id,
             self.task_step[task_id],
@@ -345,12 +345,26 @@ class tbLogger(object):
             score * 100.0,
         )
 
+
         self.linePlot(
             self.task_step[task_id], loss, "val", self.task_id2name[task_id] + "_loss"
         )
         self.linePlot(
             self.task_step[task_id], score, "val", self.task_id2name[task_id] + "_score"
         )
+
+        if c_scores is not None:
+            lossInfo = lossInfo + f"\n Consistency Scores: {c_scores}"
+            for (key, value) in c_scores.items():
+
+                if type(key) != int:
+                    continue
+
+                self.linePlot(
+                    self.task_step[task_id], value, "val", self.task_id2name[task_id] + f"_{key}_score"
+                )
+
+
         if task_stop_controller is not None:
             self.linePlot(
                 self.task_step[task_id],

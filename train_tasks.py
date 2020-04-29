@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import random
+from collections import defaultdict
 from io import open
 import numpy as np
 import pprint
@@ -29,6 +30,8 @@ from tools.registry import registry
 
 import vilbert.utils as utils
 import torch.distributed as dist
+
+from vilbert.metrics import get_consistency_score
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -132,7 +135,7 @@ def main():
     parser.add_argument(
         "--num_workers",
         type=int,
-        default=12,
+        default=0,
         help="Number of workers in the dataloader.",
     )
     parser.add_argument(
@@ -237,6 +240,16 @@ def main():
     registry.loss_params = task_cfg["TASK19"].get("loss_params", {"temperature": None, "use_cosine_similarity": None})
     registry.val_batch_size = task_cfg["TASK19"].get("val_batch_size", 64)
     registry.val_workers = task_cfg["TASK19"].get("val_workers", 8)
+    registry.mask_image = task_cfg["TASK19"].get("mask_image", False)
+    registry.use_sent_bert = task_cfg["TASK19"].get("use_sent_bert", False)
+    registry["revqa_eval"] = task_cfg["TASK19"].get("revqa_eval", False)
+
+    if registry.revqa_eval:
+        from easydict import EasyDict
+        dd = defaultdict(list)
+        super(EasyDict, registry).__setattr__("revqa_bins", dd)
+        super(EasyDict, registry).__setitem__("revqa_bins", dd)
+
 
     assert task_cfg["TASK19"]["num_epoch"] == args.num_train_epochs
 
@@ -758,7 +771,11 @@ def evaluate(
             sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
             sys.stdout.flush()
 
-    score, loss = tbLogger.showLossVal(task_id, task_stop_controller=None)
+    c_scores = None
+    if registry.revqa_eval:
+        c_scores = get_consistency_score()
+
+    score, loss = tbLogger.showLossVal(task_id, task_stop_controller=None, c_scores=c_scores)
     model.train()
     return score, loss
 

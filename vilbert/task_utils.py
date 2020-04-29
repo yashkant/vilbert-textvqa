@@ -19,6 +19,7 @@ import torch.nn as nn
 import torch.distributed as dist
 from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset, ConcatDataset
+
 from vilbert.samplers import RandomSampler, NegativeSampler
 from torch.utils.data.distributed import DistributedSampler
 from pytorch_transformers.tokenization_bert import BertTokenizer
@@ -26,6 +27,7 @@ from pytorch_transformers.tokenization_roberta import RobertaTokenizer
 from vilbert.datasets import DatasetMapTrain, DatasetMapEval
 from vilbert.datasets._image_features_reader import ImageFeaturesH5Reader
 import pdb
+from vilbert.batch_utils import build_scl_mask
 from torch.optim.lr_scheduler import (
     LambdaLR,
     ReduceLROnPlateau,
@@ -38,7 +40,7 @@ from pytorch_transformers.optimization import (
     WarmupLinearSchedule,
 )
 
-from vilbert.losses import NTXentLoss
+from vilbert.losses import NTXentLoss, SCLLoss
 from vilbert.optimization import RAdam
 from tools.registry import registry
 from vilbert.utils import debug_sampler
@@ -49,7 +51,7 @@ LossMap = {
     "BCEWithLogitLoss": nn.BCEWithLogitsLoss(reduction="mean"),
     "CrossEntropyLoss": nn.CrossEntropyLoss(),
     "NTXentLoss": NTXentLoss(registry.batch_size),
-    "NTXentLossval": NTXentLoss(registry.val_batch_size),
+    "SCLLoss": SCLLoss(),
 }
 
 def clip_gradients(model, max_grad_l2_norm, clip_norm_mode):
@@ -166,6 +168,8 @@ def ForwardModelsVal(args,
 
     if not isinstance(batch_dict, tuple) and not isinstance(batch_dict, list):
         batch_dict = [batch_dict]
+    else:
+        build_scl_mask(batch_dict)
 
     # Sanity check negatives
     if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"] and not task_cfg["TASK19"]["debug"]:
@@ -180,12 +184,11 @@ def ForwardModelsVal(args,
                     import pdb
                     pdb.set_trace()
 
-    # import pdb
-    # pdb.set_trace()
-    #
-    # # sanity checks
-    # batch_dict[0]['question_indices'] = batch_dict[0]['question_indices'][torch.randperm(208), :]
+    # random shuffle questions
     # batch_dict[1]['question_indices'] = batch_dict[1]['question_indices'][torch.randperm(208), :]
+
+    # random shuffle images
+    # batch_dict[1]['input_imgs'] = batch_dict[1]['input_imgs'][torch.randperm(208), :]
 
     for batch in batch_dict:
         for key, value in batch.items():
@@ -205,35 +208,34 @@ def ForwardModelsVal(args,
     if registry.get("eval_only", False):
         return batch_dict
 
-    if registry.get("revqa_eval", False):
-        loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
-        loss = loss.mean() * batch_dict["target"].size(1)
-        # score for each question
-        batch_dict["vqa_scores"] = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"]).sum(dim=-1).tolist()
-        qid_scores = []
-
-        for idx, qid in enumerate(batch_dict["question_id"].tolist()):
-            qid_scores.append({
-                "vqa_score": batch_dict["vqa_scores"][idx],
-                "question_id": qid,
-                "rephrasing_of": registry["question_rephrase_dict"][qid]
-            })
-            # todo: below line might lead to leakage
-            registry.revqa_bins[registry["question_rephrase_dict"][qid]].append(batch_dict["vqa_scores"][idx])
-        return
 
     if task_cfg[task_id]["type"] == "ContrastiveProjection":
         assert len(batch_dict) == 2
+
+        # x = torch.matmul(batch_dict[1]["contrastive_projection_norm"],
+        #                  torch.transpose(batch_dict[0]["contrastive_projection_norm"], 0, 1))
+        #
+        # y = (x * torch.eye(208).to(x.device)).sum()
+
         loss, batch_score = task_losses[task_id](batch_dict[0]["contrastive_projection_norm"],
-                                    batch_dict[1]["contrastive_projection_norm"], batch_dict[0]["mask"])
+                                    batch_dict[1]["contrastive_projection_norm"], batch_dict[0]["scl_mask"])
 
     # for different task, we use different output to calculate the loss.
     elif task_cfg[task_id]["type"] == "VL-classifier":
         loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
         loss = loss.mean() * batch_dict["target"].size(1)
-        batch_score = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"]).sum() / float(
-            batch_size
-        )
+        batch_scores = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"])
+        batch_score = batch_scores.sum() / float(batch_size)
+
+        # calculate consistency scores
+        if registry.get("revqa_eval", False):
+            # fill the scores for each question into the batch-dict
+            batch_dict["vqa_scores"] = batch_scores.sum(dim=-1).tolist()
+
+            # add vqa-scores to defaultdict(list) for each bin
+            for idx, qid in enumerate(batch_dict["question_id"].tolist()):
+                registry.revqa_bins[registry["question_rephrase_dict_val"][qid]].append(batch_dict["vqa_scores"][idx])
+
 
     elif task_cfg[task_id]["type"] == "VL-classifier-GQA":
         loss = task_losses[task_id](batch_dict["vil_prediction_gqa"], batch_dict["target"])
@@ -271,6 +273,8 @@ def ForwardModelsTrain(
 
     if not isinstance(batch_dict, tuple) and not isinstance(batch_dict, list):
         batch_dict = [batch_dict]
+    else:
+        build_scl_mask(batch_dict)
 
     # Sanity check negatives
     if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"] and not task_cfg["TASK19"]["debug"]:
@@ -302,7 +306,7 @@ def ForwardModelsTrain(
     if task_cfg[task_id]["type"] == "ContrastiveProjection":
         assert len(batch_dict) == 2
         loss, batch_score = task_losses[task_id](batch_dict[0]["contrastive_projection_norm"],
-                                    batch_dict[1]["contrastive_projection_norm"], batch_dict[0]["mask"])
+                                    batch_dict[1]["contrastive_projection_norm"], batch_dict[0]["scl_mask"])
 
         for key in results_dict.keys():
             del batch_dict[0][key]

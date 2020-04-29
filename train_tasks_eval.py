@@ -686,6 +686,7 @@ def evaluate(
             args, task_cfg, device, task_id, batch, model, task_losses
         )
 
+        # Eval-AI file
         if registry["eval_only"]:
             # build the json file here!
             logits = torch.max(batch_dict["vil_prediction"], 1)[1].data  # argmax
@@ -699,35 +700,39 @@ def evaluate(
                     }
                 )
 
-    revqa_bins_scores = {}
-    if registry.revqa_eval:
-        total_vqa_scores = []
-        for key, value in registry.revqa_bins.items():
-            k_values = range(1, 1+len(value))
-            revqa_bins_scores[key] = {
-                "vqa_scores": value,
-            }
-
-            total_vqa_scores.extend(value)
-
-            for k_value in k_values:
-                value_subsets = list(combinations(value, k_value))
-                value_subset_scores = []
-                for subset in value_subsets:
-                    if 0.0 not in subset:
-                        value_subset_scores.append(1.0)
-                    else:
-                        value_subset_scores.append(0.0)
-                revqa_bins_scores[key][k_value] = sum(value_subset_scores)/len(value_subsets)
-
-        # Consistency Score Calculation
-        for k_value in range(1, 5):
-            scores = []
-            for key, value in revqa_bins_scores.items():
-                scores.append(value[k_value])
-            print(f"Consensus Score with K={k_value} is {sum(scores)/len(scores)}")
-
-        print(f"VQA Accuracy: {np.mean(total_vqa_scores)}")
+    # # bin the vqa-scores
+    # revqa_bins_scores = {}
+    # if registry.revqa_eval:
+    #     # vqa-score of all the samples
+    #     total_vqa_scores = []
+    #
+    #     for key, value in registry.revqa_bins.items():
+    #         k_values = range(1, 1+len(value))
+    #         revqa_bins_scores[key] = {
+    #             "vqa_scores": value,
+    #         }
+    #
+    #         total_vqa_scores.extend(value)
+    #
+    #         # for subsets of size = k, check VQA accuracy
+    #         for k_value in k_values:
+    #             value_subsets = list(combinations(value, k_value))
+    #             value_subset_scores = []
+    #             for subset in value_subsets:
+    #                 if 0.0 not in subset:
+    #                     value_subset_scores.append(1.0)
+    #                 else:
+    #                     value_subset_scores.append(0.0)
+    #             revqa_bins_scores[key][k_value] = sum(value_subset_scores)/len(value_subsets)
+    #
+    #     # Consistency Score Calculation
+    #     for k_value in range(1, 5):
+    #         scores = []
+    #         for key, value in revqa_bins_scores.items():
+    #             scores.append(value[k_value])
+    #         print(f"Consensus Score with K={k_value} is {sum(scores)/len(scores)}")
+    #
+    #     print(f"VQA Accuracy: {np.mean(total_vqa_scores)}")
 
     # save_file_path = f"save/{args.tag}"
     # os.makedirs(save_file_path, exist_ok=True)
