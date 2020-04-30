@@ -29,5 +29,12 @@ TASK19:
   max_grad_norm: 0.25
   num_hidden_layers: 6
   revqa_eval: true
+  contrastive: finetune
+  contrast_out_dim: 512
   val_batch_size: 196
   monitor_value: val_score
+  # finetune MMT during training
+  lr_scale_mmt: 0.1
+
+  # don't load the optimizer, lr-scheduler states
+  load_state: false

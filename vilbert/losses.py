@@ -91,6 +91,7 @@ class SCLLoss(torch.nn.Module):
     def __init__(self):
         super(SCLLoss, self).__init__()
         self.temperature = registry.loss_params.temperature
+        self.use_second = registry.loss_params.get("use_second", False)
         self.softmax = torch.nn.Softmax(dim=-1)
         self.similarity_function = self._get_similarity_function(registry.loss_params.use_cosine_similarity)
         self.criterion = torch.nn.CrossEntropyLoss(reduction="none")
@@ -146,6 +147,36 @@ class SCLLoss(torch.nn.Module):
         loss = loss.sum()/len(loss)
         return loss, score
 
+    def row_loss_score_second(self, row_idx, row, row_mask):
+        try:
+            row_mask = row_mask.bool()
+            row_negatives = torch.masked_select(row, row_mask)
+            # select positives
+            positives_mask = (row_mask != True)
+            positives_mask[row_idx] = False
+            logits_positives = torch.masked_select(row, positives_mask).view(-1, 1)
+        except:
+            import pdb
+            pdb.set_trace()
+
+        # calculate loss
+        logits_negatives = row_negatives.repeat(len(logits_positives), 1)
+        logits_positives = logits_positives.repeat(1, len(logits_positives))
+        logits = torch.cat([logits_positives, logits_negatives], dim=1)
+        # targets are places where we have positives
+        targets = torch.arange(len(logits), dtype=torch.long).to(logits.device)
+        try:
+            loss = self.criterion(logits, targets)
+        except:
+            import pdb
+            pdb.set_trace()
+        # calculate score
+        preds = torch.argmax(logits, dim=1)
+        scores = (preds == targets).float()
+        score = scores.sum()/len(scores)
+        loss = loss.sum()/len(loss)
+        return loss, score
+
 
 
     def forward(self, zis, zjs, scl_mask):
@@ -160,7 +191,11 @@ class SCLLoss(torch.nn.Module):
 
         # todo: can be optimized by clubbing rows with same answer together
         for row_idx, (row, row_mask) in enumerate(zip(similarity_matrix, scl_mask)):
-            row_loss, row_score = self.row_loss_score(row_idx, row, row_mask)
+            if not self.use_second:
+                row_loss, row_score = self.row_loss_score(row_idx, row, row_mask)
+            else:
+                row_loss, row_score = self.row_loss_score_second(row_idx, row, row_mask)
+
             total_loss.append(row_loss)
             total_score.append(row_score)
 
