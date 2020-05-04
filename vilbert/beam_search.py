@@ -8,7 +8,7 @@ from tools.registry import registry
 
 class BeamSearch():
     def __init__(self, beam_size):
-        # Lists to store completed sequences and scores
+        # Lists to store completed seque    nces and scores
         self._decode_size = beam_size
         self._complete_seqs = []
         self._complete_seqs_scores = []

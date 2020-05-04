@@ -73,13 +73,6 @@ class TextVQAAccuracy:
             answer = ' '.join(answer_words).replace(" 's", "'s")
             gt_answers = dec_bytes2obj(gt_answers_enc[idx])
 
-            # # print 5 samples in each batch
-            # if idx <= 4 and _print:
-            #     print("Ans: ", answer, "\n GT Ans: ", [ascii(x) for x in gt_answers], "\n Belongs To: ", belongs_to)
-            #     print("-"*20)
-            #     # import pdb
-            #     # pdb.set_trace()
-
             predictions.append({
                 "question_id": question_id.item(),
                 "gt_answers": gt_answers,
@@ -91,23 +84,62 @@ class TextVQAAccuracy:
         accuracy, pred_scores = self.evaluator.eval_pred_list(predictions)
         accuracy = torch.tensor(accuracy).cuda()
 
-        # Todo: below code is used for m4c stats, but we can't use it in data_parallel
-        #   otherwise the parallel model tries to gather it (and throws error, because it's a list)
-
-        # # add scores per sample to model_output
-        # model_output["pred_acc"] = pred_scores
-        #
-        # # add model-answers per sample to model_output
-        # model_output["pred_ans"] = [x["pred_answer"] for x in predictions]
-        #
-        # # add belongs_to for each dec_step's output, shape: (bs, seq_len)
-        # model_output["belongs_to"] = [x["belongs_to"] for x in predictions]
-        #
-        # # add each dec_step's answer separately, shape: (bs, seq_len)
-        # model_output["pred_ans_words"] = [x["answer_words"] for x in predictions]
-
         self.accuracies.append((accuracy, len(batch_dict["question_id"])))
         return accuracy, pred_scores
+
+
+class TextCapsBleu4(TextVQAAccuracy):
+    def __init__(self):
+        super().__init__()
+        self.name = "textcaps_bleu4"
+        self.gt_key = 'ref_strs'
+        self.evaluator = TextCapsBleu4Evaluator()
+
+    def calculate(self, batch_dict, textvqa_scores):
+        if "pred_answer_rd" in batch_dict and batch_dict["pred_answer_rd"] is not None:
+            pred_answers = batch_dict["pred_answer_rd"]
+        else:
+            pred_answers = textvqa_scores.argmax(dim=-1)
+
+        ocr_tokens_enc = batch_dict["ocr_tokens"].cpu().numpy()
+        gt_answers_enc = batch_dict["answers"].cpu().numpy()
+        answer_space_size = len(registry.answer_vocab)
+
+        predictions = []
+
+        for idx in range(len(batch_dict["targets"])):
+            context_tokens = dec_bytes2obj(ocr_tokens_enc[idx])
+            answer_words = []
+            belongs_to = []
+
+            for answer_id in pred_answers[idx].tolist():
+                if answer_id >= answer_space_size:
+                    belongs_to.append("ocr")
+                    answer_id -= answer_space_size
+                    answer_words.append(context_tokens[answer_id])
+                else:
+                    if answer_id == registry.EOS_IDX:
+                        belongs_to.append("vocab+eos")
+                        break
+                    belongs_to.append("vocab")
+                    answer_words.append(registry.answer_vocab.idx2word(answer_id))
+
+            answer = ' '.join(answer_words).replace(" 's", "'s")
+            gt_answers = dec_bytes2obj(gt_answers_enc[idx])
+
+            predictions.append({
+                "gt_answers": gt_answers,
+                "pred_answer": answer,
+                "belongs_to": belongs_to,
+                "answer_words": answer_words
+            })
+
+
+        accuracy = self.evaluator.eval_pred_list(predictions)
+        accuracy = torch.tensor(accuracy).cuda()
+
+        self.accuracies.append((accuracy, len(batch_dict["targets"])))
+        return accuracy, -1
 
 
 class STVQAANLS(TextVQAAccuracy):
@@ -122,6 +154,7 @@ class STVQAAccuracy(TextVQAAccuracy):
         self.evaluator = STVQAAccuracyEvaluator()
         self.use_original_tokens = False
         self.accuracies = []
+
 
 class OCRVQAAccuracy(STVQAAccuracy):
     def __init__(self):
@@ -426,3 +459,31 @@ class STVQAANLSEvaluator:
 
         accuracy = sum(pred_scores) / len(pred_scores)
         return accuracy, pred_scores
+
+
+class TextCapsBleu4Evaluator:
+    def __init__(self):
+        # The following script requires Java 1.8.0 and pycocotools installed.
+        # The pycocoevalcap can be installed with pip as
+        # pip install git+https://github.com/ronghanghu/coco-caption.git@python23
+        # Original pycocoevalcap code is at https://github.com/tylin/coco-caption
+        # but has no python3 support yet.
+        from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
+        from pycocoevalcap.bleu.bleu import Bleu
+        self.tokenizer = PTBTokenizer()
+        self.scorer = Bleu(4)
+
+    def eval_pred_list(self, pred_list):
+        # Create reference and hypotheses captions.
+        gts = {}
+        res = {}
+        for idx, entry in enumerate(pred_list):
+            gts[idx] = [{'caption': a} for a in entry['gt_answers']]
+            res[idx] = [{'caption': entry['pred_answer']}]
+
+        gts = self.tokenizer.tokenize(gts)
+        res = self.tokenizer.tokenize(res)
+        score, _ = self.scorer.compute_score(gts, res)
+
+        bleu4 = score[3]  # score is (Bleu-1, Bleu-2, Bleu-3, Bleu-4)
+        return bleu4

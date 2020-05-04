@@ -21,7 +21,7 @@ from pytorch_transformers.tokenization_bert import BertTokenizer
 from pytorch_transformers.tokenization_roberta import RobertaTokenizer
 from vilbert.datasets import DatasetMapTrain, DatasetMapEval
 from vilbert.datasets._image_features_reader import ImageFeaturesH5Reader
-from vilbert.datasets.textvqa_metrics import TextVQAAccuracy, STVQAAccuracy
+from vilbert.datasets.textvqa_metrics import TextVQAAccuracy, STVQAAccuracy, TextCapsBleu4
 import pdb
 from torch.optim.lr_scheduler import (
     LambdaLR,
@@ -213,6 +213,7 @@ LossMap = {
 MetricsMap = {
     "TextVQA": TextVQAAccuracy(),
     "STVQA": STVQAAccuracy(),
+    "TextCaps": TextCapsBleu4(),
 }
 
 
@@ -232,9 +233,9 @@ def ForwardModelsVal(args,
             for k,v in value.items():
                 batch_dict[key][k] = v.cuda(device=device, non_blocking=True)
 
-    question = batch_dict["question_indices"]
-    batch_size = len(batch_dict["question_id"])
-    batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
+    # question = batch_dict["question_indices"]
+    batch_size = len(batch_dict["question_indices"])
+    # batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
 
     results_dict = model(batch_dict)
     batch_dict.update(results_dict)
@@ -292,6 +293,7 @@ def ForwardModelsTrain(
 
     results_dict = model(batch_dict)
     batch_dict.update(results_dict)
+
     if task_cfg[task_id]["loss"] == "TextVQAandSpatialLoss":
         loss = task_losses[task_id](batch_dict)
     else:
@@ -301,6 +303,7 @@ def ForwardModelsTrain(
         textvqa_metric = MetricsMap[task_cfg[task_id]["metric"]]
     else:
         textvqa_metric = MetricsMap["TextVQA"]
+
     batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, batch_dict["textvqa_scores"])
 
     return loss, batch_acc
@@ -320,7 +323,13 @@ def LoadLosses(args, task_cfg, task_ids):
     return losses
 
 
-def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val_bs=32, test_val_workers=2):
+def LoadDatasets(args,
+                 task_cfg,
+                 ids,
+                 split="trainval",
+                 only_val=False,
+                 test_val_bs=32,
+                 test_val_workers=2):
     if "roberta" in args.bert_model:
         tokenizer = RobertaTokenizer.from_pretrained(
             args.bert_model, do_lower_case=args.do_lower_case
@@ -357,6 +366,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val
 
     key_map = {
         "textvqa": "TextVQA",
+        "textcaps": "TextCaps",
         "rev_textvqa": "RevTextVQA",
         "stvqa": "STVQA",
         "ocrvqa": "OCRVQA"
@@ -428,6 +438,8 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val
         assert task_cfg[task]["vocab_type"] == "5k_stvqa"
     elif val_task_name == "OCRVQA":
         assert task_cfg[task]["vocab_type"] == "ocrvqa"
+    elif val_task_name == "TextCaps":
+        assert task_cfg[task]["vocab_type"] == "textcaps"
     else:
         raise ValueError
 

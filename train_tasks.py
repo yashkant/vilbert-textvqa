@@ -666,9 +666,9 @@ def main():
 
             # decided whether to evaluate on each tasks.
             for task_id in task_ids:
-                # don't run validation during debug runs
-                if task_cfg["TASK19"]["debug"]:
-                    break
+                # # don't run validation during debug runs
+                # if task_cfg["TASK19"]["debug"]:
+                #     break
 
                 if (iterId != 0 and iterId % task_num_iters[task_id] == 0) or (
                         epochId == args.num_train_epochs - 1 and step == median_num_iter - 1
@@ -744,20 +744,16 @@ def evaluate(
 
     model.eval()
 
-    try:
-        for i, batch in enumerate(task_dataloader_val[task_id]):
-            loss, score, batch_size = ForwardModelsVal(
-                args, task_cfg, device, task_id, batch, model, task_losses
-            )
-            tbLogger.step_val(
-                epochId, float(loss), float(score), task_id, batch_size, "val"
-            )
-            if default_gpu:
-                sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
-                sys.stdout.flush()
-    except:
-        import pdb
-        pdb.set_trace()
+    for i, batch in enumerate(task_dataloader_val[task_id]):
+        loss, score, batch_size = ForwardModelsVal(
+            args, task_cfg, device, task_id, batch, model, task_losses
+        )
+        tbLogger.step_val(
+            epochId, float(loss), float(score), task_id, batch_size, "val"
+        )
+        if default_gpu:
+            sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
+            sys.stdout.flush()
 
     score = tbLogger.showLossVal(task_id, task_stop_controller=None)
     model.train()

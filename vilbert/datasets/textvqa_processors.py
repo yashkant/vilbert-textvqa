@@ -895,6 +895,7 @@ class M4CAnswerProcessor:
         vocab4k_latest = "/srv/share/ykant3/pythia/vocabs/answer_vocab_textvqa_4k_filtered.txt"
         vocab5k_stvqa = "/srv/share/ykant3/m4c-release/data/m4c_vocabs/stvqa/fixed_answer_vocab_stvqa_5k.txt"
         vocab_ocrvqa = "/srv/share/ykant3/m4c-release/data/m4c_vocabs/ocrvqa/fixed_answer_vocab_ocrvqa_82.txt"
+        vocab_textcaps = "/srv/testing/ykant3/pythia/textcaps/m4c_captioner_vocabs/textcaps/vocab_textcap_threshold_10.txt"
 
         if config.vocab_type == "5k":
             self.answer_vocab = VocabDict(vocab5k, *args, **kwargs)
@@ -910,6 +911,8 @@ class M4CAnswerProcessor:
             self.answer_vocab = VocabDict(vocab5k_stvqa, *args, **kwargs)
         elif config.vocab_type == "ocrvqa":
             self.answer_vocab = VocabDict(vocab_ocrvqa, *args, **kwargs)
+        elif config.vocab_type == "textcaps":
+            self.answer_vocab = VocabDict(vocab_textcaps, *args, **kwargs)
         else:
             raise ValueError
 
@@ -923,6 +926,7 @@ class M4CAnswerProcessor:
         registry.EOS_IDX = self.answer_vocab.word2idx('</s>')
         registry.UNK_IDX = self.answer_vocab.UNK_INDEX
         registry.answer_vocab = self.answer_vocab
+        self.match_answer_to_unk = False
 
         # make sure PAD_IDX, BOS_IDX and PAD_IDX are valid (not <unk>)
         assert self.PAD_IDX != self.answer_vocab.UNK_INDEX
@@ -935,6 +939,9 @@ class M4CAnswerProcessor:
         self.max_copy_steps = config.max_copy_steps
         assert self.max_copy_steps >= 1
 
+    def tokenize(self, sentence):
+        return sentence.split()
+
     def match_answer_to_vocab_ocr_seq(
         self, answer, vocab2idx_dict, ocr2inds_dict, max_match_num=20
     ):
@@ -945,7 +952,7 @@ class M4CAnswerProcessor:
         """
         num_vocab = len(vocab2idx_dict)
 
-        answer_words = answer.split()
+        answer_words = self.tokenize(answer)
         answer_word_matches = []
         for word in answer_words:
             # match answer word to fixed vocabulary
@@ -959,7 +966,10 @@ class M4CAnswerProcessor:
                 [num_vocab + idx for idx in ocr2inds_dict[word]]
             )
             if len(matched_inds) == 0:
-                return []
+                if self.match_answer_to_unk:
+                    matched_inds.append(vocab2idx_dict.get('<unk>'))
+                else:
+                    return []
             answer_word_matches.append(matched_inds)
 
         # expand per-word matched indices into the list of matched sequences
@@ -982,13 +992,7 @@ class M4CAnswerProcessor:
 
         return answer_vocab_nums
 
-    def __call__(self, item):
-        answers = item["answers"]
-        item["context_tokens"] = item["context_tokens"][:self.max_ocr_tokens]
-        assert len(answers) == self.num_answers
-        assert len(self.answer_vocab) == len(self.answer_vocab.word2idx_dict)
-
-        # Step 1: calculate the soft score of ground-truth answers
+    def compute_answer_scores(self, answers):
         gt_answers = list(enumerate(answers))
         unique_answers = sorted(set(answers))
         unique_answer_scores = [0] * len(unique_answers)
@@ -1007,6 +1011,15 @@ class M4CAnswerProcessor:
         unique_answer2score = {
             a: s for a, s in zip(unique_answers, unique_answer_scores)
         }
+        return unique_answer2score
+
+    def __call__(self, item):
+        answers = item["answers"]
+        item["context_tokens"] = item["context_tokens"][:self.max_ocr_tokens]
+        assert len(answers) == self.num_answers
+
+        # Step 1: calculate the soft score of ground-truth answers
+        unique_answer2score = self.compute_answer_scores(answers)
 
         # Step 2: fill the first step soft scores for tokens
         scores = torch.zeros(
@@ -1070,20 +1083,21 @@ class M4CAnswerProcessor:
                 # this means step 1:N have only one non-zero index
                 # this means there will be no case with EOS_IDX_SCORE and OTHER score non-zero together!
                 # gather indices from both ocr/vocabulary for the same word!
-                all_indices = self.get_all_indices(ocr2inds_dict, item["context_tokens"], score_idx)
-                assert self.UNK_IDX not in all_indices
+                # all_indices = self.get_all_indices(ocr2inds_dict, item["context_tokens"], score_idx)
+                # assert self.UNK_IDX not in all_indices
+                #
+                # for idx in all_indices:
+                #     scores[t, idx] = 1.
 
-                for idx in all_indices:
-                    scores[t, idx] = 1.
-
-                # scores[t, score_idx] = 1.
+                # reset to earlier setup
+                scores[t, score_idx] = 1.
         else:
             idx_seq = ()
 
         answer_info = {
             'answers': answers,
             'targets': scores,
-            # 'sampled_idx_seq': [train_prev_inds.new(idx_seq)],
+            'sampled_idx_seq': idx_seq,
             'train_prev_inds': train_prev_inds,
             'train_loss_mask': train_loss_mask,
             'train_acc_mask': train_acc_mask,
@@ -1105,3 +1119,22 @@ class M4CAnswerProcessor:
 
         return return_indices
 
+
+class M4CCaptionProcessor(M4CAnswerProcessor):
+    def __init__(self, config, *args, **kwargs):
+        super().__init__(config, *args, **kwargs)
+        import re
+        self.SENTENCE_SPLIT_REGEX = re.compile(r"(\W+)")
+        self.match_answer_to_unk = True
+
+    def tokenize(self, sentence):
+        sentence = sentence.lower()
+        sentence = sentence.replace(",", "").replace("?", "").replace(".", "")\
+            .replace("'s", " 's")
+        tokens = self.SENTENCE_SPLIT_REGEX.split(sentence)
+        tokens = [t.strip() for t in tokens if len(t.strip()) > 0]
+        return tokens
+
+    def compute_answer_scores(self, answers):
+        unique_answer2score = {a: 1. for a in answers}
+        return unique_answer2score

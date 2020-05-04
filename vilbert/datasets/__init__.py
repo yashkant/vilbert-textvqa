@@ -9,6 +9,7 @@ from .concept_cap_dataset import (
     ConceptCapLoaderRetrieval,
 )
 from .foil_dataset import FoilClassificationDataset
+from .textcaps_dataset import TextCapsDataset
 from .vqa_dataset import VQAClassificationDataset
 from .vqa_mc_dataset import VQAMultipleChoiceDataset
 from .nlvr2_dataset import NLVR2Dataset
@@ -72,6 +73,7 @@ DatasetMapTrain = {
     "GuessWhatPointing": GuessWhatPointingDataset,
     "FlickrGrounding": FlickrGroundingDataset,
     "TextVQA": TextVQADataset,
+    "TextCaps": TextCapsDataset,
     "RevTextVQA": RevTextVQADataset,
     "STVQA": STVQADataset,
     "OCRVQA": OCRVQADataset,
