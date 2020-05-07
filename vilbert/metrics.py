@@ -22,6 +22,8 @@ def get_consistency_score():
         for k_value in k_values:
             value_subsets = list(combinations(value, k_value))
             value_subset_scores = []
+
+            # this loop is causing problems!
             for subset in value_subsets:
                 if 0.0 not in subset:
                     value_subset_scores.append(1.0)
