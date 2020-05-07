@@ -243,6 +243,8 @@ def main():
     registry.mask_image = task_cfg["TASK19"].get("mask_image", False)
     registry.use_sent_bert = task_cfg["TASK19"].get("use_sent_bert", False)
     registry["revqa_eval"] = task_cfg["TASK19"].get("revqa_eval", False)
+    registry.use_ce_loss = task_cfg["TASK19"].get("use_ce_loss", False)
+    registry.scl_coeff = task_cfg["TASK19"].get("scl_coeff", 1.0)
 
     if registry.revqa_eval:
         from easydict import EasyDict

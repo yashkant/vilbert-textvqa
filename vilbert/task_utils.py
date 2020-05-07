@@ -171,8 +171,9 @@ def ForwardModelsVal(args,
     else:
         build_scl_mask(batch_dict)
 
-    # Sanity check negatives
-    if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"] and not task_cfg["TASK19"]["debug"]:
+    # Sanity check negatives w/ negative sampler
+    if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"] and not task_cfg["TASK19"]["debug"]\
+            and task_cfg["TASK19"].get("val_neg_sampler", True):
         for batch in batch_dict:
             rephrasing_of = []
             # iterate over question-ids
@@ -244,6 +245,11 @@ def ForwardModelsVal(args,
             batch_dict["vil_prediction_gqa"], batch_dict["target"]
         ).sum() / float(batch_size)
 
+    if registry.use_ce_loss:
+        vl_loss, batch_score = add_ce_loss(batch_dict[0], val_run=True)
+        # don't care about the scl-loss
+        loss = vl_loss
+
     del results_dict
     del batch_dict
 
@@ -305,13 +311,7 @@ def ForwardModelsTrain(
 
     if task_cfg[task_id]["type"] == "ContrastiveProjection":
         assert len(batch_dict) == 2
-        loss, batch_score = task_losses[task_id](batch_dict[0]["contrastive_projection_norm"],
-                                    batch_dict[1]["contrastive_projection_norm"], batch_dict[0]["scl_mask"])
-
-        for key in results_dict.keys():
-            del batch_dict[0][key]
-            del batch_dict[1][key]
-
+        loss, batch_score = task_losses[task_id](batch_dict[0]["contrastive_projection_norm"], batch_dict[1]["contrastive_projection_norm"], batch_dict[0]["scl_mask"])
 
     # for different task, we use different output to calculate the loss.
     elif task_cfg[task_id]["type"] == "VL-classifier":
@@ -320,8 +320,6 @@ def ForwardModelsTrain(
         batch_score = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"]).sum() / float(
             batch_size
         )
-        for key in results_dict.keys():
-            del batch_dict[key]
 
 
     elif task_cfg[task_id]["type"] == "VL-classifier-GQA":
@@ -331,8 +329,9 @@ def ForwardModelsTrain(
             batch_dict["vil_prediction_gqa"], batch_dict["target"]
         ).sum() / float(batch_size)
 
-        for key in results_dict.keys():
-            del batch_dict[key]
+    if registry.use_ce_loss:
+        vl_loss, batch_score = add_ce_loss(batch_dict)
+        loss = loss*registry.scl_coeff + vl_loss
 
     del results_dict
     del batch_dict
@@ -341,6 +340,35 @@ def ForwardModelsTrain(
 
     return loss, float(batch_score)
 
+
+# todo: replace this in vl-classifier if-else
+def add_ce_loss(batch_dict, val_run=False):
+    if len(batch_dict) > 1 and not val_run:
+        # train time
+        vil_preds = torch.cat([batch_dict[0]["vil_prediction"], batch_dict[1]["vil_prediction"]], dim=0)
+        vil_targets = torch.cat([batch_dict[0]["target"], batch_dict[1]["target"]], dim=0)
+    else:
+        # validation time
+        vil_preds = batch_dict["vil_prediction"]
+        vil_targets = batch_dict["target"]
+
+
+    vl_loss = LossMap["BCEWithLogitLoss"](vil_preds, vil_targets)
+    vl_loss = vl_loss.mean() * vil_targets.size(1)
+    batch_scores = compute_score_with_logits(vil_preds, vil_targets)
+    batch_score = batch_scores.sum() / len(vil_preds)
+
+
+    # calculate consistency scores
+    if registry.get("revqa_eval", False) and val_run and len(batch_dict) != 2:
+        # fill the scores for each question into the batch-dict
+        batch_dict["vqa_scores"] = batch_scores.sum(dim=-1).tolist()
+
+        # add vqa-scores to defaultdict(list) for each bin
+        for idx, qid in enumerate(batch_dict["question_id"].tolist()):
+            registry.revqa_bins[registry["question_rephrase_dict_val"][qid]].append(batch_dict["vqa_scores"][idx])
+
+    return vl_loss, batch_score
 
 def LoadLosses(args, task_cfg, task_ids):
 
@@ -488,7 +516,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
             task_batch_size[task] = batch_size
 
         if "val" in split:
-            if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"]:
+            if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"] and task_cfg["TASK19"].get("val_neg_sampler", True):
                 logger.info("Using Negative Validation Sampler")
                 val_sampler = NegativeSampler(
                     task_datasets_val[task],
@@ -498,6 +526,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
                     split="val"
                 )
             else:
+                logger.info("Using Simple Validation Sampler")
                 val_sampler=None
 
             task_dataloader_val[task] = DataLoader(
