@@ -92,7 +92,7 @@ class TextCapsBleu4(TextVQAAccuracy):
     def __init__(self):
         super().__init__()
         self.name = "textcaps_bleu4"
-        self.gt_key = 'ref_strs'
+        self.gt_key = 'reference_strs'
         self.evaluator = TextCapsBleu4Evaluator()
 
     def calculate(self, batch_dict, textvqa_scores):
@@ -102,7 +102,7 @@ class TextCapsBleu4(TextVQAAccuracy):
             pred_answers = textvqa_scores.argmax(dim=-1)
 
         ocr_tokens_enc = batch_dict["ocr_tokens"].cpu().numpy()
-        gt_answers_enc = batch_dict["answers"].cpu().numpy()
+        gt_answers_enc = batch_dict[self.gt_key].cpu().numpy()
         answer_space_size = len(registry.answer_vocab)
 
         predictions = []
