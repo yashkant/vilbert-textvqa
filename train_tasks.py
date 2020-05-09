@@ -246,13 +246,6 @@ def main():
     registry.use_ce_loss = task_cfg["TASK19"].get("use_ce_loss", False)
     registry.scl_coeff = task_cfg["TASK19"].get("scl_coeff", 1.0)
 
-    if registry.revqa_eval:
-        from easydict import EasyDict
-        dd = defaultdict(list)
-        super(EasyDict, registry).__setattr__("revqa_bins", dd)
-        super(EasyDict, registry).__setitem__("revqa_bins", dd)
-
-
     assert task_cfg["TASK19"]["num_epoch"] == args.num_train_epochs
 
     from vilbert.task_utils import (
@@ -670,7 +663,7 @@ def main():
 
                 if (iterId != 0 and iterId % task_num_iters[task_id] == 0) or (
                     epochId == args.num_train_epochs - 1 and step == median_num_iter - 1
-                ):
+                ) or True:
                     logger.info("Starting Validation Run....")
                     curr_val_score, curr_val_loss = evaluate(
                         args,
@@ -759,6 +752,14 @@ def evaluate(
     default_gpu,
     tbLogger,
 ):
+
+    # reset revqa_bins for each evaluation!
+    if registry.revqa_eval:
+        from easydict import EasyDict
+        dd = defaultdict(list)
+        super(EasyDict, registry).__setattr__("revqa_bins", dd)
+        super(EasyDict, registry).__setitem__("revqa_bins", dd)
+
     from vilbert.task_utils import ForwardModelsVal
     model.eval()  # turn off dropout/batch-norm
     for i, batch in enumerate(task_dataloader_val[task_id]):
