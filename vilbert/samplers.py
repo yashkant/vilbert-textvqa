@@ -562,7 +562,7 @@ class NegativeSampler(Sampler):
         assert os.path.exists(base_path)
         cache_name = f"cache_{self.task_cfg['contrastive']}_iter_{self.iter_count}_" \
                      f"split_{self.split}_bt{self.bin_ans_threshold}_ft{self.freq_ans_threshold}_" \
-                     f"pos_{self.num_positives}.npy"
+                     f"pos_{self.num_positives}_batch_size_{self.batch_size}.npy"
         cache_name = os.path.join(base_path, cache_name)
         logger.info(f"Sampler Cache Path: {cache_name}")
 
