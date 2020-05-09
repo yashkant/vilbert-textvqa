@@ -75,7 +75,7 @@ def main():
     )
     parser.add_argument(
         "--num_train_epochs",
-        default=100,
+        default=14,
         type=int,
         help="Total number of training epochs to perform.",
     )
@@ -766,6 +766,7 @@ if __name__ == "__main__":
         assert os.path.exists(task_file_path)
         assert os.path.exists(output_checkpoint_path)
 
+        # todo: fix evaluator in text-caps model!
         evaluator = Evaluator(
             task_file=task_file_path,
             config_file="config/spatial_m4c_mmt_textvqa.json",
