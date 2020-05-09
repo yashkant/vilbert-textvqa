@@ -12,6 +12,7 @@ def get_consistency_score():
 
     for key, value in registry.revqa_bins.items():
         k_values = range(1, 1 + len(value))
+        assert len(value) <= 5
         revqa_bins_scores[key] = {
             "vqa_scores": value,
         }
