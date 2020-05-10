@@ -663,7 +663,7 @@ def main():
 
                 if (iterId != 0 and iterId % task_num_iters[task_id] == 0) or (
                     epochId == args.num_train_epochs - 1 and step == median_num_iter - 1
-                ) or True:
+                ):
                     logger.info("Starting Validation Run....")
                     curr_val_score, curr_val_loss = evaluate(
                         args,
