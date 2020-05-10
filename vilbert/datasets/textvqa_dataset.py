@@ -37,13 +37,16 @@ def _load_dataset(dataroot, name, debug):
         the splits, and return entries.
     """
 
-    if name == "train" or name == "val" or name == "test":
+    if name == "train" or name == "val" or name == "test" or name == "train_val" or name =="mini_val":
         imdb_holder = "imdb_google_det_bbox_textvqa_multidec_sa_info_ascii_{}.npy"
         if name == "test":
             imdb_holder = "imdb_google_det_bbox_textvqa_info_{}.npy"
 
         if debug:
             imdb_holder = "debug_" + imdb_holder
+
+        if "_val" in name:
+            imdb_holder = "{}.npy"
 
         imdb_path = os.path.join(dataroot, "imdb/textvqa_0.5/", imdb_holder.format(name))
         logger.info(f"Loading IMDB for {name}" if not debug else f"Loading IMDB for {name} in debug mode")
@@ -218,7 +221,12 @@ class TextVQADataset(Dataset):
 
         logger.info(f"Cache Name:  {cache_path}")
 
-        if not os.path.exists(cache_path) or self.debug:
+        load_cache = False
+        # dirty hack
+        if "_val" in split:
+            load_cache = True
+
+        if (not os.path.exists(cache_path) or self.debug) and (not load_cache):
             # Initialize Processors
 
             if "processors" not in registry:
@@ -249,6 +257,20 @@ class TextVQADataset(Dataset):
                 registry.processors_only_registry = self.processors
             else:
                 self.processors = registry.processors_only_registry
+
+            # dirty hack
+            if load_cache and "mini" not in cache_path:
+                logger.info("Loading from both caches!")
+                train_entries = cPickle.load(open("datasets/textvqa/cache/TextVQA_train_20_vocab_type5k_dynamic_True_spatial.pkl", "rb"))
+                val_entries = cPickle.load(open("datasets/textvqa/cache/TextVQA_val_20_vocab_type5k_dynamic_True_spatial.pkl", "rb"))
+                train_entries.extend(val_entries)
+                self.entries = train_entries
+                return
+            elif load_cache and "mini" in cache_path:
+                logger.info("Loading from val cache!")
+                val_entries = cPickle.load(open("datasets/textvqa/cache/TextVQA_val_20_vocab_type5k_dynamic_True_spatial.pkl", "rb"))
+                self.entries = val_entries
+                return
 
             # otherwise load cache!
             logger.info("Loading from %s" % cache_path)

@@ -371,8 +371,13 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val
 
         train_datasets = []
         for entry in task_cfg[task]["use_datasets"]:
+
+            split = "train"
+            if entry == "textvqa":
+                split = task_cfg[task]["train_split"]
+
             dataset = DatasetMapTrain[key_map[entry]](
-                split="train",
+                split=split,
                 tokenizer=tokenizer,
                 bert_model=args.bert_model,
                 padding_index=0,
@@ -396,7 +401,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val
     )
     val_task_name = key_map[task_cfg[task]['val_on'][0]]
     task_datasets_val[task] = DatasetMapTrain[val_task_name](
-        split="val",
+        split=task_cfg[task]["val_split"],
         tokenizer=tokenizer,
         bert_model=args.bert_model,
         padding_index=0,
