@@ -329,7 +329,7 @@ def LoadDatasets(args,
                  split="trainval",
                  only_val=False,
                  test_val_bs=32,
-                 test_val_workers=2):
+                 test_val_workers=16):
     if "roberta" in args.bert_model:
         tokenizer = RobertaTokenizer.from_pretrained(
             args.bert_model, do_lower_case=args.do_lower_case

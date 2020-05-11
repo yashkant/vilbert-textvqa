@@ -751,16 +751,17 @@ def evaluate(
 
     model.eval()
 
-    for i, batch in enumerate(task_dataloader_val[task_id]):
-        loss, score, batch_size = ForwardModelsVal(
-            args, task_cfg, device, task_id, batch, model, task_losses
-        )
-        tbLogger.step_val(
-            epochId, float(loss), float(score), task_id, batch_size, "val"
-        )
-        if default_gpu:
-            sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
-            sys.stdout.flush()
+    with torch.no_grad():
+        for i, batch in enumerate(task_dataloader_val[task_id]):
+            loss, score, batch_size = ForwardModelsVal(
+                args, task_cfg, device, task_id, batch, model, task_losses
+            )
+            tbLogger.step_val(
+                epochId, float(loss), float(score), task_id, batch_size, "val"
+            )
+            if default_gpu:
+                sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
+                sys.stdout.flush()
 
     score = tbLogger.showLossVal(task_id, task_stop_controller=None)
     model.train()
