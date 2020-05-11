@@ -75,7 +75,7 @@ def main():
     )
     parser.add_argument(
         "--num_train_epochs",
-        default=100,
+        default=30,
         type=int,
         help="Total number of training epochs to perform.",
     )
@@ -236,7 +236,6 @@ def main():
         task_cfg = edict(yaml.safe_load(f))
 
     assert os.path.exists(args.config_file)
-
     logger.info("-"*20 + "Config Start" + "-"*20)
     print(vars(args))
     print(task_cfg["TASK19"])
@@ -247,7 +246,7 @@ def main():
     np.random.seed(seed)
     torch.manual_seed(seed)
     logger.info(f"Using seed: {seed}")
-
+    assert task_cfg["TASK19"]['num_epoch'] == args.num_train_epochs
     model_type = task_cfg["TASK19"]["model_type"] if args.model_type is None else args.model_type
 
     task_names = []

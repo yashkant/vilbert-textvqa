@@ -27,7 +27,7 @@ def assert_eq(real, expected):
     assert real == expected, "%s (true) vs %s (expected)" % (real, expected)
 
 
-def _load_dataset(dataroot, name, debug):
+def _load_dataset(dataroot, name, debug, return_qid_map=False):
     """Load entries from Imdb
 
     dataroot: root path of dataset
@@ -56,6 +56,7 @@ def _load_dataset(dataroot, name, debug):
 
     # build entries with only the essential keys
     entries = []
+    qid_map = {}
     store_keys = [
         "question",
         "question_id",
@@ -68,9 +69,13 @@ def _load_dataset(dataroot, name, debug):
     ]
 
     logger.info(f"Building Entries for {name}")
-    for instance in imdb_data:
+    for idx, instance in enumerate(imdb_data):
         entry = dict([(key, instance[key]) for key in store_keys if key in instance])
+        qid_map[idx] = instance["question_id"]
         entries.append(entry)
+
+    if return_qid_map:
+        return entries, imdb_data.metadata, return_qid_map
 
     return entries, imdb_data.metadata
 
@@ -264,12 +269,22 @@ class TextVQADataset(Dataset):
                 train_entries = cPickle.load(open("datasets/textvqa/cache/TextVQA_train_20_vocab_type5k_dynamic_True_spatial.pkl", "rb"))
                 val_entries = cPickle.load(open("datasets/textvqa/cache/TextVQA_val_20_vocab_type5k_dynamic_True_spatial.pkl", "rb"))
                 train_entries.extend(val_entries)
-                self.entries = train_entries
+                qid_map = {int(x["question_id"]):x for x in train_entries}
+                assert len(qid_map) == len(train_entries)
+                entries, _ = _load_dataset(dataroot, "train_val", False, return_qid_map=False)
+                self.entries = []
+                for entry in entries:
+                    self.entries.append(qid_map[entry["question_id"]])
                 return
             elif load_cache and "mini" in cache_path:
                 logger.info("Loading from val cache!")
                 val_entries = cPickle.load(open("datasets/textvqa/cache/TextVQA_val_20_vocab_type5k_dynamic_True_spatial.pkl", "rb"))
-                self.entries = val_entries
+                qid_map = {int(x["question_id"]):x for x in val_entries}
+                assert len(qid_map) == len(val_entries)
+                entries, _ = _load_dataset(dataroot, "mini_val", False, return_qid_map=False)
+                self.entries = []
+                for entry in entries:
+                    self.entries.append(qid_map[entry["question_id"]])
                 return
 
             # otherwise load cache!
