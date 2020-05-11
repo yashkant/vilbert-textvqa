@@ -1,10 +1,15 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
+import copy
+
 import torch
 from tools.registry import registry
 from tools.objects_to_byte_tensor import enc_obj2bytes, dec_bytes2obj
 import re
 import numpy as np
 import os
+import logging
+logger = logging.getLogger(__name__)
+
 
 class TextVQAAccuracy:
     def __init__(self, use_original_tokens=False):
@@ -96,10 +101,18 @@ class TextCapsBleu4(TextVQAAccuracy):
         self.evaluator = TextCapsBleu4Evaluator()
 
     def calculate(self, batch_dict, textvqa_scores):
-        if "pred_answer_rd" in batch_dict and batch_dict["pred_answer_rd"] is not None:
-            pred_answers = batch_dict["pred_answer_rd"]
+
+        # remove unk tokens from preds
+        if registry.task_cfg.get("remove_unk_in_scores", False):
+            textvqa_scores = textvqa_scores.cpu().detach().numpy()
+            textvqa_scores[..., registry.UNK_IDX] = -1e10
+            pred_answers = textvqa_scores.argmax(axis=-1)
         else:
             pred_answers = textvqa_scores.argmax(dim=-1)
+
+        # if "pred_answer_rd" in batch_dict and batch_dict["pred_answer_rd"] is not None:
+        #     pred_answers = batch_dict["pred_answer_rd"]
+        # else:
 
         ocr_tokens_enc = batch_dict["ocr_tokens"].cpu().numpy()
         gt_answers_enc = batch_dict[self.gt_key].cpu().numpy()

@@ -242,6 +242,11 @@ def main():
     print(task_cfg["TASK19"])
     logger.info("-"*20 + "Config End" + "-"*20)
 
+    assert args.num_train_epochs == task_cfg["TASK19"]["num_epoch"]
+    from tools.registry import registry
+    registry.task_cfg = task_cfg["TASK19"]
+    logger.info(f"Remove UNK in scores is {registry.task_cfg.get('remove_unk_in_scores', False)}")
+
     seed = task_cfg["TASK19"].get("seed", args.seed)
     random.seed(seed)
     np.random.seed(seed)
@@ -455,6 +460,8 @@ def main():
                     # Transfer keys from config to BertConfig
                     transfer_keys = ["attention_mask_quadrants",
                                      "hidden_size",
+                                     "finetune_ocr_obj",
+                                     "remove_unk_in_pred",
                                      "num_implicit_relations",
                                      "spatial_type",
                                      "num_hidden_layers",
@@ -666,9 +673,9 @@ def main():
 
             # decided whether to evaluate on each tasks.
             for task_id in task_ids:
-                # # don't run validation during debug runs
-                # if task_cfg["TASK19"]["debug"]:
-                #     break
+                # don't run validation during debug runs
+                if task_cfg["TASK19"]["debug"]:
+                    break
 
                 if (iterId != 0 and iterId % task_num_iters[task_id] == 0) or (
                         epochId == args.num_train_epochs - 1 and step == median_num_iter - 1

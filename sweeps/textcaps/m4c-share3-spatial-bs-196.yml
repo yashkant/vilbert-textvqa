@@ -36,7 +36,7 @@ TASK19:
 #  7 | 8 | 9
   lr_scheduler: pythia_warmup_decay
   optim: Adam
-  lr_decay_iters: [10000, 11000]
+  lr_decay_iters: [6000, 10000]
   lr_decay: 0.1
   warmup_factor: 0.2
   warmup_iters: 1000
@@ -49,3 +49,4 @@ TASK19:
   use_datasets: ["textcaps"]
   val_on: ["textcaps"]
   num_workers: 16
+  remove_unk_in_pred: true

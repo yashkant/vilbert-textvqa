@@ -49,3 +49,4 @@ TASK19:
   use_datasets: ["textcaps"]
   val_on: ["textcaps"]
   num_workers: 16
+  remove_unk_in_pred: true

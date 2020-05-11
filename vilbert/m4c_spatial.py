@@ -45,6 +45,9 @@ class M4C(nn.Module):
         # auxiliary heads and fusion
         self.aux_spatial_fusion = getattr(self.mmt_config, "aux_spatial_fusion", "mul")
         self.use_aux_heads = getattr(self.mmt_config, "use_aux_heads", False)
+        self.remove_unk_in_pred = getattr(self.mmt_config, "remove_unk_in_pred", False)
+        logger.info(f"Remove UNK from preds is: {self.remove_unk_in_pred}")
+
         if self.use_aux_heads:
             logger.info("Using spatial-aux heads")
             logger.info(f"Spatial aux fusion type: {self.aux_spatial_fusion}")
@@ -317,7 +320,7 @@ class M4C(nn.Module):
         )
         batch_dict.update(mmt_results)
 
-    def _forward_output(self, batch_dict):
+    def _forward_output(self, batch_dict, remove_unk=False):
         mmt_dec_output = batch_dict['mmt_dec_output']
         mmt_ocr_output = batch_dict['mmt_ocr_output']
         ocr_mask = batch_dict['pad_ocr_mask']
@@ -327,13 +330,18 @@ class M4C(nn.Module):
             mmt_dec_output, mmt_ocr_output, ocr_mask
         )
         scores = torch.cat([fixed_scores, dynamic_ocr_scores], dim=-1)
+        # remove unk-tokens from predicitons
+        if remove_unk:
+            scores[..., registry.UNK_IDX] = -1e10
+
         batch_dict['scores'] = scores
 
     def _forward_mmt_and_output(self, batch_dict):
         if self.training:
             # fwd_results['prev_inds'] = sample_list.train_prev_inds.clone()
             self._forward_mmt(batch_dict)
-            self._forward_output(batch_dict)
+            # remove unk only if set by flag
+            self._forward_output(batch_dict, remove_unk=self.remove_unk_in_pred)
         else:
             dec_step_num = batch_dict["train_prev_inds"].size(1)
             # fill prev_inds with BOS_IDX at index 0, and zeros elsewhere
@@ -345,7 +353,8 @@ class M4C(nn.Module):
             # greedy decoding at test time
             for t in range(dec_step_num):
                 self._forward_mmt(batch_dict)
-                self._forward_output(batch_dict)
+                # always remove unk in validation
+                self._forward_output(batch_dict, remove_unk=True)
 
                 # find the highest scoring output (either a fixed vocab
                 # or an OCR), and add it to prev_inds for auto-regressive
@@ -360,7 +369,8 @@ class M4C(nn.Module):
 
         for t in range(dec_step_num):
             self._forward_mmt(batch_dict)
-            self._forward_output(batch_dict)
+            # always remove unk in validation
+            self._forward_output(batch_dict, remove_unk=True)
 
             finish, batch_dict, batch_size_t = self.bsdecoder.decode(batch_dict, t)
             if finish:
