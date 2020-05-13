@@ -48,5 +48,6 @@ TASK19:
   mix_list: [none, none, none, none, none, none]
   use_datasets: ["textcaps"]
   val_on: ["textcaps"]
-  num_workers: 16
-  remove_unk_in_pred: true
+  num_workers: 0
+  remove_unk_in_pred: false
+  remove_unk_in_scores: true

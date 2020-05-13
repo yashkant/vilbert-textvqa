@@ -42,6 +42,7 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+from memory_profiler import profile
 
 
 def main():
@@ -602,16 +603,6 @@ def main():
             iterId = startIterID + step + (epochId * median_num_iter)
             first_task = True
 
-            # # Todo: Handle steps between datasets! (Generate Random Sampler and plug into dataloader)
-            # if "step_datasets" in task_cfg["TASK19"]:
-            #     assert len(task_cfg["TASK19"]["step_datasets"]) == len(task_datasets_train["separate_datasets"])
-            #     removed_idx = []
-            #     for idx, (step, dataset) in enumerate(zip(task_cfg["TASK19"]["step_datasets"],
-            #                              task_datasets_train["separate_datasets"])):
-            #         if iterId == step:
-            #             logger.info(f"Turning off Dataset: {dataset}")
-            #             removed_idx.append(idx)
-
             for task_id in task_ids:
                 is_forward = True
                 if is_forward:
@@ -733,7 +724,6 @@ def main():
     tbLogger.txt_close()
     del model
     return args.task_file, output_checkpoint, args.use_share2
-
 
 def evaluate(
     args,

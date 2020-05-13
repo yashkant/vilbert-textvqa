@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sys
+from memory_profiler import profile
 
 import numpy as np
 import torch
@@ -216,7 +217,6 @@ MetricsMap = {
     "TextCaps": TextCapsBleu4(),
 }
 
-
 def ForwardModelsVal(args,
                      task_cfg,
                      device,
@@ -259,8 +259,9 @@ def ForwardModelsVal(args,
     if return_batch:
         return float(loss), float(batch_acc), batch_size, batch_dict
 
-    return float(loss), float(batch_acc), batch_size
+    del batch_dict, results_dict
 
+    return float(loss), float(batch_acc), batch_size
 
 def ForwardModelsTrain(
         args,
@@ -305,7 +306,7 @@ def ForwardModelsTrain(
         textvqa_metric = MetricsMap["TextVQA"]
 
     batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, batch_dict["textvqa_scores"])
-
+    del batch_dict, results_dict
     return loss, batch_acc
 
 
@@ -592,7 +593,6 @@ def LoadDatasets(args,
 #         task_datasets_val,
 #         task_dataloader_val,
 #     )
-
 
 def compute_score_with_logits(logits, labels):
     logits = torch.max(logits, 1)[1].data  # argmax
