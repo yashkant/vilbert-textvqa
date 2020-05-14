@@ -274,6 +274,8 @@ def ForwardModelsTrain(
         model,
         task_losses,
 ):
+    import time
+    time_1 = time.time()
 
     # reset the task iteration when needed.
     if task_count[task_id] % len(task_dataloader_train[task_id]) == 0:
@@ -282,6 +284,9 @@ def ForwardModelsTrain(
     task_count[task_id] += 1
     batch_dict = task_iter_train[task_id].next()
 
+    time_2 = time.time()
+    print(f"Batch Loading: ", time_2-time_1)
+
     for key, value in batch_dict.items():
         if isinstance(value, torch.Tensor):
             batch_dict[key] = value.cuda(device=device, non_blocking=True)
@@ -289,11 +294,17 @@ def ForwardModelsTrain(
             for k,v in value.items():
                 batch_dict[key][k] = v.cuda(device=device, non_blocking=True)
 
+    time_3 = time.time()
+    print(f"Send to Device: ", time_3-time_2)
+
     question = batch_dict["question_indices"]
     batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
 
     results_dict = model(batch_dict)
     batch_dict.update(results_dict)
+
+    time_4 = time.time()
+    print(f"Send to Device: ", time_4-time_3)
 
     if task_cfg[task_id]["loss"] == "TextVQAandSpatialLoss":
         loss = task_losses[task_id](batch_dict)
