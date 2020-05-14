@@ -352,10 +352,12 @@ def vqa_calculate(batch_dict):
             "pred_answer": answer,
             "belongs_to": belongs_to,
             "answer_words": answer_words,
-            "topkscores": topkscores
+            "topkscores": topkscores,
+            "pred_ids": pred_answers
         })
 
     accuracy, pred_scores = vqa_evaluator.eval_pred_list(predictions)
+
     return {
         'question_id': predictions[0]['question_id'],
         'accuracy': accuracy,
@@ -454,7 +456,10 @@ def evaluate_predictions(eval_df, results_df, acc_type="vqa", tokens_from="vd"):
             'pred_answers': np.array([re.complete_seqs[1:]])
         }
 
-        predictions.append(calculate(batch))
+        calculate_result = calculate(batch)
+        calculate_result["pred_ids"] = np.array([re.complete_seqs])
+
+        predictions.append(calculate_result)
 
     accuracies_df = pd.DataFrame(predictions)
     best_result = []
@@ -607,20 +612,20 @@ def main():
                         args.split,
                         task_cfg["TASK19"]["val_on"][0])
                 )
+            #
+            #     accuracies = evaluate_predictions(eval_df, results_df, acc_type="anls")
+            #     logger.info(
+            #         "{} Accuracy: {} for {} questions, split {}, dataset {}".format(
+            #             "anls",
+            #             accuracies['vqa_accuracy'],
+            #             accuracies['accuracies_df'].shape,
+            #             args.split,
+            #             task_cfg["TASK19"]["val_on"][0])
+            #     )
 
-                accuracies = evaluate_predictions(eval_df, results_df, acc_type="anls")
-                logger.info(
-                    "{} Accuracy: {} for {} questions, split {}, dataset {}".format(
-                        "anls",
-                        accuracies['vqa_accuracy'],
-                        accuracies['accuracies_df'].shape,
-                        args.split,
-                        task_cfg["TASK19"]["val_on"][0])
-                )
-
-            evalai_file = os.path.join(os.path.dirname(args.model_ckpt),'run2_{}_evalai_beam_{}_short_eval_{}_share2_{}.json'.
+            evalai_file = os.path.join(os.path.dirname(args.model_ckpt),'challenge_{}_evalai_beam_{}_short_eval_{}_share2_{}.json'.
                                        format(split, args.beam_size, args.short_eval, args.use_share2))
-            df_file = os.path.join(os.path.dirname(args.model_ckpt),'run2_{}_evalai_beam_{}_short_eval_{}_share2_{}.df'.
+            df_file = os.path.join(os.path.dirname(args.model_ckpt),'challenge_{}_evalai_beam_{}_short_eval_{}_share2_{}.df'.
                                        format(split, args.beam_size, args.short_eval, args.use_share2))
 
             # Accuracies DF
