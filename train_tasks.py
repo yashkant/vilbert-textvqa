@@ -41,7 +41,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def main():
+def get_parser():
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -72,7 +72,7 @@ def main():
     )
     parser.add_argument(
         "--num_train_epochs",
-        default=20,
+        default=40,
         type=int,
         help="Total number of training epochs to perform.",
     )
@@ -220,33 +220,59 @@ def main():
         "--from_scratch", action="store_true", help="Initialize ViLBERT weights from scratch/ does it make"
                                                     "what about question encodings!?")
 
+    return parser
+
+
+def assert_add_registry(task_cfg, args):
+    assert task_cfg["TASK19"]["num_epoch"] == args.num_train_epochs
+    assert_keys = [
+        "val_batch_size",
+        "val_workers",
+        "train_workers"
+    ]
+
+    for key in assert_keys:
+        assert key in task_cfg["TASK19"], f"Key not found: {key}"
+
+    add_keys = [
+        "val_batch_size",
+        "val_workers",
+        "train_workers",
+        ("revqa_eval", False),
+        ("use_ce_loss", False),
+        ("scl_coeff", -1),
+        "batch_size",
+        ("mask_image", False),
+        ("scl_formulation", "normal"),
+        ("val_drop_last", True)
+    ]
+
+    for key in add_keys:
+        if isinstance(key, tuple):
+            registry[key[0]] = task_cfg["TASK19"].get(key[0], key[1])
+        else:
+            registry[key] = task_cfg["TASK19"][key]
+
+    print(json.dumps(vars(registry), indent=2))
+
+
+def main():
+    parser = get_parser()
     args = parser.parse_args()
     with open(args.task_file, "r") as f:
         task_cfg = edict(yaml.safe_load(f))
 
     logger.info("-"*20 + "Config Start" + "-"*20)
-    print(vars(args))
-    print(task_cfg["TASK19"])
-    logger.info("-"*20 + "Config End" + "-"*20)
-
+    print(json.dumps(vars(args), indent=2))
+    print(json.dumps(vars(task_cfg["TASK19"]), indent=2))
     seed = task_cfg["TASK19"].get("seed", args.seed)
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     logger.info(f"Using seed: {seed}")
 
-    # Add registry variables for NTXent Loss
-    registry.batch_size = task_cfg["TASK19"]["batch_size"]
-    registry.loss_params = task_cfg["TASK19"].get("loss_params", {"temperature": None, "use_cosine_similarity": None})
-    registry.val_batch_size = task_cfg["TASK19"].get("val_batch_size", 64)
-    registry.val_workers = task_cfg["TASK19"].get("val_workers", 8)
-    registry.mask_image = task_cfg["TASK19"].get("mask_image", False)
-    registry.use_sent_bert = task_cfg["TASK19"].get("use_sent_bert", False)
-    registry["revqa_eval"] = task_cfg["TASK19"].get("revqa_eval", False)
-    registry.use_ce_loss = task_cfg["TASK19"].get("use_ce_loss", False)
-    registry.scl_coeff = task_cfg["TASK19"].get("scl_coeff", 1.0)
-
-    assert task_cfg["TASK19"]["num_epoch"] == args.num_train_epochs
+    assert_add_registry(task_cfg, args)
+    logger.info("-"*20 + "Config End" + "-"*20)
 
     from vilbert.task_utils import (
         LoadDatasets,
@@ -566,6 +592,7 @@ def main():
     # This validation score/loss is used for model-saving.
     best_val_score = 0
     best_val_loss = np.inf
+    best_val_epoch = 0
     import time
 
     # # Sanity Check
@@ -695,6 +722,7 @@ def main():
                             logger.info(
                                 f"Current Validation Score: {curr_val_score} | Previous Best Validation Score: {best_val_score}")
                             best_val_score = curr_val_score
+                            best_val_epoch = epochId
                             torch.save(
                                 {
                                     "model_state_dict": model_to_save.state_dict(),
@@ -736,6 +764,7 @@ def main():
             lr_scheduler.step()
     # Todo: Add config for final_evaluation splits [re-vqa, val, test]
 
+    print(f"Best Validation Score: {best_val_score} and Best Validation Epoch: {best_val_epoch}")
     tbLogger.txt_close()
 
 

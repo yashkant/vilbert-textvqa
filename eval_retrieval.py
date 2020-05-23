@@ -148,7 +148,7 @@ def main():
         help="whether to use task specific tokens for the multi-task learning.",
     )
     args = parser.parse_args()
-    with open("sweeps/vilbert_tasks.yml", "r") as f:
+    with open("sweeps/vqa-re/archive/vilbert_tasks.yml", "r") as f:
         task_cfg = edict(yaml.safe_load(f))
 
     random.seed(args.seed)

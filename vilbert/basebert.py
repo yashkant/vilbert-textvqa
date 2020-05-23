@@ -268,8 +268,8 @@ class BertPreTrainedModel(nn.Module):
             )
         if len(unexpected_keys) > 0:
             logger.info(
-                "Weights from pretrained model not used in {}: {}".format(
-                    model.__class__.__name__, unexpected_keys
+                "Number of weights from pretrained model not used in {}: {}".format(
+                    model.__class__.__name__, len(unexpected_keys)
                 )
             )
         if len(error_msgs) > 0:

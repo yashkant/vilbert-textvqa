@@ -160,7 +160,7 @@ def main():
     )
 
     args = parser.parse_args()
-    with open("sweeps/vilbert_tasks.yml", "r") as f:
+    with open("sweeps/vqa-re/archive/vilbert_tasks.yml", "r") as f:
         task_cfg = edict(yaml.safe_load(f))
 
     random.seed(args.seed)

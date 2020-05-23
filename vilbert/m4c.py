@@ -306,6 +306,7 @@ class ContrastiveProjection(nn.Module):
         self.linear2 = nn.Linear(config.hidden_size, config.contrast_out_dim)
 
     def forward(self, batch_dict):
+        # (bs, feat_size)
         # l2-normalization to unit-hypersphere
         # Todo: SCL folks normalize embeddings right out of the CNN, I can normalize the image-features ?
         batch_dict["contrastive_projection_norm"] = F.normalize(

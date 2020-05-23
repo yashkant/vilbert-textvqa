@@ -6,7 +6,6 @@ from bisect import bisect
 from collections import defaultdict
 from io import open
 import json
-import logging
 import os
 import sys
 from itertools import combinations
@@ -40,18 +39,19 @@ from pytorch_transformers.optimization import (
     WarmupLinearSchedule,
 )
 
-from vilbert.losses import NTXentLoss, SCLLoss
+from vilbert.losses import NTXentLoss, SCLLoss, SupConLoss
 from vilbert.optimization import RAdam
 from tools.registry import registry
 from vilbert.utils import debug_sampler
 
+import logging
 logger = logging.getLogger(__name__)
 
 LossMap = {
     "BCEWithLogitLoss": nn.BCEWithLogitsLoss(reduction="mean"),
     "CrossEntropyLoss": nn.CrossEntropyLoss(),
-    "NTXentLoss": NTXentLoss(registry.batch_size),
-    "SCLLoss": SCLLoss(),
+    # "NTXentLoss": NTXentLoss(registry.batch_size),
+    "SCLLoss": SupConLoss(temperature=0.5, formulation=registry.scl_formulation), # using the default parameter setting
 }
 
 def clip_gradients(model, max_grad_l2_norm, clip_norm_mode):
@@ -79,7 +79,7 @@ def clip_gradients(model, max_grad_l2_norm, clip_norm_mode):
             )
 
 
-def get_optim_scheduler(args,
+def     get_optim_scheduler(args,
                         config,
                         optimizer_grouped_parameters,
                         num_train_optimization_steps,
@@ -206,10 +206,6 @@ def ForwardModelsVal(args,
         batch_dict = batch_dict[0]
 
 
-    if registry.get("eval_only", False):
-        return batch_dict
-
-
     if task_cfg[task_id]["type"] == "ContrastiveProjection":
         assert len(batch_dict) == 2
 
@@ -218,8 +214,7 @@ def ForwardModelsVal(args,
         #
         # y = (x * torch.eye(208).to(x.device)).sum()
 
-        loss, batch_score = task_losses[task_id](batch_dict[0]["contrastive_projection_norm"],
-                                    batch_dict[1]["contrastive_projection_norm"], batch_dict[0]["scl_mask"])
+        loss, batch_score = task_losses[task_id](batch_dict)
 
     # for different task, we use different output to calculate the loss.
     elif task_cfg[task_id]["type"] == "VL-classifier":
@@ -249,6 +244,9 @@ def ForwardModelsVal(args,
         vl_loss, batch_score = add_ce_loss(batch_dict[0], val_run=True)
         # don't care about the scl-loss
         loss = vl_loss
+
+    if registry.get("eval_only", False):
+        return batch_dict
 
     del results_dict
     del batch_dict
@@ -311,7 +309,7 @@ def ForwardModelsTrain(
 
     if task_cfg[task_id]["type"] == "ContrastiveProjection":
         assert len(batch_dict) == 2
-        loss, batch_score = task_losses[task_id](batch_dict[0]["contrastive_projection_norm"], batch_dict[1]["contrastive_projection_norm"], batch_dict[0]["scl_mask"])
+        loss, batch_score = task_losses[task_id](batch_dict)
 
     # for different task, we use different output to calculate the loss.
     elif task_cfg[task_id]["type"] == "VL-classifier":
@@ -331,6 +329,7 @@ def ForwardModelsTrain(
 
     if registry.use_ce_loss:
         vl_loss, batch_score = add_ce_loss(batch_dict)
+        assert registry.scl_coeff > 0
         loss = loss*registry.scl_coeff + vl_loss
 
     del results_dict
@@ -429,12 +428,12 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
         task_name = task_cfg[task]["name"]
         task_ids.append(task)
         batch_size = task_cfg[task]["batch_size"] // args.gradient_accumulation_steps
-        num_workers = args.num_workers
-        if args.local_rank != -1:
-            batch_size = int(batch_size / dist.get_world_size())
-            num_workers = int(num_workers / dist.get_world_size())
 
-        # num_workers = int(num_workers / len(ids))
+        assert args.local_rank == -1
+        # if args.local_rank != -1:
+        #     batch_size = int(batch_size / dist.get_world_size())
+        #     num_workers = int(num_workers / dist.get_world_size())
+
         logger.info(
             "Loading %s Dataset with batch size %d"
             % (task_cfg[task]["name"], batch_size)
@@ -507,7 +506,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
                 task_datasets_train[task],
                 sampler=train_sampler,
                 batch_size=batch_size,
-                num_workers=num_workers,
+                num_workers=registry.train_workers,
                 pin_memory=True,
                 drop_last=True
             )
@@ -536,7 +535,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
                 batch_size=registry.val_batch_size,
                 num_workers=registry.val_workers,
                 pin_memory=True,
-                drop_last=True
+                drop_last=registry.val_drop_last
             )
 
     # debug_sampler(train_sampler)
@@ -553,95 +552,6 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
     )
 
 
-def LoadDatasetEval(args, task_cfg, ids):
-    tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=True)
-
-    task_feature_reader1 = {}
-    task_feature_reader2 = {}
-    for i, task_id in enumerate(ids):
-        task = "TASK" + task_id
-        if task_cfg[task]["features_h5path1"] not in task_feature_reader1:
-            task_feature_reader1[task_cfg[task]["features_h5path1"]] = None
-        if task_cfg[task]["features_h5path2"] not in task_feature_reader2:
-            task_feature_reader2[task_cfg[task]["features_h5path2"]] = None
-
-    # initilzie the feature reader
-    for features_h5path in task_feature_reader1.keys():
-        if features_h5path != "":
-            task_feature_reader1[features_h5path] = ImageFeaturesH5Reader(
-                features_h5path, args.in_memory
-            )
-
-    for features_h5path in task_feature_reader2.keys():
-        if features_h5path != "":
-            task_feature_reader2[features_h5path] = ImageFeaturesH5Reader(
-                features_h5path, args.in_memory
-            )
-
-    task_datasets_val = {}
-    task_dataloader_val = {}
-    task_ids = []
-    task_batch_size = {}
-    task_num_iters = {}
-
-    for i, task_id in enumerate(ids):
-        task = "TASK" + task_id
-        task_ids.append(task)
-        task_name = task_cfg[task]["name"]
-        batch_size = args.batch_size
-        if args.local_rank != -1:
-            batch_size = int(batch_size / dist.get_world_size())
-
-        num_workers = int(args.num_workers / len(ids))
-        logger.info(
-            "Loading %s Dataset with batch size %d"
-            % (task_cfg[task]["name"], batch_size)
-        )
-
-        if args.split:
-            eval_split = args.split
-        else:
-            eval_split = task_cfg[task]["val_split"]
-
-        task_datasets_val[task] = DatasetMapEval[task_name](
-            task=task_cfg[task]["name"],
-            dataroot=task_cfg[task]["dataroot"],
-            annotations_jsonpath=task_cfg[task]["val_annotations_jsonpath"],
-            split=eval_split,
-            image_features_reader=task_feature_reader1[
-                task_cfg[task]["features_h5path1"]
-            ],
-            gt_image_features_reader=task_feature_reader2[
-                task_cfg[task]["features_h5path2"]
-            ],
-            tokenizer=tokenizer,
-            bert_model=args.bert_model,
-            clean_datasets=args.clean_train_sets,
-            padding_index=0,
-            max_seq_length=task_cfg[task]["max_seq_length"],
-            max_region_num=task_cfg[task]["max_region_num"],
-        )
-
-        task_dataloader_val[task] = DataLoader(
-            task_datasets_val[task],
-            shuffle=False,
-            batch_size=batch_size,
-            num_workers=10,
-            pin_memory=True,
-        )
-
-        task_num_iters[task] = len(task_dataloader_val[task])
-        task_batch_size[task] = batch_size
-
-    return (
-        task_batch_size,
-        task_num_iters,
-        task_ids,
-        task_datasets_val,
-        task_dataloader_val,
-    )
-
-
 def compute_score_with_logits(logits, labels):
     logits = torch.max(logits, 1)[1].data  # argmax
     one_hots = torch.zeros(*labels.size()).cuda()
@@ -650,237 +560,3 @@ def compute_score_with_logits(logits, labels):
     return scores
 
 
-def EvaluatingModel(
-    args,
-    task_cfg,
-    device,
-    task_id,
-    batch,
-    model,
-    task_dataloader,
-    task_losses,
-    results,
-    others,
-):
-    batch = tuple(t.cuda(device=device, non_blocking=True) for t in batch)
-
-    if task_id == "TASK4" or task_id == "TASK17":
-        features, spatials, image_mask, question, target, input_mask, segment_ids, multiple_choice_ids, co_attention_mask, question_id = (
-            batch
-        )
-    else:
-        features, spatials, image_mask, question, target, input_mask, segment_ids, co_attention_mask, question_id = (
-            batch
-        )
-    batch_size = features.size(0)
-
-    if task_cfg[task_id]["process"] in ["dialog"]:
-        max_num_bbox = features.size(1)
-        nround = question.size(1)
-        num_options = question.size(2)
-        rbatch_size = batch_size * nround
-        question = question.view(rbatch_size, question.size(2), question.size(3))
-        target = target.view(-1)
-        input_mask = input_mask.view(
-            rbatch_size, input_mask.size(2), input_mask.size(3)
-        )
-        segment_ids = segment_ids.view(
-            rbatch_size, segment_ids.size(2), segment_ids.size(3)
-        )
-        co_attention_mask = co_attention_mask.view(
-            rbatch_size,
-            co_attention_mask.size(2),
-            co_attention_mask.size(3),
-            co_attention_mask.size(4),
-        )
-
-        features = (
-            features.unsqueeze(1)
-            .unsqueeze(1)
-            .expand(batch_size, nround, num_options, max_num_bbox, 2048)
-            .contiguous()
-            .view(-1, max_num_bbox, 2048)
-        )
-        spatials = (
-            spatials.unsqueeze(1)
-            .unsqueeze(1)
-            .expand(batch_size, nround, num_options, max_num_bbox, 5)
-            .contiguous()
-            .view(-1, max_num_bbox, 5)
-        )
-        image_mask = (
-            image_mask.unsqueeze(1)
-            .expand(batch_size, nround, num_options, max_num_bbox)
-            .contiguous()
-            .view(-1, max_num_bbox)
-        )
-
-        question = question.view(-1, question.size(2))
-        input_mask = input_mask.view(-1, input_mask.size(2))
-        segment_ids = segment_ids.view(-1, segment_ids.size(2))
-        co_attention_mask = co_attention_mask.view(
-            -1, co_attention_mask.size(2), co_attention_mask.size(3)
-        )
-        batch_size = rbatch_size
-
-    elif task_cfg[task_id]["process"] in ["expand"]:
-        max_num_bbox = features.size(1)
-        num_options = question.size(1)
-        features = (
-            features.unsqueeze(1)
-            .expand(batch_size, num_options, max_num_bbox, 2048)
-            .contiguous()
-            .view(-1, max_num_bbox, 2048)
-        )
-        spatials = (
-            spatials.unsqueeze(1)
-            .expand(batch_size, num_options, max_num_bbox, 5)
-            .contiguous()
-            .view(-1, max_num_bbox, 5)
-        )
-        image_mask = (
-            image_mask.unsqueeze(1)
-            .expand(batch_size, num_options, max_num_bbox)
-            .contiguous()
-            .view(-1, max_num_bbox)
-        )
-        question = question.view(-1, question.size(2))
-        input_mask = input_mask.view(-1, input_mask.size(2))
-        segment_ids = segment_ids.view(-1, segment_ids.size(2))
-        co_attention_mask = co_attention_mask.view(
-            -1, co_attention_mask.size(2), co_attention_mask.size(3)
-        )
-
-    elif task_cfg[task_id]["process"] in ["retrieval"]:
-        max_num_bbox = features.size(1)
-        num_options = question.size(1)
-        features = features.view(-1, features.size(2), features.size(3))
-        spatials = spatials.view(-1, spatials.size(2), spatials.size(3))
-        image_mask = image_mask.view(-1, image_mask.size(2))
-        question = question.view(-1, question.size(2))
-        input_mask = input_mask.view(-1, input_mask.size(2))
-        segment_ids = segment_ids.view(-1, segment_ids.size(2))
-        co_attention_mask = co_attention_mask.view(
-            -1, co_attention_mask.size(2), co_attention_mask.size(3)
-        )
-
-    elif task_cfg[task_id]["process"] in ["nlvr"]:
-        batch_size = features.size(0)
-        max_num_bbox = features.size(1)
-        num_options = question.size(1)
-        features = features.view(
-            batch_size * 2, int(features.size(1) / 2), features.size(2)
-        )
-        spatials = spatials.view(
-            batch_size * 2, int(spatials.size(1) / 2), spatials.size(2)
-        )
-        image_mask = image_mask.view(batch_size * 2, int(image_mask.size(1) / 2))
-        question = question.repeat(1, 2)
-        question = question.view(batch_size * 2, int(question.size(1) / 2))
-        input_mask = input_mask.repeat(1, 2)
-        input_mask = input_mask.view(batch_size * 2, int(input_mask.size(1) / 2))
-        segment_ids = segment_ids.repeat(1, 2)
-        segment_ids = segment_ids.view(batch_size * 2, int(segment_ids.size(1) / 2))
-        co_attention_mask = co_attention_mask.view(
-            batch_size * 2,
-            int(co_attention_mask.size(1) / 2),
-            co_attention_mask.size(2),
-        )
-
-    task_tokens = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
-
-    with torch.no_grad():
-        vil_prediction, vil_prediction_gqa, vil_logit, vil_binary_prediction, vil_tri_prediction, vision_prediction, vision_logit, linguisic_prediction, linguisic_logit, _ = model(
-            question,
-            features,
-            spatials,
-            segment_ids,
-            input_mask,
-            image_mask,
-            co_attention_mask,
-            task_tokens,
-        )
-
-    if task_cfg[task_id]["type"] == "VL-classifier":
-        logits = torch.max(vil_prediction, 1)[1].data  # argmax
-        loss = 0
-        batch_score = 0
-        for i in range(logits.size(0)):
-            results.append(
-                {
-                    "question_id": question_id[i].item(),
-                    "answer": task_dataloader[task_id].dataset.label2ans[
-                        logits[i].item()
-                    ],
-                }
-            )
-
-    elif task_cfg[task_id]["type"] == "VL-classifier-GQA":
-        logits = torch.max(vil_prediction_gqa, 1)[1].data
-        loss = 0
-        batch_score = 0
-        for i in range(logits.size(0)):
-            results.append(
-                {
-                    "questionId": str(question_id[i].item()),
-                    "prediction": task_dataloader[task_id].dataset.label2ans[
-                        logits[i].item()
-                    ],
-                }
-            )
-
-    elif task_cfg[task_id]["type"] == "VL-logit":
-        vil_logit = vil_logit.view(batch_size, num_options)
-        loss = task_losses[task_id](vil_logit, target)
-        _, preds = torch.max(vil_logit, 1)
-        batch_score = (preds == target).sum()
-
-        probs = torch.softmax(vil_logit, dim=1)
-        for i in range(vil_logit.size(0)):
-            results.append(
-                {
-                    "question_id": question_id[i].item(),
-                    "answer": [prob.item() for prob in probs[i]],
-                }
-            )
-
-    elif task_cfg[task_id]["type"] == "V-logit":
-        loss = task_losses[task_id](vision_logit, target)
-        loss = loss.mean() * target.size(1)
-        _, select_idx = torch.max(vision_logit, dim=1)
-        select_target = target.squeeze(2).gather(1, select_idx.view(-1, 1))
-        batch_score = torch.sum(select_target > 0.5).item()
-
-        for i in range(select_idx.size(0)):
-            results.append(
-                {
-                    "id": question_id[i].item(),
-                    "target": select_idx[i].item(),
-                    "IOU": select_target[i].item(),
-                }
-            )
-
-    elif task_cfg[task_id]["type"] == "V-logit-mc":
-        vision_logit = vision_logit[:, 101:]
-        vision_logit = vision_logit.squeeze(2).gather(1, multiple_choice_ids)
-        vision_logit = vision_logit.unsqueeze(2)
-        loss = task_losses[task_id](vision_logit, target)
-        loss = loss.mean() * target.size(1)
-        _, preds = torch.max(vision_logit, dim=1)
-        _, target = torch.max(target, dim=1)
-        batch_score = float((preds == target).sum())
-
-        for i in range(preds.size(0)):
-            results.append({"id": question_id[i].item(), "target": preds[i].item()})
-
-    elif task_cfg[task_id]["type"] == "VL-binary-classifier":
-        loss = task_losses[task_id](vil_binary_prediction, target)
-        loss = loss.mean()
-        batch_score = compute_score_with_logits(vil_binary_prediction, target).sum()
-
-    elif task_cfg[task_id]["type"] == "VL-tri-classifier":
-        loss = task_losses[task_id](vil_tri_prediction, target)
-        loss = loss.mean()
-        batch_score = compute_score_with_logits(vil_tri_prediction, target).sum()
-
-    return float(loss), float(batch_score), batch_size, results, others

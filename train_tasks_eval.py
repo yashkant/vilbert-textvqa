@@ -4,6 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import argparse
+import gc
 import json
 import logging
 import os
@@ -27,16 +28,12 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 
-from vilbert.task_utils import (
-    LoadDatasets,
-    LoadLosses,
-    ForwardModelsTrain,
-    ForwardModelsVal,
-    clip_gradients,
-    get_optim_scheduler)
+from tools.registry import registry
 
 import vilbert.utils as utils
 import torch.distributed as dist
+
+from vilbert.metrics import get_consistency_score
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -46,7 +43,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def main():
+def get_parser():
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -77,7 +74,7 @@ def main():
     )
     parser.add_argument(
         "--num_train_epochs",
-        default=20,
+        default=40,
         type=int,
         help="Total number of training epochs to perform.",
     )
@@ -140,7 +137,7 @@ def main():
     parser.add_argument(
         "--num_workers",
         type=int,
-        default=16,
+        default=0,
         help="Number of workers in the dataloader.",
     )
     parser.add_argument(
@@ -225,20 +222,66 @@ def main():
         "--from_scratch", action="store_true", help="Initialize ViLBERT weights from scratch/ does it make"
                                                     "what about question encodings!?")
 
+    return parser
+
+
+def assert_add_registry(task_cfg, args):
+    assert task_cfg["TASK19"]["num_epoch"] == args.num_train_epochs
+    assert_keys = [
+        "val_batch_size",
+        "val_workers",
+        "train_workers"
+    ]
+
+    for key in assert_keys:
+        assert key in task_cfg["TASK19"], f"Key not found: {key}"
+
+    add_keys = [
+        "val_batch_size",
+        "val_workers",
+        "train_workers",
+        ("revqa_eval", False),
+        ("use_ce_loss", False),
+        ("scl_coeff", -1),
+        "batch_size",
+        ("mask_image", False),
+        ("scl_formulation", "normal"),
+        ("val_drop_last", True)
+    ]
+
+    for key in add_keys:
+        if isinstance(key, tuple):
+            registry[key[0]] = task_cfg["TASK19"].get(key[0], key[1])
+        else:
+            registry[key] = task_cfg["TASK19"][key]
+
+    print(json.dumps(vars(registry), indent=2))
+
+
+def main():
+    parser = get_parser()
     args = parser.parse_args()
     with open(args.task_file, "r") as f:
         task_cfg = edict(yaml.safe_load(f))
 
     logger.info("-"*20 + "Config Start" + "-"*20)
-    print(vars(args))
-    print(task_cfg["TASK19"])
-    logger.info("-"*20 + "Config End" + "-"*20)
-
+    print(json.dumps(vars(args), indent=2))
+    print(json.dumps(vars(task_cfg["TASK19"]), indent=2))
     seed = task_cfg["TASK19"].get("seed", args.seed)
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     logger.info(f"Using seed: {seed}")
+
+    assert_add_registry(task_cfg, args)
+    logger.info("-"*20 + "Config End" + "-"*20)
+
+    from vilbert.task_utils import (
+        LoadDatasets,
+        LoadLosses,
+        ForwardModelsTrain,
+        clip_gradients,
+        get_optim_scheduler)
 
     model_type = task_cfg["TASK19"]["model_type"] if args.model_type is None else args.model_type
 
@@ -292,6 +335,7 @@ def main():
         device = torch.device(
             "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
         )
+        torch.backends.cudnn.benchmark = True
         n_gpu = torch.cuda.device_count()
     else:
         torch.cuda.set_device(args.local_rank)
@@ -331,7 +375,8 @@ def main():
 
     # LOAD DATASETS
     task_batch_size, task_num_iters, task_ids, task_datasets_train, task_datasets_val, task_dataloader_train, \
-    task_dataloader_val = LoadDatasets(args, task_cfg, args.tasks.split("-"))
+    task_dataloader_val = LoadDatasets(args, task_cfg, args.tasks.split("-"), split="val")
+
 
     logdir = os.path.join(savePath, "logs")
     tbLogger = utils.tbLogger(
@@ -355,6 +400,7 @@ def main():
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
+
 
     task_ave_iter = {}
     # task_stop_controller = {}
@@ -413,7 +459,14 @@ def main():
                     raise ValueError
 
                 # Common keys
-                transfer_keys.extend(["aux_spatial_fusion", "use_aux_heads"])
+                transfer_keys.extend(["aux_spatial_fusion",
+                                      "use_aux_heads",
+                                      "contrastive",
+                                      "weight_decay",
+                                      "freeze_mmt_and_textbert",
+                                      "lr_scale_text_bert",
+                                      "contrast_out_dim",
+                                      "lr_scale_mmt"])
 
                 # Load config-file M4C
                 with open(args.config_file, "r") as file:
@@ -433,7 +486,13 @@ def main():
                         logger.info(f"Transferring keys:  {key}, {config_dict[key]}")
                 mmt_config = BertConfig.from_dict(config_dict)
 
-                text_bert_config = BertConfig.from_json_file("config/m4c_textbert_vqa.json")
+                text_bert_config = "config/m4c_textbert_vqa.json"
+
+                if task_cfg["TASK19"].get("freeze_text_bert", False):
+                    logger.info("TextBert Frozen")
+                    text_bert_config = "config/m4c_textbert_vqa_frozen.json"
+
+                text_bert_config = BertConfig.from_json_file(text_bert_config)
                 model = M4C(mmt_config, text_bert_config)
         else:
             model = VILBertForVLTasks.from_pretrained(
@@ -443,6 +502,8 @@ def main():
                 default_gpu=default_gpu,
             )
 
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f"Training Parameters: {trainable_params}")
     # LOAD LOSSES
     task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
 
@@ -469,6 +530,10 @@ def main():
     global_step = 0
     start_epoch = 0
 
+    # for finetuning we need resume-file
+    if task_cfg["TASK19"].get("contrastive", None) == "finetune":
+        assert args.resume_file != ""
+
     if args.resume_file != "" and os.path.exists(args.resume_file):
         logger.info(f"Resuming from Checkpoint: {args.resume_file}")
         checkpoint = torch.load(args.resume_file, map_location="cpu")
@@ -481,15 +546,19 @@ def main():
             else:
                 new_dict[attr] = checkpoint["model_state_dict"][attr]
         model.load_state_dict(new_dict)
-        warmup_scheduler.load_state_dict(checkpoint["warmup_scheduler_state_dict"])
-        # lr_scheduler.load_state_dict(checkpoint['lr_scheduler_state_dict'])
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        global_step = checkpoint["global_step"]
-        start_epoch = int(checkpoint["epoch_id"]) + 1
-        # task_stop_controller = checkpoint["task_stop_controller"]
-        tbLogger = checkpoint["tb_logger"]
-        del checkpoint
 
+        if task_cfg["TASK19"].get("load_state", False):
+            print("Loading Optimizer and Scheduler States")
+            warmup_scheduler.load_state_dict(checkpoint["warmup_scheduler_state_dict"])
+            # lr_scheduler.load_state_dict(checkpoint['lr_scheduler_state_dict'])
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            global_step = checkpoint["global_step"]
+            start_epoch = int(checkpoint["epoch_id"]) + 1
+            # task_stop_controller = checkpoint["task_stop_controller"]
+            tbLogger = checkpoint["tb_logger"]
+        else:
+            print("Not loading optimizer and scheduler states")
+        del checkpoint
     model.to(device)
 
     for state in optimizer.state.values():
@@ -522,136 +591,27 @@ def main():
         logger.info("Resetting Train Epochs to 0")
         start_epoch = 0
 
-    # This validation score is used for model-saving.
+    # This validation score/loss is used for model-saving.
     best_val_score = 0
+    best_val_loss = np.inf
+    best_val_epoch = 0
+    import time
+    task_id = "TASK19"
 
 
-    # TRAINING LOOP
-    for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
-        model.train()
-        for step in tqdm(range(median_num_iter), desc="Iters"):
-            iterId = startIterID + step + (epochId * median_num_iter)
-            first_task = True
-            # for task_id in task_ids:
-            #     is_forward = True
-            #     if is_forward:
-            #         loss, score = ForwardModelsTrain(
-            #             args,
-            #             task_cfg,
-            #             device,
-            #             task_id,
-            #             task_count,
-            #             task_iter_train,
-            #             task_dataloader_train,
-            #             model,
-            #             task_losses,
-            #         )
-            #
-            #         loss.backward()
-            #
-            #         if task_cfg["TASK19"]["grad_clip_mode"] == "all":
-            #             clip_gradients(model, task_cfg["TASK19"]["max_grad_norm"], task_cfg["TASK19"]["grad_clip_mode"])
-            #
-            #         if (step + 1) % args.gradient_accumulation_steps == 0:
-            #             optimizer.step()
-            #
-            #             if first_task and (
-            #                 global_step < warmpu_steps
-            #                 or lr_scheduler_config == "warmup_linear"
-            #                 or lr_scheduler_config == "pythia_warmup_decay"
-            #             ):
-            #                 warmup_scheduler.step()
-            #
-            #
-            #             model.zero_grad()
-            #             if first_task:
-            #                 global_step += 1
-            #                 first_task = False
-            #
-            #             if default_gpu:
-            #                 tbLogger.step_train(
-            #                     epochId,
-            #                     iterId,
-            #                     float(loss),
-            #                     float(score),
-            #                     optimizer.param_groups[0]["lr"],
-            #                     task_id,
-            #                     "train",
-            #                 )
-            #
-            # if "cosine" in lr_scheduler_config and global_step > warmpu_steps:
-            #     lr_scheduler.step()
-            #
-            # if (
-            #     step % (20 * args.gradient_accumulation_steps) == 0
-            #     and step != 0
-            #     and default_gpu
-            # ):
-            #     tbLogger.showLossTrain()
-            #     if step % (100 * args.gradient_accumulation_steps) == 0:
-            #         logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}")
+    logger.info("Starting Validation Run....")
+    evaluate(
+        args,
+        task_dataloader_val,
+        None,
+        task_cfg,
+        device,
+        task_id,
+        model,
+        task_losses,
+    )
 
-            # decided whether to evaluate on each tasks.
-            for task_id in task_ids:
-                # don't run validation during debug runs
-                if task_cfg["TASK19"]["debug"]:
-                    break
-
-                if (iterId != 0 and iterId % task_num_iters[task_id] == 0) or (
-                    epochId == args.num_train_epochs - 1 and step == median_num_iter - 1
-                ):
-                    curr_val_score = evaluate(
-                        args,
-                        task_dataloader_val,
-                        None,
-                        task_cfg,
-                        device,
-                        task_id,
-                        model,
-                        task_losses,
-                        epochId,
-                        default_gpu,
-                        tbLogger,
-                    )
-
-                    if default_gpu and not task_cfg["TASK19"]["debug"]:
-                        # Save a trained model
-                        logger.info("** ** * Saving fine - tuned model ** ** * ")
-                        model_to_save = (
-                            model.module if hasattr(model, "module") else model
-                        )  # Only save the model it-self
-                        # output_model_file = os.path.join(
-                        #     savePath, "pytorch_model_" + str(epochId) + ".bin"
-                        # )
-                        # torch.save(model_to_save.state_dict(), output_model_file)
-                        if curr_val_score > best_val_score:
-                            output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
-                            logger.info(f"Saving Checkpoint: {output_checkpoint}")
-                            logger.info(
-                                f"Current Validation Score: {curr_val_score} | Previous Best Validation Score: {best_val_score}")
-                            best_val_score = curr_val_score
-                            torch.save(
-                                {
-                                    "model_state_dict": model_to_save.state_dict(),
-                                    "optimizer_state_dict": optimizer.state_dict(),
-                                    "warmup_scheduler_state_dict": warmup_scheduler.state_dict(),
-                                    # 'lr_scheduler_state_dict': lr_scheduler.state_dict(),
-                                    "global_step": global_step,
-                                    "epoch_id": epochId,
-                                    # "task_stop_controller": task_stop_controller,
-                                    "tb_logger": tbLogger,
-                                },
-                                output_checkpoint,
-                            )
-
-        # if lr_scheduler_config == "automatic":
-        #     lr_scheduler.step(sum(val_scores.values()))
-        #     logger.info("best average score is %3f" % lr_scheduler.best)
-        # elif lr_scheduler_config == "mannul":
-        #     lr_scheduler.step()
-
-    # Todo: Add config for final_evaluation splits [re-vqa, val, test]
-
+    print(f"Best Validation Score: {best_val_score} and Best Validation Epoch: {best_val_epoch}")
     tbLogger.txt_close()
 
 
@@ -664,15 +624,12 @@ def evaluate(
     task_id,
     model,
     task_losses,
-    epochId,
-    default_gpu,
-    tbLogger,
 ):
 
-    from tools.registry import registry
-    registry["eval_only"] = task_cfg["TASK19"].get("eval_only", False)
-    registry["revqa_eval"] = task_cfg["TASK19"].get("revqa_eval", False)
+    from vilbert.task_utils import ForwardModelsVal
+    registry.eval_only = True
 
+    # reset revqa_bins for each evaluation!
     if registry.revqa_eval:
         from easydict import EasyDict
         dd = defaultdict(list)
@@ -680,7 +637,8 @@ def evaluate(
         super(EasyDict, registry).__setitem__("revqa_bins", dd)
 
     model.eval()
-    results = []
+    results = {}
+    final_results = {}
     for batch in tqdm(task_dataloader_val[task_id]):
         batch_dict = ForwardModelsVal(
             args, task_cfg, device, task_id, batch, model, task_losses
@@ -690,54 +648,73 @@ def evaluate(
         if registry["eval_only"]:
             # build the json file here!
             logits = torch.max(batch_dict["vil_prediction"], 1)[1].data  # argmax
+
+            # for idx in range(logits.size(0)):
+            #     results.append(
+            #         {
+            #             "question_id": batch_dict["question_id"][idx].item(),
+            #             "answer": task_dataloader_val[task_id].dataset.label2ans[
+            #                 logits[idx].item()
+            #             ],
+            #         }
+            #     )
+
             for idx in range(logits.size(0)):
-                results.append(
+                results[batch_dict["question_id"][idx].item()] = \
                     {
                         "question_id": batch_dict["question_id"][idx].item(),
                         "answer": task_dataloader_val[task_id].dataset.label2ans[
                             logits[idx].item()
                         ],
+                        "vqa_score": np.round(batch_dict["vqa_scores"][idx], 1) if "vqa_scores" in batch_dict else None
                     }
-                )
 
     # # bin the vqa-scores
-    # revqa_bins_scores = {}
-    # if registry.revqa_eval:
-    #     # vqa-score of all the samples
-    #     total_vqa_scores = []
-    #
-    #     for key, value in registry.revqa_bins.items():
-    #         k_values = range(1, 1+len(value))
-    #         revqa_bins_scores[key] = {
-    #             "vqa_scores": value,
-    #         }
-    #
-    #         total_vqa_scores.extend(value)
-    #
-    #         # for subsets of size = k, check VQA accuracy
-    #         for k_value in k_values:
-    #             value_subsets = list(combinations(value, k_value))
-    #             value_subset_scores = []
-    #             for subset in value_subsets:
-    #                 if 0.0 not in subset:
-    #                     value_subset_scores.append(1.0)
-    #                 else:
-    #                     value_subset_scores.append(0.0)
-    #             revqa_bins_scores[key][k_value] = sum(value_subset_scores)/len(value_subsets)
-    #
-    #     # Consistency Score Calculation
-    #     for k_value in range(1, 5):
-    #         scores = []
-    #         for key, value in revqa_bins_scores.items():
-    #             scores.append(value[k_value])
-    #         print(f"Consensus Score with K={k_value} is {sum(scores)/len(scores)}")
-    #
-    #     print(f"VQA Accuracy: {np.mean(total_vqa_scores)}")
+    revqa_bins_scores = {}
+    if registry.revqa_eval:
+        # vqa-score of all the samples
+        total_vqa_scores = []
+
+        try:
+            for key, value in registry.revqa_bins.items():
+                k_values = range(1, 1+len(value))
+                revqa_bins_scores[key] = {
+                    "vqa_scores": value,
+                }
+
+                total_vqa_scores.extend(value)
+
+                # for subsets of size = k, check VQA accuracy
+                for k_value in k_values:
+                    value_subsets = list(combinations(value, k_value))
+                    value_subset_scores = []
+                    for subset in value_subsets:
+                        if 0.0 not in subset:
+                            value_subset_scores.append(1.0)
+                        else:
+                            value_subset_scores.append(0.0)
+                    revqa_bins_scores[key][k_value] = sum(value_subset_scores)/len(value_subsets)
+
+            # Consistency Score Calculation
+            for k_value in range(1, 5):
+                scores = []
+                for key, value in revqa_bins_scores.items():
+                    scores.append(value[k_value])
+                print(f"Consensus Score with K={k_value} is {sum(scores)/len(scores)}")
+        except:
+            import pdb
+            pdb.set_trace()
+
+        print(f"VQA Accuracy: {np.mean(total_vqa_scores)}")
+
+    final_results["results"] = results
+    final_results["question_rephrase_dict_val"] = registry.question_rephrase_dict_val
+    final_results["revqa_bins_scores"] = revqa_bins_scores
 
     # save_file_path = f"save/{args.tag}"
     # os.makedirs(save_file_path, exist_ok=True)
     # save_file_path = f"{save_file_path}/test_evalai.json"
-    # json.dump(results, open(save_file_path, "w"))
+    json.dump(final_results, open("baseline_model.json", "w"))
 
     # for i, batch in enumerate(task_dataloader_val[task_id]):
     #     loss, score, batch_size = ForwardModelsVal(

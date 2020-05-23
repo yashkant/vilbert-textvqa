@@ -532,7 +532,7 @@ class NegativeSampler(Sampler):
         # re-scale weights
         filtered_sample_weights = np.array(filtered_sample_weights)/sum(filtered_sample_weights)
 
-        # sample two question-ids
+        # sample question-ids
         if num_positives >= len(filtered_sample_ids):
             question_ids = filtered_sample_ids
         else:
