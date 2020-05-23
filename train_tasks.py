@@ -75,7 +75,7 @@ def main():
     )
     parser.add_argument(
         "--num_train_epochs",
-        default=30,
+        default=100,
         type=int,
         help="Total number of training epochs to perform.",
     )
@@ -742,21 +742,21 @@ def evaluate(
 ):
 
     model.eval()
-
-    try:
-        for i, batch in enumerate(task_dataloader_val[task_id]):
-            loss, score, batch_size = ForwardModelsVal(
-                args, task_cfg, device, task_id, batch, model, task_losses
-            )
-            tbLogger.step_val(
-                epochId, float(loss), float(score), task_id, batch_size, "val"
-            )
-            if default_gpu:
-                sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
-                sys.stdout.flush()
-    except:
-        import pdb
-        pdb.set_trace()
+    with torch.no_grad():
+        try:
+            for i, batch in enumerate(task_dataloader_val[task_id]):
+                loss, score, batch_size = ForwardModelsVal(
+                    args, task_cfg, device, task_id, batch, model, task_losses
+                )
+                tbLogger.step_val(
+                    epochId, float(loss), float(score), task_id, batch_size, "val"
+                )
+                if default_gpu:
+                    sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
+                    sys.stdout.flush()
+        except:
+            import pdb
+            pdb.set_trace()
 
     score = tbLogger.showLossVal(task_id, task_stop_controller=None)
     model.train()
