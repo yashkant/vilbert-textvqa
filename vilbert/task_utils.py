@@ -460,6 +460,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
 
         task_num_iters[task] = 0
         task_batch_size[task] = 0
+        logger.info(f"Num Workers: {num_workers}")
         if "train" in split:
             if args.local_rank == -1:
                 train_sampler = RandomSampler(task_datasets_train[task])
@@ -484,7 +485,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
                 task_datasets_val[task],
                 shuffle=False,
                 batch_size=32,
-                num_workers=0,
+                num_workers=num_workers,
                 pin_memory=True,
             )
 

@@ -46,5 +46,6 @@ checkpoints/
 
 # IPython Notebook
 .ipynb_checkpoints
-
-
+script/visualize/
+vilbert/datasets/textcaps_dataset.py
+datasets/*
