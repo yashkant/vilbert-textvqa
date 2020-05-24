@@ -501,8 +501,6 @@ class TextVQADataset(Dataset):
         else:
             try:
                 assert len(entry["spatial_adj_matrix"].shape) == 3
-                assert "spatial_loss_mask" in entry
-                assert "spatial_ocr_relations" in entry
             except:
                 import pdb
                 pdb.set_trace()
