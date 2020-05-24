@@ -24,6 +24,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 from evaluator import Evaluator
+from tools.registry import registry
 
 from vilbert.task_utils import (
     LoadDatasets,
@@ -249,6 +250,9 @@ def main():
     assert task_cfg["TASK19"]['num_epoch'] == args.num_train_epochs
     model_type = task_cfg["TASK19"]["model_type"] if args.model_type is None else args.model_type
 
+    # add variables to registry
+    registry.full_spatial = task_cfg["TASK19"].get("full_spatial", False)
+
     task_names = []
     task_lr = []
     for i, task_id in enumerate(args.tasks.split("-")):
@@ -460,6 +464,7 @@ def main():
                                      "num_spatial_layers",
                                      "layer_type_list",
                                      "cond_type",
+                                     "full_spatial",
                                      "use_bias",
                                      "no_drop",
                                      "mix_list"]
@@ -582,10 +587,10 @@ def main():
         start_epoch = 0
 
     # This validation score is used for model-saving.
-    best_val_score = 0
+    best_val_epoch, best_val_score = -1, 0
 
     if task_cfg["TASK19"]["debug"]:
-        median_num_iter = 1
+        median_num_iter = 2
 
     # TRAINING LOOP
     for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
@@ -702,6 +707,7 @@ def main():
                             logger.info(
                                 f"Current Validation Score: {curr_val_score} | Previous Best Validation Score: {best_val_score}")
                             best_val_score = curr_val_score
+                            best_val_epoch = epochId
                             torch.save(
                                 {
                                     "model_state_dict": model_to_save.state_dict(),
@@ -724,6 +730,7 @@ def main():
 
     tbLogger.txt_close()
     del model
+    print(f"Best Validation Score: {best_val_score}, Best Validation Epoch: {best_val_epoch}")
     return args.task_file, output_checkpoint, args.use_share2
 
 
@@ -743,20 +750,16 @@ def evaluate(
 
     model.eval()
     with torch.no_grad():
-        try:
-            for i, batch in enumerate(task_dataloader_val[task_id]):
-                loss, score, batch_size = ForwardModelsVal(
-                    args, task_cfg, device, task_id, batch, model, task_losses
-                )
-                tbLogger.step_val(
-                    epochId, float(loss), float(score), task_id, batch_size, "val"
-                )
-                if default_gpu:
-                    sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
-                    sys.stdout.flush()
-        except:
-            import pdb
-            pdb.set_trace()
+        for i, batch in enumerate(task_dataloader_val[task_id]):
+            loss, score, batch_size = ForwardModelsVal(
+                args, task_cfg, device, task_id, batch, model, task_losses
+            )
+            tbLogger.step_val(
+                epochId, float(loss), float(score), task_id, batch_size, "val"
+            )
+            if default_gpu:
+                sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
+                sys.stdout.flush()
 
     score = tbLogger.showLossVal(task_id, task_stop_controller=None)
     model.train()

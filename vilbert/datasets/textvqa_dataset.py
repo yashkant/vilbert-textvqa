@@ -505,6 +505,10 @@ class TextVQADataset(Dataset):
                         label_num=12
                     )
 
+                    entry["spatial_adj_matrices"]["full_spatial"] = \
+                        (torch.from_numpy(entry["spatial_adj_matrix_shared"]["1"]) != 0).int()
+
+
                     if self.use_gauss_bias:
                         entry["gauss_bias_matrices"]["1"] = torch_broadcast_gauss_bias(
                                 torch.from_numpy(entry["spatial_adj_matrix_shared"]["1"]),

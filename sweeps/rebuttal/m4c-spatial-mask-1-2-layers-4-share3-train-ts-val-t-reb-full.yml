@@ -1,0 +1,60 @@
+TASK19:
+  name: TextVQA
+  type: V-logit
+  loss: TextVQALoss
+  process: normal
+  task_id: 19
+
+  # TextVQA
+  dataroot: datasets/textvqa
+  features_h5path1: "/srv/share/ykant3/vilbert-mt/features/obj/trainval_obj.lmdb" # obj-features (use holder to different splits)
+  features_h5path2: "/srv/share/ykant3/vilbert-mt/features/ocr/trainval_ocr.lmdb" # ocr-features
+
+  # STVQA
+  stvqa_dataroot: datasets/stvqa
+  stvqa_features_h5path1: "/srv/share/ykant3/scene-text/features/obj/lmdbs/train_task_fixed.lmdb" # object features
+  stvqa_features_h5path2: "/srv/share/ykant3/scene-text/features/ocr/lmdbs/train_task_fixed.lmdb" # ocr features
+
+  max_seq_length: 20
+  max_obj_num: 100 # object features + avg feature
+  max_resnet_num: 100 # grid features + avg feature
+  max_ocr_num: 50 # ocr tokens + avg feature
+  batch_size: 96
+  train_split: train
+  val_split: val
+  lr: 0.0001
+  num_epoch: 100
+  max_region_num: -1 # backward compatibility
+  debug: false
+  grad_clip_mode: all
+  max_grad_norm: 0.25
+  model_type: m4c_spatial
+  # allowed quadrants to mask are 1,2,4
+  attention_mask_quadrants: [1,2]
+#  Quadrants (QUE + OCR and OBJ + DEC)
+#
+#  1 | 2 | 3
+#  ---------
+#  4 | 5 | 6
+#  ---------
+#  7 | 8 | 9
+  lr_scheduler: pythia_warmup_decay
+  optim: Adam
+  lr_decay_iters: [14000, 19000]
+  lr_decay: 0.1
+  warmup_factor: 0.2
+  warmup_iters: 1000
+  vocab_type: 5k
+  num_hidden_layers: 2
+  num_spatial_layers: 4
+  heads_type: mix
+  layer_type_list: [n,n,i,i,i,i]
+  mix_list: [none, none, share3, share3, share3, share3]
+  use_datasets: ["stvqa", "textvqa"]
+  val_on: ["textvqa"]
+  num_workers: 16
+
+  # converts implicit layers to fully-spatial layers
+  full_spatial: true
+  num_implicit_relations: 6
+  hidden_size: 756

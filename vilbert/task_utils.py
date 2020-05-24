@@ -320,7 +320,7 @@ def LoadLosses(args, task_cfg, task_ids):
     return losses
 
 
-def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val_bs=32, test_val_workers=2):
+def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val_bs=32, test_val_workers=8):
     if "roberta" in args.bert_model:
         tokenizer = RobertaTokenizer.from_pretrained(
             args.bert_model, do_lower_case=args.do_lower_case
@@ -371,13 +371,8 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val
 
         train_datasets = []
         for entry in task_cfg[task]["use_datasets"]:
-
-            split = "train"
-            if entry == "textvqa":
-                split = task_cfg[task]["train_split"]
-
             dataset = DatasetMapTrain[key_map[entry]](
-                split=split,
+                split=task_cfg[task]["train_split"],
                 tokenizer=tokenizer,
                 bert_model=args.bert_model,
                 padding_index=0,

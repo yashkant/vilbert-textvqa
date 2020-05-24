@@ -458,6 +458,7 @@ class SpatialBertSelfAttention(nn.Module):
         if hasattr(config, "num_implicit_relations") and use_implicit:
             self.num_attention_heads += config.num_implicit_relations
             self.num_implicit_relations = config.num_implicit_relations
+            self.full_spatial = config.full_spatial
 
 
         if config.hidden_size % self.num_attention_heads != 0:
@@ -530,27 +531,40 @@ class SpatialBertSelfAttention(nn.Module):
         spatial_attention_mask[:, self.max_seq_len:self.max_seq_len + ocr_obj_num, self.max_seq_len:self.max_seq_len + ocr_obj_num, :] = spatial_adj_matrix
 
         # Add implicit mask
-        if self.num_attention_heads != self.num_spatial_relations:
+        # If gauss_bias_matrix is not None then we are using full-spatial heads!
+        if self.num_attention_heads != self.num_spatial_relations and gauss_bias_matrix is None:
             assert hasattr(self, "num_implicit_relations")
             implicit_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, self.num_implicit_relations))
             spatial_attention_mask = torch.cat([spatial_attention_mask, implicit_attention_mask], dim=-1)
+
+        num_relations_mask = self.num_spatial_relations
+
+        #Add full-spatial mask
+        if hasattr(self, "full_spatial") and self.full_spatial:
+            assert gauss_bias_matrix is not None
+            full_spatial_mask = gauss_bias_matrix.unsqueeze(-1).repeat(1, 1, 1, self.num_implicit_relations)
+            implicit_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, self.num_implicit_relations))
+            implicit_attention_mask[:, self.max_seq_len:self.max_seq_len + ocr_obj_num,self.max_seq_len:self.max_seq_len + ocr_obj_num, :] = full_spatial_mask
+            spatial_attention_mask = torch.cat([spatial_attention_mask, implicit_attention_mask], dim=-1)
+            # mask full-spatial heads too
+            num_relations_mask += self.num_implicit_relations
 
         assert spatial_attention_mask.shape == (batch_size, num_features, num_features, self.num_attention_heads)
 
         # Mask attention-quadrants (spatial relations only)
         for quadrant in self.mask_quadrants:
             if quadrant == 1:
-                spatial_attention_mask[:, :self.max_seq_len, :self.max_seq_len, :self.num_spatial_relations] = 0
+                spatial_attention_mask[:, :self.max_seq_len, :self.max_seq_len, :num_relations_mask] = 0
             elif quadrant == 2:
-                spatial_attention_mask[:, :self.max_seq_len, self.max_seq_len:self.max_seq_len+ocr_obj_num, :self.num_spatial_relations] = 0
+                spatial_attention_mask[:, :self.max_seq_len, self.max_seq_len:self.max_seq_len+ocr_obj_num, :num_relations_mask] = 0
             elif quadrant == 4:
-                spatial_attention_mask[:, self.max_seq_len:self.max_seq_len+ocr_obj_num, :self.max_seq_len, :self.num_spatial_relations] = 0
+                spatial_attention_mask[:, self.max_seq_len:self.max_seq_len+ocr_obj_num, :self.max_seq_len, :num_relations_mask] = 0
             elif quadrant == 7:
-                spatial_attention_mask[:, self.max_seq_len+ocr_obj_num:, :self.max_seq_len, :self.num_spatial_relations] = 0
+                spatial_attention_mask[:, self.max_seq_len+ocr_obj_num:, :self.max_seq_len, :num_relations_mask] = 0
             elif quadrant == 8:
-                spatial_attention_mask[:, self.max_seq_len+ocr_obj_num:, self.max_seq_len:self.max_seq_len+ocr_obj_num, :self.num_spatial_relations] = 0
+                spatial_attention_mask[:, self.max_seq_len+ocr_obj_num:, self.max_seq_len:self.max_seq_len+ocr_obj_num, :num_relations_mask] = 0
             elif quadrant == 9:
-                spatial_attention_mask[:, self.max_seq_len+ocr_obj_num:, self.max_seq_len+ocr_obj_num:, :self.num_spatial_relations] = 0
+                spatial_attention_mask[:, self.max_seq_len+ocr_obj_num:, self.max_seq_len+ocr_obj_num:, :num_relations_mask] = 0
             else:
                 raise ValueError
 
@@ -821,6 +835,8 @@ class BertSpatialEncoder(nn.Module):
                     gauss_bias_matrix = batch_dict["gauss_bias_matrices"][matrix_type]
                 elif registry.use_attention_bins:
                     gauss_bias_matrix = batch_dict["bins_matrices"][matrix_type]
+                elif registry.full_spatial:
+                    gauss_bias_matrix = batch_dict["spatial_adj_matrices"]["full_spatial"]
                 else:
                     gauss_bias_matrix = None
 
@@ -834,6 +850,8 @@ class BertSpatialEncoder(nn.Module):
                     gauss_bias_matrix = batch_dict["gauss_bias_matrices"][matrix_type]
                 elif registry.use_attention_bins:
                     gauss_bias_matrix = batch_dict["bins_matrices"][matrix_type]
+                elif registry.full_spatial:
+                    gauss_bias_matrix = batch_dict["spatial_adj_matrices"]["full_spatial"]
                 else:
                     gauss_bias_matrix = None
 
