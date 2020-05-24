@@ -821,6 +821,7 @@ def SpatialProcessor(pad_obj_ocr_bboxes):
     return adj_matrix
 
 def RandomSpatialProcessor(pad_obj_ocr_bboxes):
+    np.random.seed(registry.random_seed)
     randomize = registry.randomize
     adj_matrix_shape = (len(pad_obj_ocr_bboxes), len(pad_obj_ocr_bboxes), randomize)
     adj_matrix = np.zeros(adj_matrix_shape, dtype=np.int8)
