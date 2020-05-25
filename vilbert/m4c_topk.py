@@ -814,14 +814,16 @@ class BertSpatialEncoder(nn.Module):
         self.num_spatial_layers = counter["s"]
         self.num_normal_layers = counter["n"]
         self.num_implicit_layers = counter["i"]
-        self.top1_layers = counter["t1"]
-        self.top3_layers = counter["t3"]
+        # self.top1_layers = counter["t1"]
+        # self.top3_layers = counter["t3"]
+        self.num_top107_layers = counter["t107"]
 
         logger.info(f"Num Spatial Layers: {self.num_spatial_layers}")
         logger.info(f"Num Normal Layers: {self.num_normal_layers}")
         logger.info(f"Num Implicit Layers: {self.num_implicit_layers}")
-        logger.info(f"Num Top1 Layers: {self.top1_layers}")
-        logger.info(f"Num Top3 Layers: {self.top3_layers}")
+        # logger.info(f"Num Top1 Layers: {self.top1_layers}")
+        # logger.info(f"Num Top3 Layers: {self.top3_layers}")
+        logger.info(f"Num Top107 Layers: {self.num_top107_layers}")
 
         if config.mix_list is None:
             self.mix_list = ["none"]*len(self.layer_type_list)
@@ -833,8 +835,9 @@ class BertSpatialEncoder(nn.Module):
         self.normal_layers = nn.ModuleList([BertLayer(config) for _ in range(self.num_normal_layers)])
         self.spatial_layers = nn.ModuleList([SpatialBertLayer(config) for _ in range(self.num_spatial_layers)])
         self.implicit_layers = nn.ModuleList([SpatialBertLayer(config, True) for _ in range(self.num_implicit_layers)])
-        self.top1_layers = nn.ModuleList([TopkBertLayer(config) for _ in range(self.top1_layers)])
-        self.top3_layers = nn.ModuleList([TopkBertLayer(config) for _ in range(self.top3_layers)])
+        # self.top1_layers = nn.ModuleList([TopkBertLayer(config) for _ in range(self.top1_layers)])
+        # self.top3_layers = nn.ModuleList([TopkBertLayer(config) for _ in range(self.top3_layers)])
+        self.top107_layers = nn.ModuleList([TopkBertLayer(config) for _ in range(self.num_top107_layers)])
 
     def forward(self, hidden_states, attention_mask, batch_dict, head_mask=None):
         all_hidden_states = ()
@@ -843,8 +846,9 @@ class BertSpatialEncoder(nn.Module):
         normal_iter = iter(self.normal_layers)
         spatial_iter = iter(self.spatial_layers)
         implicit_iter = iter(self.implicit_layers)
-        top1_iter = iter(self.top1_layers)
-        top3_iter = iter(self.top3_layers)
+        # top1_iter = iter(self.top1_layers)
+        # top3_iter = iter(self.top3_layers)
+        top107_iter = iter(self.top107_layers)
 
         for layer_type, mix_type in zip(self.layer_type_list, self.mix_list):
             if self.output_hidden_states:
@@ -870,12 +874,12 @@ class BertSpatialEncoder(nn.Module):
                 else:
                     spatial_adj_matrix = batch_dict["spatial_adj_matrix"]
                 layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
-            elif layer_type == "t1":
-                layer_module = next(top1_iter)
-                layer_outputs = layer_module(hidden_states, attention_mask, 1)
-            elif layer_type == "t3":
-                layer_module = next(top3_iter)
-                layer_outputs = layer_module(hidden_states, attention_mask, 3)
+            elif layer_type == "t107":
+                layer_module = next(top107_iter)
+                layer_outputs = layer_module(hidden_states, attention_mask, 107)
+            # elif layer_type == "t3":
+            #     layer_module = next(top3_iter)
+            #     layer_outputs = layer_module(hidden_states, attention_mask, 3)
             else:
                 raise ValueError
             hidden_states = layer_outputs[0]

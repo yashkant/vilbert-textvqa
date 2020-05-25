@@ -270,6 +270,7 @@ class Evaluator:
                          "num_spatial_layers",
                          "layer_type_list",
                          "cond_type",
+                         "full_spatial",
                          "use_bias",
                          "no_drop",
                          "mix_list"
@@ -403,12 +404,12 @@ class Evaluator:
                             task_cfg["TASK19"]["val_on"][0])
                     )
 
-                    accuracies = evaluate_predictions(eval_df, results_df, acc_type="anls")
+                    accuracies_anls = evaluate_predictions(eval_df, results_df, acc_type="anls")
                     logger.info(
                         "{} Accuracy: {} for {} questions, split {}, dataset {}".format(
                             "anls",
-                            accuracies['vqa_accuracy'],
-                            accuracies['accuracies_df'].shape,
+                            accuracies_anls['vqa_accuracy'],
+                            accuracies_anls['accuracies_df'].shape,
                             self.split,
                             task_cfg["TASK19"]["val_on"][0])
                     )
@@ -518,7 +519,8 @@ def vqa_calculate(batch_dict):
             "pred_answer": answer,
             "belongs_to": belongs_to,
             "answer_words": answer_words,
-            "topkscores": topkscores
+            "topkscores": topkscores,
+            "pred_ids": pred_answers
         })
 
     accuracy, pred_scores = vqa_evaluator.eval_pred_list(predictions)
@@ -568,7 +570,8 @@ def anls_calculate(batch_dict):
             "pred_answer": answer,
             "belongs_to": belongs_to,
             "answer_words": answer_words,
-            "topkscores": topkscores
+            "topkscores": topkscores,
+            "pred_ids": pred_answers
         })
 
     try:
@@ -619,7 +622,10 @@ def evaluate_predictions(eval_df, results_df, acc_type="vqa", tokens_from="vd"):
             'pred_answers': np.array([re.complete_seqs[1:]])
         }
 
-        predictions.append(calculate(batch))
+        calculate_result = calculate(batch)
+        calculate_result["pred_ids"] = np.array([re.complete_seqs])
+
+        predictions.append(calculate_result)
 
     accuracies_df = pd.DataFrame(predictions)
     best_result = []

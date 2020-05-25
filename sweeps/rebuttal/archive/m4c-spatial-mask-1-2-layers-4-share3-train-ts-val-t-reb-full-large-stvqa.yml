@@ -44,15 +44,15 @@ TASK19:
   lr_decay: 0.1
   warmup_factor: 0.2
   warmup_iters: 1000
-  vocab_type: 5k
+  vocab_type: 5k_stvqa
   num_hidden_layers: 2
   num_spatial_layers: 4
   heads_type: mix
   layer_type_list: [n,n,i,i,i,i]
   mix_list: [none, none, share3, share3, share3, share3]
-  use_datasets: ["stvqa", "textvqa"]
-  val_on: ["textvqa"]
-  num_workers: 0
+  use_datasets: ["stvqa"]
+  val_on: ["stvqa"]
+  num_workers: 16
 
   # converts implicit layers to fully-spatial layers
   full_spatial: true

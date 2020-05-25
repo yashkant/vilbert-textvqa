@@ -40,7 +40,7 @@ data/
 save/
 logs/
 results/
-datasets/
+datasets/*
 
 # Checkpoints directory
 checkpoints/
