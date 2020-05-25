@@ -28,7 +28,7 @@ TASK19:
   debug: false
   grad_clip_mode: all
   max_grad_norm: 0.25
-  model_type: m4c_spatial
+  model_type: m4c_topk
   # allowed quadrants to mask are 1,2,4
   attention_mask_quadrants: [1,2]
 #  Quadrants (QUE + OCR and OBJ + DEC)
@@ -48,13 +48,9 @@ TASK19:
   num_hidden_layers: 2
   num_spatial_layers: 4
   heads_type: mix
-  layer_type_list: [n,n,i,i,i,i]
+  layer_type_list: [n ,n, t9, t9, t9, t9]
   mix_list: [none, none, none, none, none, none]
   use_datasets: ["textvqa"]
   val_on: ["textvqa"]
   num_workers: 16
 
-  # converts implicit layers to fully-spatial layers
-  full_spatial: true
-  num_implicit_relations: 6
-  hidden_size: 1152

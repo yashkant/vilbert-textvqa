@@ -63,6 +63,12 @@ class M4C(nn.Module):
         # build the models
         self.build()
 
+    def set_beam_size(self, beam_size):
+        self.beam_size = beam_size
+        self.bsdecoder = BeamSearch(self.beam_size)
+        logger.info(f"Using beam size: {self.beam_size}")
+
+
     def build(self):
         # modules requiring custom learning rates (usually for finetuning)
         self.finetune_modules = []
@@ -817,6 +823,7 @@ class BertSpatialEncoder(nn.Module):
         # self.top1_layers = counter["t1"]
         # self.top3_layers = counter["t3"]
         self.num_top107_layers = counter["t107"]
+        self.num_top9_layers = counter["t9"]
 
         logger.info(f"Num Spatial Layers: {self.num_spatial_layers}")
         logger.info(f"Num Normal Layers: {self.num_normal_layers}")
@@ -824,6 +831,7 @@ class BertSpatialEncoder(nn.Module):
         # logger.info(f"Num Top1 Layers: {self.top1_layers}")
         # logger.info(f"Num Top3 Layers: {self.top3_layers}")
         logger.info(f"Num Top107 Layers: {self.num_top107_layers}")
+        logger.info(f"Num Top9 Layers: {self.num_top9_layers}")
 
         if config.mix_list is None:
             self.mix_list = ["none"]*len(self.layer_type_list)
@@ -838,6 +846,7 @@ class BertSpatialEncoder(nn.Module):
         # self.top1_layers = nn.ModuleList([TopkBertLayer(config) for _ in range(self.top1_layers)])
         # self.top3_layers = nn.ModuleList([TopkBertLayer(config) for _ in range(self.top3_layers)])
         self.top107_layers = nn.ModuleList([TopkBertLayer(config) for _ in range(self.num_top107_layers)])
+        self.top9_layers = nn.ModuleList([TopkBertLayer(config) for _ in range(self.num_top9_layers)])
 
     def forward(self, hidden_states, attention_mask, batch_dict, head_mask=None):
         all_hidden_states = ()
@@ -849,6 +858,7 @@ class BertSpatialEncoder(nn.Module):
         # top1_iter = iter(self.top1_layers)
         # top3_iter = iter(self.top3_layers)
         top107_iter = iter(self.top107_layers)
+        top9_iter = iter(self.top9_layers)
 
         for layer_type, mix_type in zip(self.layer_type_list, self.mix_list):
             if self.output_hidden_states:
@@ -877,6 +887,9 @@ class BertSpatialEncoder(nn.Module):
             elif layer_type == "t107":
                 layer_module = next(top107_iter)
                 layer_outputs = layer_module(hidden_states, attention_mask, 107)
+            elif layer_type == "t9":
+                layer_module = next(top9_iter)
+                layer_outputs = layer_module(hidden_states, attention_mask, 9)
             # elif layer_type == "t3":
             #     layer_module = next(top3_iter)
             #     layer_outputs = layer_module(hidden_states, attention_mask, 3)
@@ -889,6 +902,8 @@ class BertSpatialEncoder(nn.Module):
         assert next(normal_iter, None) is None
         assert next(spatial_iter, None) is None
         assert next(implicit_iter, None) is None
+        assert next(top107_iter, None) is None
+        assert next(top9_iter, None) is None
 
         # # re-arrange spatial-layers if needed
         # layers = [("normal", self.layer), ("spatial", self.spatial_layer)]
