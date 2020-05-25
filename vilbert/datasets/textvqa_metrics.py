@@ -106,6 +106,7 @@ class TextVQAAccuracy:
         # # add each dec_step's answer separately, shape: (bs, seq_len)
         # model_output["pred_ans_words"] = [x["answer_words"] for x in predictions]
 
+        batch_dict["predictions"] = predictions
         self.accuracies.append((accuracy, len(batch_dict["question_id"])))
         return accuracy, pred_scores
 
