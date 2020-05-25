@@ -190,7 +190,6 @@ class M4C(nn.Module):
         self.classifier = nn.Linear(self.mmt_config.hidden_size, num_outputs)
 
     def _build_aux_heads(self):
-        from vilbert.vilbert import SimpleClassifier
         # spatial-category classification head
         self.origin_transform = SimpleClassifier(self.mmt_config.hidden_size, 128, 32)
         self.dest_transform = SimpleClassifier(self.mmt_config.hidden_size, 128, 32)
@@ -1090,3 +1089,17 @@ def _batch_gather(x, inds):
     inds_flat = batch_offsets + inds
     results = F.embedding(inds_flat, x_flat)
     return results
+
+
+class SimpleClassifier(nn.Module):
+    def __init__(self, in_dim, hid_dim, out_dim, dropout=0):
+        super().__init__()
+        self.logit_fc = nn.Sequential(
+            nn.Linear(in_dim, hid_dim),
+            GeLU(),
+            BertLayerNorm(hid_dim, eps=1e-12),
+            nn.Linear(hid_dim, out_dim),
+        )
+
+    def forward(self, hidden_states):
+        return self.logit_fc(hidden_states)

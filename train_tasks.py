@@ -70,7 +70,7 @@ def main():
     )
     parser.add_argument(
         "--config_file",
-        default="config/bert_base_6layer_6conect.json",
+        required=True,
         type=str,
         help="The config file which specified the model details.",
     )
@@ -209,7 +209,7 @@ def main():
         help="whether to use task specific tokens for the multi-task learning.",
     )
     parser.add_argument(
-        "--task_file", default="vilbert_tasks.yml", type=str, help="joint config file"
+        "--task_file", required=True, type=str, help="joint config file"
     )
 
     parser.add_argument(
@@ -278,8 +278,7 @@ def main():
         return args.task_file, output_checkpoint_path, args.use_share2
 
     if args.baseline:
-        from pytorch_transformers.modeling_bert import BertConfig
-        from vilbert.basebert import BaseBertForVLTasks
+        raise ValueError
     elif model_type == "22":
         from vilbert.vilbert import BertConfig
         from vilbert.vilbert import VILBertForVLTasks
