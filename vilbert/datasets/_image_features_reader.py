@@ -193,3 +193,53 @@ class ImageFeaturesH5Reader(object):
 
     def keys(self) -> List[int]:
         return self._image_ids
+
+
+class CacheH5Reader(object):
+
+    def __init__(self, features_path: str, in_memory: bool = False):
+        self.features_path = features_path
+        self._in_memory = in_memory
+        self.env = lmdb.open(
+            self.features_path,
+            max_readers=1,
+            readonly=True,
+            lock=False,
+            readahead=False,
+            meminit=False,
+        )
+
+        with self.env.begin(write=False) as txn:
+            self._image_ids = pickle.loads(txn.get("keys".encode()))
+        self.features = [None] * len(self._image_ids)
+
+    def __len__(self):
+        return len(self._image_ids)
+
+    def __getitem__(self, image_id):
+        """
+        1. in_memory:
+            - if cached: load features, boxes, image_locations and image_location_ori
+            - if not:
+                - read and generate normalized and un-normalized features and cache them
+        """
+
+        image_id = str(image_id).encode()
+        index = self._image_ids.index(image_id)
+        if self._in_memory:
+            # Load features during first epoch, all not loaded together as it
+            # has a slow start.
+            if self.features[index] is not None:
+                item = self.features[index]
+            else:
+                with self.env.begin(write=False) as txn:
+                    item = pickle.loads(txn.get(image_id))
+                    self.features[index] = item
+        else:
+            with self.env.begin(write=False) as txn:
+                item = pickle.loads(txn.get(image_id))
+
+        return item
+
+    def keys(self) -> List[int]:
+        return self._image_ids

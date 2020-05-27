@@ -27,4 +27,6 @@ TASK19:
   warmpu_factors: 0.1
   lr_decay: 0.2
   max_grad_norm: 0.25
-  num_hidden_layers: 6
+  num_hidden_layers: 10
+  layer_type_list: [n,n,n,n,n,n,n,n,n,n]
+  mix_list: [none, none, none, none, none, none, none, none, none, none]

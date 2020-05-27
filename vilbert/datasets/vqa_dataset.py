@@ -14,7 +14,7 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 
 from tools.registry import registry
-from ._image_features_reader import ImageFeaturesH5Reader
+from ._image_features_reader import ImageFeaturesH5Reader, CacheH5Reader
 from ..spatial_utils_regat import build_graph_using_normalized_boxes, random_spatial_processor, \
     torch_broadcast_adj_matrix
 
@@ -216,6 +216,10 @@ class VQAClassificationDataset(Dataset):
 
         clean_train = "_cleaned" if clean_datasets else ""
 
+        self.spatial_reader = CacheH5Reader(
+            features_path=f"/srv/share/ykant3/vilbert-mt/cache/VQA_{self.split}_23_heads_new.lmdb",
+            in_memory=False
+        )
         if "roberta" in bert_model:
             cache_path = os.path.join(
                 dataroot,
@@ -237,9 +241,11 @@ class VQAClassificationDataset(Dataset):
                 task + "_" + split + "_" + str(max_seq_length) + clean_train + ".pkl",
             )
 
+        self.use_spatial = False
         if self.heads_type != "none" or self.randomize > 0:
-            cache_path = cache_path.split(".")[0]
-            cache_path = cache_path + "_heads_new.pkl"
+            self.use_spatial = True
+            # cache_path = cache_path.split(".")[0]
+            # cache_path = cache_path + "_heads_new.pkl"
 
         if self.debug:
             cache_path = "/nethome/ykant3/vilbert-multi-task/datasets/VQA/cache/VQA_trainval_23_debug.pkl"
@@ -269,8 +275,13 @@ class VQAClassificationDataset(Dataset):
         import multiprocessing as mp
 
         pad_obj_list = []
+        read_list = []
 
         for entry in tqdm(self.entries, desc="Reading Entries"):
+
+            if entry["image_id"] in read_list:
+                continue
+
             # Adding spatial graph matrix
             obj_features, obj_num_boxes, obj_bboxes, _ = self._image_features_reader[entry["image_id"]]
             obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes - 1, obj_bboxes[1:]
@@ -281,6 +292,7 @@ class VQAClassificationDataset(Dataset):
 
             # Append bboxes to the list
             pad_obj_list.append(pad_obj_bboxes)
+            read_list.append(entry["image_id"])
 
 
         sp_pool = mp.Pool(self.processing_threads)
@@ -292,9 +304,14 @@ class VQAClassificationDataset(Dataset):
         logger.info(f"Done Processsing Quadrant Spatial Relations with {self.processing_threads} threads")
         assert len(result_list) == len(pad_obj_list)
 
+        results_dict = {}
 
-        for entry, (adj_matrix, adj_matrix_share3_1, adj_matrix_share3_2, adj_matrix_random1, adj_matrix_random3) \
-                in zip(self.entries, result_list):
+        for key, value in zip(read_list, result_list):
+            results_dict[key] = value
+
+        for entry in (self.entries):
+            (adj_matrix, adj_matrix_share3_1, adj_matrix_share3_2, adj_matrix_random1, adj_matrix_random3) = \
+                results_dict[entry["image_id"]]
             entry["spatial_adj_matrix"] = adj_matrix
             entry["spatial_adj_matrix_share3_1"] = adj_matrix_share3_1
             entry["spatial_adj_matrix_share3_2"] = adj_matrix_share3_2
@@ -408,10 +425,24 @@ class VQAClassificationDataset(Dataset):
         3. Build target (vocab-dim) with VQA scores scattered at label-indices
         4. Return
         """
-        # import  time
+        # import time
         # time_start = time.time()
 
         entry = self.entries[index]
+
+        if self.use_spatial:
+            spatials = self.spatial_reader[entry["image_id"]]
+            transfer_keys = [
+                "spatial_adj_matrix",
+                "spatial_adj_matrix_share3_1",
+                "spatial_adj_matrix_share3_2",
+                "spatial_adj_matrix_random1",
+                "spatial_adj_matrix_random3"
+            ]
+
+            for key in transfer_keys:
+                entry[key] = spatials[key]
+
         image_id = entry["image_id"]
         question_id = entry["question_id"]
         features, num_boxes, boxes, _ = self._image_features_reader[image_id]
@@ -527,7 +558,11 @@ class VQAClassificationDataset(Dataset):
         })
 
         # time_end = time.time()
-        # print(f"Time taken: {time_start - time_end}")
+
+        # if time_end - time_start > 2:
+        #     print(f"Time taken: {time_end - time_start}")
+        #     import pdb
+        #     pdb.set_trace()
         return item_dict
 
     def __len__(self):
