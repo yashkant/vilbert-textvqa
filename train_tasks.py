@@ -315,6 +315,9 @@ def main():
     elif model_type == "m4c_regat":
         logger.info("Using M4C-Regat model")
         from vilbert.m4c_regat import BertConfig, M4C
+    elif model_type == "m4c_relative":
+        logger.info("Using M4C-Relative model")
+        from vilbert.m4c_relative import BertConfig, M4C
     elif model_type == "m4c_regat_spatial":
         logger.info("Using M4C-Regat_spatial model")
         from vilbert.m4c_regat_spatial import BertConfig, M4C
@@ -451,7 +454,7 @@ def main():
                     default_gpu=default_gpu,
                 )
             else:
-                if model_type in ["m4c_spatial", "m4c_topk", "m4c_regat", "m4c_regat_spatial"]:
+                if model_type in ["m4c_spatial", "m4c_topk", "m4c_regat", "m4c_relative", "m4c_regat_spatial"]:
                     if "m4c_spatial" in model_type:
                         assert "attention_mask_quadrants" in task_cfg["TASK19"]
                     # assert "spatial_type" in task_cfg["TASK19"]
