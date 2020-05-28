@@ -564,8 +564,6 @@ class SpatialBertSelfAttention(nn.Module):
         value_layer = self.transpose_for_scores(mixed_value_layer)
 
         if self.use_regat:
-            import pdb
-            pdb.set_trace()
             relative_bias = self.relative_attention_bias.weight.view(182, 182, 64).permute(0, 2, 1)
             relative_bias = relative_bias.unsqueeze(0).unsqueeze(0)
             relative_scores = torch.matmul(query_layer.unsqueeze(-2), relative_bias).squeeze()
@@ -613,17 +611,13 @@ class SpatialBertSelfAttention(nn.Module):
         if head_mask is not None:
             attention_probs = attention_probs * head_mask
 
-        # if self.use_regat:
-        #     import pdb
-        #     pdb.set_trace()
-        #
-        #     relative_bias = self.relative_value_bias.weight.view(182, 182, 64)
-        #     relative_bias = relative_bias.unsqueeze(0).unsqueeze(0)
-        #     context_bias = torch.matmul(attention_probs.unsqueeze(-2), relative_bias).squeeze()
-        #     context_layer = torch.matmul(attention_probs, value_layer) + context_bias
-        # else:
-        #     context_layer = torch.matmul(attention_probs, value_layer)
-        context_layer = torch.matmul(attention_probs, value_layer)
+        if self.use_regat:
+            relative_bias = self.relative_value_bias.weight.view(182, 182, 64)
+            relative_bias = relative_bias.unsqueeze(0).unsqueeze(0)
+            context_bias = torch.matmul(attention_probs.unsqueeze(-2), relative_bias).squeeze()
+            context_layer = torch.matmul(attention_probs, value_layer) + context_bias
+        else:
+            context_layer = torch.matmul(attention_probs, value_layer)
 
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)

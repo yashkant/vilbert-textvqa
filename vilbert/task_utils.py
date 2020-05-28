@@ -419,7 +419,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val
     elif val_task_name == "RevTextVQA":
         assert task_cfg[task]["vocab_type"] != "5k_stvqa"
     elif val_task_name == "STVQA":
-        assert task_cfg[task]["vocab_type"] == "5k_stvqa"
+        assert task_cfg[task]["vocab_type"] in ["5k_stvqa", "vocab_stvqa_task2"]
     elif val_task_name == "OCRVQA":
         assert task_cfg[task]["vocab_type"] == "ocrvqa"
     else:

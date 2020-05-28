@@ -326,7 +326,15 @@ class TextVQADataset(Dataset):
 
     def process_spatials(self):
         pad_obj_ocr_bboxes_list = []
+        id_list = []
+
         for entry in tqdm(self.entries, desc="Reading Entries"):
+
+            if entry['image_id'] in id_list:
+                continue
+            else:
+                id_list.append(entry["image_id"])
+
             # Adding spatial graph matrix
             obj_features, obj_num_boxes, obj_bboxes, _ = self.obj_features_reader[entry["image_id"]]
             obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes - 1, obj_bboxes[1:]
@@ -345,9 +353,15 @@ class TextVQADataset(Dataset):
         logger.info(f"Processsing Spatial Relations with {self.processing_threads} threads")
         with mp.Pool(self.processing_threads) as pool:
             results = list(tqdm(pool.imap(SpatialProcessor, pad_obj_ocr_bboxes_list), total=len(pad_obj_ocr_bboxes_list)))
-        
-        assert len(results) == len(self.entries)
-        for result, entry in zip(results, self.entries):
+
+        # assert len(results) == len(self.entries)
+        results_dict = {}
+        for id, result in zip(id_list, results):
+            results_dict[id] = result
+
+
+        for entry in self.entries:
+            result = results_dict[entry["image_id"]]
             entry["spatial_adj_matrix_shared"] = result[0]
             entry["spatial_gauss_bias_shared"] = result[1]
 
@@ -574,6 +588,7 @@ class TextVQADataset(Dataset):
                          'spatial_adj_matrix_shared',
                          'cleaned_ocr_tokens',
                          'image_id',
+                         'spatial_adj_matrix',
                          'image_path']
 
         for key in unwanted_keys_item:
@@ -587,8 +602,11 @@ class TextVQADataset(Dataset):
         ]
 
         for key in unwanted_keys_entry:
-            if key in entry:
-                entry.pop(key, None)
+            if key in item:
+                item.pop(key, None)
+
+        # import pdb
+        # pdb.set_trace()
 
         # Collate Function doesn't work correctly with lists
         for key, value in item.items():
@@ -596,7 +614,8 @@ class TextVQADataset(Dataset):
                 try:
                     item[key] = enc_obj2bytes(value)
                 except:
-                    print(key)
+                    # item.pop(key, None)
+                    print(f"Unwanted key {key}")
                     import pdb
                     pdb.set_trace()
 
