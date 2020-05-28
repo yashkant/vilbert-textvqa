@@ -174,9 +174,9 @@ def ForwardModelsVal(args,
     if task_cfg[task_id]["type"] == "VL-classifier":
         loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
         loss = loss.mean() * batch_dict["target"].size(1)
-        batch_score = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"]).sum() / float(
-            batch_size
-        )
+        batch_scores = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"])
+        batch_dict["batch_scores"] = batch_scores
+        batch_score = batch_scores.sum() / float(batch_size)
 
     elif task_cfg[task_id]["type"] == "VL-classifier-GQA":
         loss = task_losses[task_id](batch_dict["vil_prediction_gqa"], batch_dict["target"])
@@ -184,6 +184,9 @@ def ForwardModelsVal(args,
         batch_score = compute_score_with_logits(
             batch_dict["vil_prediction_gqa"], batch_dict["target"]
         ).sum() / float(batch_size)
+
+    if return_batch:
+        return float(loss), float(batch_score), batch_size, batch_dict
 
     return float(loss), float(batch_score), batch_size
 

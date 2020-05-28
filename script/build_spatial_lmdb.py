@@ -17,15 +17,17 @@ MAP_SIZE = 1099511627776
 
 
 CACHES = [
-    "../datasets/VQA/cache/VQA_trainval_23_heads_new.pkl",
+    # "../datasets/VQA/cache/VQA_trainval_23_heads_new.pkl",
     # "../datasets/VQA/cache/VQA_minval_23_heads_new.pkl",
-    # "../datasets/VQA/cache/VQA_test_23_heads_new.pkl",
+    # "../datasets/VQA/cache/VQA_val_23_heads_new.pkl",
+    "../datasets/VQA/cache/VQA_test_23_heads_new.pkl",
 ]
 
 CACHE_LMDBS = [
-    "../datasets/VQA/cache/VQA_trainval_23_heads_new.lmdb",
+    # "../datasets/VQA/cache/VQA_trainval_23_heads_new.lmdb",
     # "../datasets/VQA/cache/VQA_minval_23_heads_new.lmdb",
-    # "../datasets/VQA/cache/VQA_test_23_heads_new.lmdb",
+    # "../datasets/VQA/cache/VQA_mal_23_heads_new.lmdb",
+    "../datasets/VQA/cache/VQA_test_23_heads_new.lmdb",
 ]
 
 if __name__ == "__main__":

@@ -100,6 +100,22 @@ def _load_dataset(dataroot, name, clean_datasets):
         answers_val = sorted(answers_val, key=lambda x: x["question_id"])
         questions = questions_val[-3000:]
         answers = answers_val[-3000:]
+        spatial_words = ["north",
+                         "south",
+                         "east",
+                         "west",
+                         "up",
+                         "down",
+                         "right",
+                         "left",
+                         "bottom",
+                         "top",
+                         "under",
+                         "over",
+                         "below",
+                         "above",
+                         "beside",
+                         "beneath"]
 
     elif name == "test":
         question_path_test = os.path.join(
@@ -172,21 +188,21 @@ def _load_dataset(dataroot, name, clean_datasets):
 
 class VQAClassificationDataset(Dataset):
     def __init__(
-        self,
-        task,
-        dataroot,
-        annotations_jsonpath,
-        split,
-        image_features_reader,
-        gt_image_features_reader,
-        tokenizer,
-        bert_model,
-        clean_datasets,
-        padding_index=0,
-        max_seq_length=16,
-        max_region_num=101,
-        extra_args=None,
-        processing_threads=64
+            self,
+            task,
+            dataroot,
+            annotations_jsonpath,
+            split,
+            image_features_reader,
+            gt_image_features_reader,
+            tokenizer,
+            bert_model,
+            clean_datasets,
+            padding_index=0,
+            max_seq_length=16,
+            max_region_num=101,
+            extra_args=None,
+            processing_threads=64
     ):
         """
         (YK): Builds self.entries by reading questions and answers and caches them.
@@ -269,7 +285,6 @@ class VQAClassificationDataset(Dataset):
             logger.info("Loading from %s" % cache_path)
             self.entries = cPickle.load(open(cache_path, "rb"))
 
-
     def process_spatials(self):
         logger.info(f"Processsing Share/Single/Random Spatial Relations with {self.processing_threads} threads")
         import multiprocessing as mp
@@ -294,11 +309,10 @@ class VQAClassificationDataset(Dataset):
             pad_obj_list.append(pad_obj_bboxes)
             read_list.append(entry["image_id"])
 
-
         sp_pool = mp.Pool(self.processing_threads)
         # map is synchronous (ordered)
         result_list = list(tqdm(sp_pool.imap(VQAClassificationDataset.process_all_spatials, pad_obj_list),
-                                     total=len(pad_obj_list), desc="Spatial Relations"))
+                                total=len(pad_obj_list), desc="Spatial Relations"))
         sp_pool.close()
         sp_pool.join()
         logger.info(f"Done Processsing Quadrant Spatial Relations with {self.processing_threads} threads")
@@ -318,14 +332,12 @@ class VQAClassificationDataset(Dataset):
             entry["spatial_adj_matrix_random1"] = adj_matrix_random1
             entry["spatial_adj_matrix_random3"] = adj_matrix_random3
 
-
     @staticmethod
     def process_all_spatials(pad_obj_bboxes):
         adj_matrix, adj_matrix_share3_1, adj_matrix_share3_2 \
             = build_graph_using_normalized_boxes(pad_obj_bboxes, distance_threshold=0.5)
         adj_matrix_random1, adj_matrix_random3 = random_spatial_processor(pad_obj_bboxes)
         return adj_matrix, adj_matrix_share3_1, adj_matrix_share3_2, adj_matrix_random1, adj_matrix_random3
-
 
     def _pad_features(self, features, bboxes, num_boxes, max_feat_num, tensorize=True):
         mix_num_boxes = min(int(num_boxes), max_feat_num)
@@ -348,7 +360,6 @@ class VQAClassificationDataset(Dataset):
         pad_bboxes = torch.tensor(mix_boxes_pad).float()
 
         return pad_features, mask_features, pad_bboxes
-
 
     def tokenize(self, max_length=16):
         """Tokenizes the questions.
@@ -513,10 +524,13 @@ class VQAClassificationDataset(Dataset):
                         torch.from_numpy(entry["spatial_adj_matrix_share3_2"]),
                         label_num=12
                     )
-                    entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_1)
-                    entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_2)
+                    entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"],
+                                                                   spatial_adj_matrix_share3_1)
+                    entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"],
+                                                                   spatial_adj_matrix_share3_2)
 
-            move_keys = ["spatial_adj_matrix_share3", "spatial_adj_matrix", "spatial_adj_matrix_random1", "spatial_adj_matrix_random3"]
+            move_keys = ["spatial_adj_matrix_share3", "spatial_adj_matrix", "spatial_adj_matrix_random1",
+                         "spatial_adj_matrix_random3"]
 
             if image_id not in self.spatial_dict:
                 self.spatial_dict[image_id] = {}
@@ -533,11 +547,9 @@ class VQAClassificationDataset(Dataset):
                     #         pdb.set_trace()
                     del entry[key]
 
-
         if self.heads_type == "mix":
             assert image_id in self.spatial_dict
             item_dict.update(self.spatial_dict[image_id])
-
 
         if "test" not in self.split:
             answer = entry["answer"]
