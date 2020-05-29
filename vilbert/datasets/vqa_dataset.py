@@ -116,6 +116,12 @@ def _load_dataset(dataroot, name, clean_datasets):
                          "above",
                          "beside",
                          "beneath"]
+        registry.q_ids = []
+        for que in questions:
+            for sw in spatial_words:
+                if sw in que["question"]:
+                    registry.q_ids.append(que["question_id"])
+                    break
 
     elif name == "test":
         question_path_test = os.path.join(
@@ -272,7 +278,7 @@ class VQAClassificationDataset(Dataset):
             return
 
 
-        if not os.path.exists(cache_path):
+        if True or not os.path.exists(cache_path):
             self.entries = _load_dataset(dataroot, split, clean_datasets)
             # convert questions to tokens, create masks, segment_ids
             self.tokenize(max_seq_length)

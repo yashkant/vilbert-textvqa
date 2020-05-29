@@ -5,7 +5,7 @@ TASK19:
   process: normal
   task_id: 1
   dataroot: datasets/VQA/
-  features_h5path1: datasets/coco/COCO_test_resnext152_faster_rcnn_genome.lmdb
+  features_h5path1: datasets/coco/COCO_trainval_resnext152_faster_rcnn_genome.lmdb
   features_h5path2: ''
   train_annotations_jsonpath: ''
   val_annotations_jsonpath: ''
@@ -13,8 +13,8 @@ TASK19:
   max_region_num: 101
   batch_size: 196
   eval_batch_size: 1024
-  train_split: test
-  val_split: test
+  train_split: minval
+  val_split: minval
   lr: 0.0001
   num_epoch: 30
   debug: False

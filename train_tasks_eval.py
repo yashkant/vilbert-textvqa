@@ -24,6 +24,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 
+from tools.registry import registry
 from vilbert.task_utils import (
     LoadDatasets,
     LoadLosses,
@@ -679,6 +680,7 @@ def evaluate(
                 sys.stdout.flush()
             #
             logits = torch.max(batch_dict["vil_prediction"], 1)[1].data  # argmax
+            batch_dict["vqa_scores"] = np.array(batch_dict["vqa_scores"]).sum(-1)
 
             for idx in range(logits.size(0)):
                 results[batch_dict["question_id"][idx].item()] = \
@@ -690,9 +692,21 @@ def evaluate(
                         "vqa_score": np.round(batch_dict["vqa_scores"][idx], 1) if "vqa_scores" in batch_dict else None
                     }
 
+    result_list = []
+    for k,v in results.items():
+        if v["question_id"] in registry.q_ids:
+            result_list.append(v)
+
+    # VANILLA:0.5320346320346319
+    # SPATIAL: 0.5471861471861469
+
+    acc = []
+    for x in result_list:
+        acc.append(x['vqa_score'])
+
     import pdb
     pdb.set_trace()
-    json.dump(results, open("test_spatial.json", "w"))
+    json.dump(result_list, open("minval_spatial.json", "w"))
 
     score = tbLogger.showLossVal(task_id, task_stop_controller=None)
     model.train()
@@ -705,3 +719,24 @@ if __name__ == "__main__":
     finally:
         import os
         os.system("watch -n 1 session-quit-error")
+
+"""
+python train_tasks_eval.py \
+--task_file sweeps/vqa_spatial_share3_big_eval.yml \
+--from_scratch \
+--config_file config/spatial_m4c_mmt_vqa.json \
+--tasks 19 \
+--tag share3-big-eval \
+--resume_file save/VQA_spatial_m4c_mmt_vqa-vqa-spatial-continue/pytorch_ckpt_latest.tar
+
+VS 
+
+python train_tasks_eval.py \
+--task_file sweeps/vqa_task_layers6.yml \           
+--from_scratch \
+--config_file config/spatial_m4c_mmt_vqa.json \
+--tasks 19 \
+--tag share3-big-eval \
+--resume_file /srv/share/ykant3/vilbert-mt/archive/VQA_m4c_mmt_vqa-vqa_model-vqa_6layers_new/pytorch_ckpt_latest.tar 
+
+"""
