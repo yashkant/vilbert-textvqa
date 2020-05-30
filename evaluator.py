@@ -61,14 +61,15 @@ images_path = {
 }
 
 vocab_paths = {
-    "stvqa": "/srv/share/ykant3/m4c-release/data/m4c_vocabs/stvqa/fixed_answer_vocab_stvqa_5k.txt",
+    # "stvqa": "/srv/share/ykant3/m4c-release/data/m4c_vocabs/stvqa/fixed_answer_vocab_stvqa_5k.txt",
+    "stvqa": "/srv/share/ykant3/scene-text/test/stvqa_task2_vocab.txt",
     "textvqa": "/srv/share/ykant3/m4c-release/data/m4c_vocabs/textvqa/fixed_answer_vocab_textvqa_5k.txt"
 }
 
 eval_df_path_tvqa = "/srv/share/ykant3/vilbert-mt/eval/tvqa_eval_df.pkl"
 eval_df_path_tvqa_test = "/srv/share/ykant3/vilbert-mt/eval/tvqa_eval_df_test.pkl"
 eval_df_path_stvqa = "/srv/share/ykant3/vilbert-mt/eval/stvqa_eval_df.pkl"
-eval_df_path_stvqa_test = "/srv/share/ykant3/vilbert-mt/eval/stvqa_eval_df_test.pkl"
+eval_df_path_stvqa_test = "/srv/share/ykant3/vilbert-mt/eval/stvqa_eval_df_test2.pkl"
 
 # def load_data_for_evaluation_tvqa(tag):
 #     # This merges all the data sources into one nice DataFrame
@@ -196,7 +197,7 @@ class Evaluator:
                                     split=split,
                                     only_val=True,
                                     test_val_bs=48,
-                                    test_val_workers=8)
+                                    test_val_workers=0)
 
         self.task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
 
@@ -606,7 +607,7 @@ def evaluate_predictions(eval_df, results_df, acc_type="vqa", tokens_from="vd"):
 
         tokens_key = "ocr_tokens_y"
         if tokens_key not in eval_df:
-            tokens_key = "ocr_tokens"
+            tokens_key = "google_ocr_tokens_filtered"
             assert tokens_key in eval_df
 
         if tokens_from == "re":
@@ -622,10 +623,14 @@ def evaluate_predictions(eval_df, results_df, acc_type="vqa", tokens_from="vd"):
             'pred_answers': np.array([re.complete_seqs[1:]])
         }
 
-        calculate_result = calculate(batch)
-        calculate_result["pred_ids"] = np.array([re.complete_seqs])
+        try:
+            calculate_result = calculate(batch)
+            calculate_result["pred_ids"] = np.array([re.complete_seqs])
+            predictions.append(calculate_result)
 
-        predictions.append(calculate_result)
+        except:
+            import pdb
+            pdb.set_trace()
 
     accuracies_df = pd.DataFrame(predictions)
     best_result = []

@@ -47,6 +47,7 @@ val_data_path = {
     "textvqa_test": '/srv/share3/hagrawal9/project/m4c/data/m4c_textvqa/imdb_test_ocr_en.npy',
     "stvqa": '/srv/share/ykant3/scene-text/train/imdb/train_task_response_meta_fixed_processed_val.npy',
     "stvqa_test": '/srv/share/ykant3/scene-text/test/imdb/test_task3_response_meta_fixed_processed.npy',
+    "stvqa_test2": '/srv/share/ykant3/scene-text/test/imdb/test_task2_response_meta_fixed_processed.npy',
 }
 
 ocr_features_path = {
@@ -79,6 +80,7 @@ eval_df_path_tvqa = "/srv/share/ykant3/vilbert-mt/eval/tvqa_eval_df.pkl"
 eval_df_path_tvqa_test = "/srv/share/ykant3/vilbert-mt/eval/tvqa_eval_df_test.pkl"
 eval_df_path_stvqa = "/srv/share/ykant3/vilbert-mt/eval/stvqa_eval_df.pkl"
 eval_df_path_stvqa_test = "/srv/share/ykant3/vilbert-mt/eval/stvqa_eval_df_test.pkl"
+eval_df_path_stvqa_test2 = "/srv/share/ykant3/vilbert-mt/eval/stvqa_eval_df_test2.pkl"
 
 
 def parse_args():
@@ -255,18 +257,21 @@ def load_data_for_evaluation_stvqa(tag):
     val_data = np.load(val_data_path[tag], allow_pickle=True)
     val_data_list = val_data[1:].tolist()
     val_data_df = pd.DataFrame(val_data_list)
-    google_ocr_data = []
-
-    for instance in tqdm(val_data_list):
-        feature_path = instance["image_path"].replace(images_path[tag], ocr_features_path[tag]).split(".")[0] + ".npy"
-        assert os.path.exists(feature_path)
-        feature_data = np.load(feature_path, allow_pickle=True).tolist()
-        google_ocr_data.append(feature_data)
-
-    ocr_df = pd.DataFrame(google_ocr_data)
-    assert len(ocr_df) == len(val_data_df)
-    val_data_with_ocr_df = pd.merge(val_data_df, ocr_df, how='left', left_index=True, right_index=True)
-    return val_data_with_ocr_df
+    # google_ocr_data = []
+    #
+    # import pdb
+    # pdb.set_trace()
+    #
+    # for instance in tqdm(val_data_list):
+    #     feature_path = instance["image_path"].replace(images_path[tag], ocr_features_path[tag]).split(".")[0] + ".npy"
+    #     assert os.path.exists(feature_path)
+    #     feature_data = np.load(feature_path, allow_pickle=True).tolist()
+    #     google_ocr_data.append(feature_data)
+    #
+    # ocr_df = pd.DataFrame(google_ocr_data)
+    # assert len(ocr_df) == len(val_data_df)
+    # val_data_with_ocr_df = pd.merge(val_data_df, ocr_df, how='left', left_index=True, right_index=True)
+    return val_data_df
 
 
 def evaluate(
@@ -478,6 +483,14 @@ def main():
     args = parse_args()
     registry['args'] = args
 
+    stvqa_eval_df_test = load_data_for_evaluation_stvqa("stvqa_test2")
+
+    # pd.to_pickle(tvqa_eval_df, eval_df_path_tvqa)
+    # pd.to_pickle(tvqa_eval_df_test, eval_df_path_tvqa_test)
+    # pd.to_pickle(stvqa_eval_df, eval_df_path_stvqa)
+    pd.to_pickle(stvqa_eval_df_test, eval_df_path_stvqa_test2)
+
+
     # Load task config
     with open(args.task_file, "r") as f:
         task_cfg = edict(yaml.safe_load(f))
@@ -519,13 +532,15 @@ def main():
     # tvqa_eval_df = load_data_for_evaluation_tvqa()
     # tvqa_eval_df_test = load_data_for_evaluation_tvqa_test()
     # stvqa_eval_df = load_data_for_evaluation_stvqa("stvqa")
-    # stvqa_eval_df_test = load_data_for_evaluation_stvqa("stvqa_test")
+    stvqa_eval_df_test = load_data_for_evaluation_stvqa("stvqa_test2")
 
     # pd.to_pickle(tvqa_eval_df, eval_df_path_tvqa)
     # pd.to_pickle(tvqa_eval_df_test, eval_df_path_tvqa_test)
     # pd.to_pickle(stvqa_eval_df, eval_df_path_stvqa)
-    # pd.to_pickle(stvqa_eval_df_test, eval_df_path_stvqa_test)
+    pd.to_pickle(stvqa_eval_df_test, eval_df_path_stvqa_test2)
 
+    import pdb
+    pdb.set_trace()
 
     if task_cfg["TASK19"]["val_on"][0] == "textvqa":
         vocab_path = vocab_paths["textvqa"]

@@ -389,16 +389,16 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val
         f"Loading Val Dataset {task_cfg[task]['val_on']}  with batch size {batch_size}"
     )
     val_task_name = key_map[task_cfg[task]['val_on'][0]]
-    task_datasets_val[task] = DatasetMapTrain[val_task_name](
-        split=task_cfg[task]["val_split"],
-        tokenizer=tokenizer,
-        bert_model=args.bert_model,
-        padding_index=0,
-        max_seq_length=task_cfg[task]["max_seq_length"],
-        max_region_num=task_cfg[task]["max_region_num"],
-        extra_args=task_cfg[task]
-    )
-
+    # task_datasets_val[task] = DatasetMapTrain[val_task_name](
+    #     split=task_cfg[task]["val_split"],
+    #     tokenizer=tokenizer,
+    #     bert_model=args.bert_model,
+    #     padding_index=0,
+    #     max_seq_length=task_cfg[task]["max_seq_length"],
+    #     max_region_num=task_cfg[task]["max_region_num"],
+    #     extra_args=task_cfg[task]
+    # )
+    #
     if "test" in split:
         logger.info(
             f"Loading Test Dataset(s) {task_cfg[task]['val_on']}  with batch size {batch_size}"

@@ -80,6 +80,9 @@ if __name__ == "__main__":
                     pdb.set_trace()
                     continue
 
+                import pdb
+                pdb.set_trace()
+
                 id = str(infile).encode()
                 id_list.append(id)
                 item = {}

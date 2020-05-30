@@ -341,7 +341,8 @@ class TextVQADataset(Dataset):
             _, _, pad_obj_bboxes = self._pad_features(
                 obj_features, obj_bboxes, obj_num_boxes, self.max_obj_num, tensorize=False
             )
-            ocr_features, ocr_num_boxes, ocr_bboxes, _ = self.ocr_features_reader[entry["image_id"]]
+            image_id = entry["image_id"]
+            ocr_features, ocr_num_boxes, ocr_bboxes, _ = self.ocr_features_reader[image_id.replace("obj/", "ocr/")]
             ocr_features, ocr_num_boxes, ocr_bboxes = ocr_features[1:], ocr_num_boxes - 1, ocr_bboxes[1:]
             _, _, pad_ocr_bboxes = self._pad_features(
                 ocr_features, ocr_bboxes, ocr_num_boxes, self.max_ocr_num, tensorize=False

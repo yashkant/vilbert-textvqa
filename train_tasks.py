@@ -783,10 +783,21 @@ if __name__ == "__main__":
             short_eval=False,
             use_share2=False,
         )
-        for beam_size in [1, 5]:
-            for split in ["val", "test"]:
+        for beam_size in [5]:
+            for split in ["test"]:
                 evaluator.load_split(split, beam_size)
                 evaluator.evaluate()
     finally:
         import os
         os.system("watch -n 1 session-quit-error")
+
+
+"""
+_VISIBLE_DEVICES=0,1,2,3,5,6 \
+python train_tasks.py \
+--task_file sweeps/rebuttal/m4c-spatial-mask-1-2-layers-4-share3-train-s-val-s-type2.yml \
+--from_scratch \
+--config_file config/spatial_m4c_mmt_textvqa.json \
+--tasks 19 \
+--tag stvqa-task-2-run-latest-2 --only_eval
+"""

@@ -93,24 +93,24 @@ class ImageFeaturesH5Reader(object):
 
         # Todo: remove this dirty code
         sample_id = self._image_ids[0].decode()
-        if "scene-text" in image_id:
-            sample_id = splitall(sample_id)
-            image_id = splitall(image_id)
-            # create new image-id
-            new_image_id = []
-            # join initial paths from sample
-            for part in sample_id:
-                if "task" in part:
-                    break
-                new_image_id.append(part)
-            # join the tail
-            append = False
-            for part in image_id:
-                if "task" in part or append:
-                    append = True
-                    new_image_id.append(part)
-            # weave all
-            image_id = os.path.join(*new_image_id)
+        # if "scene-text" in image_id:
+        #     sample_id = splitall(sample_id)
+        #     image_id = splitall(image_id)
+        #     # create new image-id
+        #     new_image_id = []
+        #     # join initial paths from sample
+        #     for part in sample_id:
+        #         if "task" in part:
+        #             break
+        #         new_image_id.append(part)
+        #     # join the tail
+        #     append = False
+        #     for part in image_id:
+        #         if "task" in part or append:
+        #             append = True
+        #             new_image_id.append(part)
+        #     # weave all
+        #     image_id = os.path.join(*new_image_id)
 
         if "ocr-vqa" in sample_id:
             base_path = os.path.split(sample_id)[0]

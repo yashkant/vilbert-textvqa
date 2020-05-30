@@ -40,6 +40,9 @@ if __name__ == "__main__":
         feature_files = [path for path in feature_files if path.endswith(".npy")]
         id_list = []
         env = lmdb.open(lmdb_file, map_size=MAP_SIZE)
+        import pdb
+        pdb.set_trace()
+
         with env.begin(write=True) as txn:
             for infile in tqdm.tqdm(feature_files):
                 try:

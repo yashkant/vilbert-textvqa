@@ -41,7 +41,7 @@ def _load_dataset(name, debug):
     if name == "train" or name == "val" or name == "test":
         imdb_path = f"/srv/share/ykant3/scene-text/train/imdb/train_task_response_meta_fixed_processed_{name}.npy"
         if name == "test":
-            imdb_path = "/srv/share/ykant3/scene-text/test/imdb/test_task3_response_meta_fixed_processed.npy"
+            imdb_path = "/srv/share/ykant3/scene-text/test/imdb/test_task2_response_meta_fixed_processed.npy"
         if debug:
             imdb_path = f"/srv/share/ykant3/scene-text/train/imdb/debug_train_task_response_meta_fixed_processed_{name}.npy"
         logger.info(f"Loading IMDB for {name}" if not debug else f"Loading IMDB for {name} in debug mode")
@@ -62,12 +62,31 @@ def _load_dataset(name, debug):
         # "google_ocr_info_filtered",
     ]
 
-    logger.info(f"Building Entries for {name}")
-    for instance in imdb_data:
-        entry = dict([(key, instance[key]) for key in store_keys if key in instance])
-        # Also need to add features-dir
-        entry["image_id"] = entry["image_path"].split(".")[0] + ".npy"
-        entries.append(entry)
+    if name == "test":
+        json_path = "/srv/share/ykant3/scene-text/test/test_task_2.json"
+        json_data = json.load(open(json_path, "r"))
+
+        image_id_dict = {}
+
+        for que in json_data["data"]:
+            base_path = "/srv/share/ykant3/scene-text/features/obj/test/test_task2/"
+            path = os.path.join(base_path, que["file_path"].split(".")[0] + ".npy")
+            assert os.path.exists(path)
+            image_id_dict[que["question_id"]] = path
+
+        logger.info(f"Building Entries for {name}")
+        for instance in imdb_data:
+            entry = dict([(key, instance[key]) for key in store_keys if key in instance])
+            # Also need to add features-dir
+            entry["image_id"] = image_id_dict[entry["question_id"]]
+            entries.append(entry)
+    else:
+        logger.info(f"Building Entries for {name}")
+        for instance in imdb_data:
+            entry = dict([(key, instance[key]) for key in store_keys if key in instance])
+            # Also need to add features-dir
+            entry["image_id"] = entry["image_path"].split(".")[0] + ".npy"
+            entries.append(entry)
 
     return entries, imdb_data.metadata
 
@@ -98,10 +117,10 @@ class STVQADataset(TextVQADataset):
 
         if self.split == "test":
             self.obj_features_reader = ImageFeaturesH5Reader(
-                features_path="/srv/share/ykant3/scene-text/features/obj/lmdbs/test_task3_fixed.lmdb", in_memory=False
+                features_path="/srv/share/ykant3/scene-text/features/obj/lmdbs/test_task2_fixed2.lmdb", in_memory=False
             )
             self.ocr_features_reader = ImageFeaturesH5Reader(
-                features_path="/srv/share/ykant3/scene-text/features/ocr/lmdbs/test_task3_fixed.lmdb", in_memory=False
+                features_path="/srv/share/ykant3/scene-text/features/ocr/lmdbs/test_task2_fixed2.lmdb", in_memory=False
             )
         else:
             self.obj_features_reader = ImageFeaturesH5Reader(
@@ -215,18 +234,18 @@ class STVQADataset(TextVQADataset):
         #     cache_path = cache_path.split(".")[0]
         #     cache_path = cache_path + f"_threshold_{self.distance_threshold}" + ".pkl"
 
-        # if self.randomize > 0:
-        #     cache_path = cache_path.split(".")[0]
-        #     cache_path = cache_path + f"_randomize_{self.randomize}" + ".pkl"
-        # elif self.needs_spatial:
-        #     cache_path = cache_path.split(".")[0]
-        #     cache_path = cache_path + f"_spatial" + ".pkl"
-        #     if self.use_gauss_bias:
-        #         _types = list(set(registry.mix_list))
-        #         _types.sort()
-        #         _types = "-".join(_types)
-        #         cache_path = cache_path.split(".")[0]
-        #         cache_path = cache_path + f"_gauss_factor_{self.gauss_bias_dev_factor}_heads_type_{_types}" + ".pkl"
+        if self.randomize > 0:
+            cache_path = cache_path.split(".")[0]
+            cache_path = cache_path + f"_randomize_{self.randomize}" + ".pkl"
+        elif self.needs_spatial:
+            cache_path = cache_path.split(".")[0]
+            cache_path = cache_path + f"_spatial" + ".pkl"
+            if self.use_gauss_bias:
+                _types = list(set(registry.mix_list))
+                _types.sort()
+                _types = "-".join(_types)
+                cache_path = cache_path.split(".")[0]
+                cache_path = cache_path + f"_gauss_factor_{self.gauss_bias_dev_factor}_heads_type_{_types}" + ".pkl"
 
         logger.info(f"Cache Name:  {cache_path}")
 
@@ -243,11 +262,11 @@ class STVQADataset(TextVQADataset):
             # convert questions to tokens, create masks, segment_ids
             self.process()
 
-            # if self.randomize > 0:
-            #     raise AssertionError
-            #     self.process_random_spatials()
-            # elif self.needs_spatial:
-            #     self.process_spatials()
+            if self.randomize > 0:
+                raise AssertionError
+                self.process_random_spatials()
+            elif self.needs_spatial:
+                self.process_spatials()
 
             if not self.debug:
                 cPickle.dump(self.entries, open(cache_path, "wb"))
@@ -275,9 +294,13 @@ class STVQADataset(TextVQADataset):
         """
         entry = self.entries[index]
         image_id = entry["image_id"]
-
-        if self.needs_spatial:
-            entry["spatial_adj_matrix_shared"] = self.spatial_reader[entry["image_id"]]
+        # try:
+        #     if self.needs_spatial:
+        #         key = entry["image_id"].replace("features/obj/test/test_task2", "test/test_task3")
+        #         entry["spatial_adj_matrix_shared"] = self.spatial_reader[key]
+        # except:
+        #     import pdb
+        #     pdb.set_trace()
 
         # add object-features and bounding boxes
         obj_features, obj_num_boxes, obj_bboxes, _ = self.obj_features_reader[image_id]
@@ -288,7 +311,7 @@ class STVQADataset(TextVQADataset):
         )
 
         # add ocr-features and bounding boxes
-        ocr_features, ocr_num_boxes, ocr_bboxes, _ = self.ocr_features_reader[image_id]
+        ocr_features, ocr_num_boxes, ocr_bboxes, _ = self.ocr_features_reader[image_id.replace("obj/", "ocr/")]
         # remove avg-features
         ocr_features, ocr_num_boxes, ocr_bboxes = ocr_features[1:], ocr_num_boxes - 1, ocr_bboxes[1:]
         pad_ocr_features, pad_ocr_mask, pad_ocr_bboxes = self._pad_features(
