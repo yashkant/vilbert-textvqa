@@ -1,4 +1,3 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
 import functools
 import math
 import torch
@@ -23,18 +22,9 @@ class M4C(nn.Module):
     """
     def __init__(self, mmt_config, text_bert_config):
         super().__init__()
-        # self.mmt_config = BertConfig(**self.config.mmt)
         self.mmt_config = mmt_config
         self.text_bert_config = text_bert_config
-        # self._datasets = registry.get("config").datasets.split(",")
-
-        if self.mmt_config.finetune_ocr_obj:
-            logger.info("Finetuning object and ocr FRCN layer")
-            self.frcn_encoder_type = "finetune_faster_rcnn_fpn_fc7"
-        else:
-            logger.info("Not finetuning object and ocr FRCN layer")
-            self.frcn_encoder_type = "default"
-
+        self.frcn_encoder_type = "default"
         if not self.mmt_config.use_phoc_fasttext:
             logger.info("Not using Fasttext and PHOC features for OCR")
 
@@ -42,14 +32,14 @@ class M4C(nn.Module):
         if not self.mmt_config.normalize:
             logger.info("Not normalizing OCR and Object features")
 
-        # auxiliary heads and fusion
-        self.aux_spatial_fusion = getattr(self.mmt_config, "aux_spatial_fusion", "mul")
-        self.use_aux_heads = getattr(self.mmt_config, "use_aux_heads", False)
-        if self.use_aux_heads:
-            logger.info("Using spatial-aux heads")
-            logger.info(f"Spatial aux fusion type: {self.aux_spatial_fusion}")
-        else:
-            logger.info("Not using spatial-aux heads")
+        # # auxiliary heads and fusion
+        # self.aux_spatial_fusion = getattr(self.mmt_config, "aux_spatial_fusion", "mul")
+        # self.use_aux_heads = getattr(self.mmt_config, "use_aux_heads", False)
+        # if self.use_aux_heads:
+        #     logger.info("Using spatial-aux heads")
+        #     logger.info(f"Spatial aux fusion type: {self.aux_spatial_fusion}")
+        # else:
+        #     logger.info("Not using spatial-aux heads")
 
         # type of spatial-layers
         self.spatial_type = getattr(self.mmt_config, "spatial_type", "top")
@@ -68,7 +58,6 @@ class M4C(nn.Module):
         self.bsdecoder = BeamSearch(self.beam_size)
         logger.info(f"Using beam size: {self.beam_size}")
 
-
     def build(self):
         # modules requiring custom learning rates (usually for finetuning)
         self.finetune_modules = []
@@ -79,8 +68,8 @@ class M4C(nn.Module):
         self._build_ocr_encoding()
         self._build_mmt()
         self._build_output()
-        if self.use_aux_heads:
-            self._build_aux_heads()
+        # if self.use_aux_heads:
+        #     self._build_aux_heads()
 
     def _build_txt_encoding(self):
         TEXT_BERT_HIDDEN_SIZE = 768
@@ -121,9 +110,6 @@ class M4C(nn.Module):
         self.obj_faster_rcnn_fc7 = ImageEncoder(
             encoder_type=self.frcn_encoder_type,
             in_dim=2048,
-            weights_file='detectron/fc6/fc7_w.pkl',
-            bias_file='detectron/fc6/fc7_b.pkl',
-            model_data_dir=None
         )
         # apply smaller lr to pretrained Faster R-CNN fc7
         # self.finetune_modules.append({
@@ -189,11 +175,11 @@ class M4C(nn.Module):
         logger.info(f"Answer vocab-size is: {num_outputs}")
         self.classifier = nn.Linear(self.mmt_config.hidden_size, num_outputs)
 
-    def _build_aux_heads(self):
-        # spatial-category classification head
-        self.origin_transform = SimpleClassifier(self.mmt_config.hidden_size, 128, 32)
-        self.dest_transform = SimpleClassifier(self.mmt_config.hidden_size, 128, 32)
-        self.spatial_classifier = nn.Linear(32, 12)
+    # def _build_aux_heads(self):
+    #     # spatial-category classification head
+    #     self.origin_transform = SimpleClassifier(self.mmt_config.hidden_size, 128, 32)
+    #     self.dest_transform = SimpleClassifier(self.mmt_config.hidden_size, 128, 32)
+    #     self.spatial_classifier = nn.Linear(32, 12)
 
     def forward(self, batch_dict):
         # fwd_results holds intermediate forward pass results
@@ -208,12 +194,12 @@ class M4C(nn.Module):
             # self._forward_mmt_and_output(batch_dict)
             self._forward_beam_search(batch_dict)
 
-        if self.use_aux_heads:
-            self._forward_aux(batch_dict)
+        # if self.use_aux_heads:
+        #     self._forward_aux(batch_dict)
 
         results_dict={
             "textvqa_scores": batch_dict["scores"],
-            "spatial_scores": None if not self.use_aux_heads else batch_dict["spatial_head_out"]
+            # "spatial_scores": None if not self.use_aux_heads else batch_dict["spatial_head_out"]
         }
 
         if 'complete_seqs' in batch_dict:
@@ -222,14 +208,6 @@ class M4C(nn.Module):
             results_dict['question_id'] = batch_dict['question_id'].cpu().detach().numpy()
 
         return results_dict
-
-    # def _forward_txt_encoding(self, sample_list, fwd_results):
-    #     fwd_results['txt_inds'] = sample_list.text
-    #
-    #     # binary mask of valid text (question words) vs padding
-    #     fwd_results['txt_mask'] = _get_mask(
-    #         sample_list.text_len, sample_list.text.size(1)
-    #     )
 
     def _forward_obj_encoding(self, batch_dict):
         # object appearance feature: Faster R-CNN fc7
@@ -365,32 +343,32 @@ class M4C(nn.Module):
             if finish:
                 break
 
-    def _forward_aux(self, batch_dict):
-        txt_max_num = batch_dict["question_mask"].size(-1)
-        obj_max_num = batch_dict["pad_obj_mask"].size(-1)
-        ocr_max_num = batch_dict["pad_ocr_mask"].size(-1)
-        mmt_output = batch_dict["mmt_seq_output"]
-        obj_ocr_output = mmt_output[:, txt_max_num: txt_max_num + obj_max_num + ocr_max_num, :]
-
-        # shape: (bs, obj_ocr_num, hid_dim)
-        obj_ocr_origin_transform = self.origin_transform(obj_ocr_output)
-        # shape: (bs, obj_ocr_num, obj_ocr_num, hid_dim)
-        obj_ocr_origin_transform = obj_ocr_origin_transform.unsqueeze(-2).repeat(1, 1, 150, 1)
-
-        # shape: (bs, obj_ocr_num, hid_dim)
-        obj_ocr_dest_transform = self.dest_transform(obj_ocr_output)
-        # shape: (bs, obj_ocr_num, obj_ocr_num, hid_dim)
-        obj_ocr_dest_transform = obj_ocr_dest_transform.unsqueeze(-3).repeat(1, 150, 1, 1)
-
-        # Add and average the features or Multiply
-        if self.aux_spatial_fusion == "mul":
-            spatial_head_out = obj_ocr_origin_transform * obj_ocr_dest_transform
-        elif self.aux_spatial_fusion == "add":
-            spatial_head_out = obj_ocr_origin_transform + obj_ocr_dest_transform
-        else:
-            raise ValueError
-
-        batch_dict["spatial_head_out"] = self.spatial_classifier(spatial_head_out)
+    # def _forward_aux(self, batch_dict):
+    #     txt_max_num = batch_dict["question_mask"].size(-1)
+    #     obj_max_num = batch_dict["pad_obj_mask"].size(-1)
+    #     ocr_max_num = batch_dict["pad_ocr_mask"].size(-1)
+    #     mmt_output = batch_dict["mmt_seq_output"]
+    #     obj_ocr_output = mmt_output[:, txt_max_num: txt_max_num + obj_max_num + ocr_max_num, :]
+    #
+    #     # shape: (bs, obj_ocr_num, hid_dim)
+    #     obj_ocr_origin_transform = self.origin_transform(obj_ocr_output)
+    #     # shape: (bs, obj_ocr_num, obj_ocr_num, hid_dim)
+    #     obj_ocr_origin_transform = obj_ocr_origin_transform.unsqueeze(-2).repeat(1, 1, 150, 1)
+    #
+    #     # shape: (bs, obj_ocr_num, hid_dim)
+    #     obj_ocr_dest_transform = self.dest_transform(obj_ocr_output)
+    #     # shape: (bs, obj_ocr_num, obj_ocr_num, hid_dim)
+    #     obj_ocr_dest_transform = obj_ocr_dest_transform.unsqueeze(-3).repeat(1, 150, 1, 1)
+    #
+    #     # Add and average the features or Multiply
+    #     if self.aux_spatial_fusion == "mul":
+    #         spatial_head_out = obj_ocr_origin_transform * obj_ocr_dest_transform
+    #     elif self.aux_spatial_fusion == "add":
+    #         spatial_head_out = obj_ocr_origin_transform + obj_ocr_dest_transform
+    #     else:
+    #         raise ValueError
+    #
+    #     batch_dict["spatial_head_out"] = self.spatial_classifier(spatial_head_out)
 
     def get_optimizer_parameters(self, base_lr):
         optimizer_param_groups = []
@@ -453,11 +431,10 @@ class SpatialBertSelfAttention(nn.Module):
 
         self.num_attention_heads = config.num_spatial_relations
         self.num_spatial_relations = config.num_spatial_relations
-
-        if hasattr(config, "num_implicit_relations") and use_implicit:
-            self.num_attention_heads += config.num_implicit_relations
-            self.num_implicit_relations = config.num_implicit_relations
-            self.full_spatial = config.full_spatial
+        # if hasattr(config, "num_implicit_relations") and use_implicit:
+        #     self.num_attention_heads += config.num_implicit_relations
+        #     self.num_implicit_relations = config.num_implicit_relations
+        #     self.full_spatial = config.full_spatial
 
 
         if config.hidden_size % self.num_attention_heads != 0:
@@ -489,10 +466,10 @@ class SpatialBertSelfAttention(nn.Module):
             logger.info("using head biases")
             self.biases = torch.nn.Embedding(1, config.hidden_size)
 
-        self.use_gauss_bias = registry.get("use_gauss_bias", False)
-        self.restrict_oo = registry.get("restrict_oo", False)
-        self.use_attention_bins = registry.get("use_attention_bins", False)
-        self.attention_bins = registry.get("attention_bins", False)
+        # self.use_gauss_bias = registry.get("use_gauss_bias", False)
+        # self.restrict_oo = registry.get("restrict_oo", False)
+        # self.use_attention_bins = registry.get("use_attention_bins", False)
+        # self.attention_bins = registry.get("attention_bins", False)
 
 
     def transpose_for_scores(self, x):
@@ -516,9 +493,6 @@ class SpatialBertSelfAttention(nn.Module):
 
         """
 
-        # import pdb
-        # pdb.set_trace()
-
         # build attention-mask from spatial_adj_matrix
         batch_size, ocr_obj_num, _, num_spatial_heads = spatial_adj_matrix.shape
         num_features = hidden_states.size(1)
@@ -529,27 +503,26 @@ class SpatialBertSelfAttention(nn.Module):
         # Add explicit mask
         spatial_attention_mask[:, self.max_seq_len:self.max_seq_len + ocr_obj_num, self.max_seq_len:self.max_seq_len + ocr_obj_num, :] = spatial_adj_matrix
 
-        # Add implicit mask
-        # If gauss_bias_matrix is not None then we are using full-spatial heads!
-        if self.num_attention_heads != self.num_spatial_relations and gauss_bias_matrix is None:
-            assert hasattr(self, "num_implicit_relations")
-            implicit_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, self.num_implicit_relations))
-            spatial_attention_mask = torch.cat([spatial_attention_mask, implicit_attention_mask], dim=-1)
-
-        num_relations_mask = self.num_spatial_relations
-
-        #Add full-spatial mask
-        if hasattr(self, "full_spatial") and self.full_spatial:
-            assert gauss_bias_matrix is not None
-            full_spatial_mask = gauss_bias_matrix.unsqueeze(-1).repeat(1, 1, 1, self.num_implicit_relations)
-            implicit_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, self.num_implicit_relations))
-            implicit_attention_mask[:, self.max_seq_len:self.max_seq_len + ocr_obj_num,self.max_seq_len:self.max_seq_len + ocr_obj_num, :] = full_spatial_mask
-            spatial_attention_mask = torch.cat([spatial_attention_mask, implicit_attention_mask], dim=-1)
-            # mask full-spatial heads too
-            num_relations_mask += self.num_implicit_relations
+        # # Add implicit mask
+        # # If gauss_bias_matrix is not None then we are using full-spatial heads!
+        # if self.num_attention_heads != self.num_spatial_relations and gauss_bias_matrix is None:
+        #     assert hasattr(self, "num_implicit_relations")
+        #     implicit_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, self.num_implicit_relations))
+        #     spatial_attention_mask = torch.cat([spatial_attention_mask, implicit_attention_mask], dim=-1)
+        #
+        #
+        # #Add full-spatial mask
+        # if hasattr(self, "full_spatial") and self.full_spatial:
+        #     assert gauss_bias_matrix is not None
+        #     full_spatial_mask = gauss_bias_matrix.unsqueeze(-1).repeat(1, 1, 1, self.num_implicit_relations)
+        #     implicit_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, self.num_implicit_relations))
+        #     implicit_attention_mask[:, self.max_seq_len:self.max_seq_len + ocr_obj_num,self.max_seq_len:self.max_seq_len + ocr_obj_num, :] = full_spatial_mask
+        #     spatial_attention_mask = torch.cat([spatial_attention_mask, implicit_attention_mask], dim=-1)
+        #     # mask full-spatial heads too
+        #     num_relations_mask += self.num_implicit_relations
 
         assert spatial_attention_mask.shape == (batch_size, num_features, num_features, self.num_attention_heads)
-
+        num_relations_mask = self.num_spatial_relations
         # Mask attention-quadrants (spatial relations only)
         for quadrant in self.mask_quadrants:
             if quadrant == 1:
@@ -599,72 +572,72 @@ class SpatialBertSelfAttention(nn.Module):
         # Todo: We are stealing weights from object-question attention by adding to softmax values
         #  this can be fixed by only changing the 150x150 weights
 
-        # Add gaussian biasing
-        if self.use_gauss_bias:
-            gauss_bias_matrix = gauss_bias_matrix.permute((0,3,1,2)).type_as(attention_probs)
-
-            # Restrict only to object-ocr relationships
-            if self.restrict_oo:
-                oo_probs = attention_probs[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num, self.max_seq_len:self.max_seq_len + ocr_obj_num].detach().clone()
-                oo_probs_sum = attention_probs[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num, self.max_seq_len:self.max_seq_len + ocr_obj_num].detach().clone().sum(dim=-1, keepdims=True)
-                bias_probs_matrix = gauss_bias_matrix + attention_probs[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num, self.max_seq_len:self.max_seq_len + ocr_obj_num].detach().clone()
-                bias_probs_matrix = bias_probs_matrix + combined_mask[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num, self.max_seq_len:self.max_seq_len + ocr_obj_num].detach().clone()
-                bias_probs_matrix = nn.Softmax(dim=-1)(bias_probs_matrix)*oo_probs_sum
-                expanded_bias_probs_matrix = torch.zeros_like(attention_probs)
-                expanded_bias_probs_matrix[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num,
-                self.max_seq_len:self.max_seq_len + ocr_obj_num] = bias_probs_matrix - oo_probs
-                expanded_bias_probs_matrix = expanded_bias_probs_matrix.detach().clone()
-                attention_probs = attention_probs + expanded_bias_probs_matrix
-            else:
-                expanded_gauss_bias_matrix = torch.zeros_like(attention_probs)
-                expanded_gauss_bias_matrix[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num,
-                self.max_seq_len:self.max_seq_len + ocr_obj_num] = gauss_bias_matrix
-                attention_probs = attention_probs + expanded_gauss_bias_matrix
-                attention_probs = attention_probs + combined_mask
-                attention_probs = nn.Softmax(dim=-1)(attention_probs)
-
-        if self.use_attention_bins:
-            assert round(sum(self.attention_bins)) == 1.0
-            bins_matrix = gauss_bias_matrix.permute((0,3,1,2)).type_as(attention_probs)
-            unique_bins = bins_matrix.unique()
-            oo_probs = attention_probs[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num,
-                           self.max_seq_len:self.max_seq_len + ocr_obj_num].detach().clone()
-            oo_probs_sum = oo_probs.detach().clone().sum(dim=-1, keepdims=True)
-
-            scaled_oo_probs = torch.zeros_like(oo_probs)
-            self.attention_bins.sort(reverse=True)
-
-            # Todo: this only works for share-3
-            range_matrices = []
-            for bin_idx, (bin_type, bin_range) in enumerate(zip(unique_bins.sort()[0][1:], self.attention_bins)):
-                masked_bin_probs = oo_probs * (bins_matrix == bin_type)
-
-                # for last bin calculate using sum of other bins
-                if bin_idx == len(self.attention_bins)-1:
-                    range_matrix_sum = sum(range_matrices)
-                    range_matrices.append(torch.ones_like(range_matrix_sum)-range_matrix_sum)
-                    range_matrices[-1] = range_matrices[-1]*(masked_bin_probs.sum(dim=-1, keepdims=True) > 0)
-                    range_matrices[0] = range_matrices[0] + (1-range_matrices[0])*(masked_bin_probs.sum(dim=-1, keepdims=True) <= 0)
-                else:
-                    range_matrices.append((masked_bin_probs.sum(dim=-1, keepdims=True) > 0)*bin_range)
-
-            assert round(float(sum(range_matrices).sum())) == range_matrices[0].shape[0]*range_matrices[0].shape[1]*range_matrices[0].shape[2]
-            assert len(unique_bins.sort()[0][1:]) == len(self.attention_bins) == len(range_matrices)
-            for bin_type, range_matrix in zip(unique_bins.sort()[0][1:], range_matrices):
-                masked_bin_probs = oo_probs*(bins_matrix == bin_type)
-                masked_bin_probs_sum = masked_bin_probs.sum(dim=-1, keepdims=True)
-                masked_bin_probs_sum = masked_bin_probs_sum + 1.0*(masked_bin_probs_sum == 0)
-                scale = (range_matrix/masked_bin_probs_sum)*oo_probs_sum
-                scaled_masked_bin_probs = masked_bin_probs*scale
-                scaled_oo_probs += scaled_masked_bin_probs
-
-            # There are times when we only have bin_type-1 relations
-            assert round(float((scaled_oo_probs.sum(dim=-1, keepdims=True) - oo_probs_sum).sum())) == 0
-            expanded_scaled_oo_probs = torch.zeros_like(attention_probs)
-            expanded_scaled_oo_probs[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num,
-            self.max_seq_len:self.max_seq_len + ocr_obj_num] = scaled_oo_probs - oo_probs
-            expanded_scaled_oo_probs = expanded_scaled_oo_probs.detach().clone()
-            attention_probs = attention_probs + expanded_scaled_oo_probs
+        # # Add gaussian biasing
+        # if self.use_gauss_bias:
+        #     gauss_bias_matrix = gauss_bias_matrix.permute((0,3,1,2)).type_as(attention_probs)
+        #
+        #     # Restrict only to object-ocr relationships
+        #     if self.restrict_oo:
+        #         oo_probs = attention_probs[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num, self.max_seq_len:self.max_seq_len + ocr_obj_num].detach().clone()
+        #         oo_probs_sum = attention_probs[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num, self.max_seq_len:self.max_seq_len + ocr_obj_num].detach().clone().sum(dim=-1, keepdims=True)
+        #         bias_probs_matrix = gauss_bias_matrix + attention_probs[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num, self.max_seq_len:self.max_seq_len + ocr_obj_num].detach().clone()
+        #         bias_probs_matrix = bias_probs_matrix + combined_mask[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num, self.max_seq_len:self.max_seq_len + ocr_obj_num].detach().clone()
+        #         bias_probs_matrix = nn.Softmax(dim=-1)(bias_probs_matrix)*oo_probs_sum
+        #         expanded_bias_probs_matrix = torch.zeros_like(attention_probs)
+        #         expanded_bias_probs_matrix[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num,
+        #         self.max_seq_len:self.max_seq_len + ocr_obj_num] = bias_probs_matrix - oo_probs
+        #         expanded_bias_probs_matrix = expanded_bias_probs_matrix.detach().clone()
+        #         attention_probs = attention_probs + expanded_bias_probs_matrix
+        #     else:
+        #         expanded_gauss_bias_matrix = torch.zeros_like(attention_probs)
+        #         expanded_gauss_bias_matrix[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num,
+        #         self.max_seq_len:self.max_seq_len + ocr_obj_num] = gauss_bias_matrix
+        #         attention_probs = attention_probs + expanded_gauss_bias_matrix
+        #         attention_probs = attention_probs + combined_mask
+        #         attention_probs = nn.Softmax(dim=-1)(attention_probs)
+        #
+        # if self.use_attention_bins:
+        #     assert round(sum(self.attention_bins)) == 1.0
+        #     bins_matrix = gauss_bias_matrix.permute((0,3,1,2)).type_as(attention_probs)
+        #     unique_bins = bins_matrix.unique()
+        #     oo_probs = attention_probs[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num,
+        #                    self.max_seq_len:self.max_seq_len + ocr_obj_num].detach().clone()
+        #     oo_probs_sum = oo_probs.detach().clone().sum(dim=-1, keepdims=True)
+        #
+        #     scaled_oo_probs = torch.zeros_like(oo_probs)
+        #     self.attention_bins.sort(reverse=True)
+        #
+        #     # Todo: this only works for share-3
+        #     range_matrices = []
+        #     for bin_idx, (bin_type, bin_range) in enumerate(zip(unique_bins.sort()[0][1:], self.attention_bins)):
+        #         masked_bin_probs = oo_probs * (bins_matrix == bin_type)
+        #
+        #         # for last bin calculate using sum of other bins
+        #         if bin_idx == len(self.attention_bins)-1:
+        #             range_matrix_sum = sum(range_matrices)
+        #             range_matrices.append(torch.ones_like(range_matrix_sum)-range_matrix_sum)
+        #             range_matrices[-1] = range_matrices[-1]*(masked_bin_probs.sum(dim=-1, keepdims=True) > 0)
+        #             range_matrices[0] = range_matrices[0] + (1-range_matrices[0])*(masked_bin_probs.sum(dim=-1, keepdims=True) <= 0)
+        #         else:
+        #             range_matrices.append((masked_bin_probs.sum(dim=-1, keepdims=True) > 0)*bin_range)
+        #
+        #     assert round(float(sum(range_matrices).sum())) == range_matrices[0].shape[0]*range_matrices[0].shape[1]*range_matrices[0].shape[2]
+        #     assert len(unique_bins.sort()[0][1:]) == len(self.attention_bins) == len(range_matrices)
+        #     for bin_type, range_matrix in zip(unique_bins.sort()[0][1:], range_matrices):
+        #         masked_bin_probs = oo_probs*(bins_matrix == bin_type)
+        #         masked_bin_probs_sum = masked_bin_probs.sum(dim=-1, keepdims=True)
+        #         masked_bin_probs_sum = masked_bin_probs_sum + 1.0*(masked_bin_probs_sum == 0)
+        #         scale = (range_matrix/masked_bin_probs_sum)*oo_probs_sum
+        #         scaled_masked_bin_probs = masked_bin_probs*scale
+        #         scaled_oo_probs += scaled_masked_bin_probs
+        #
+        #     # There are times when we only have bin_type-1 relations
+        #     assert round(float((scaled_oo_probs.sum(dim=-1, keepdims=True) - oo_probs_sum).sum())) == 0
+        #     expanded_scaled_oo_probs = torch.zeros_like(attention_probs)
+        #     expanded_scaled_oo_probs[:, :, self.max_seq_len:self.max_seq_len + ocr_obj_num,
+        #     self.max_seq_len:self.max_seq_len + ocr_obj_num] = scaled_oo_probs - oo_probs
+        #     expanded_scaled_oo_probs = expanded_scaled_oo_probs.detach().clone()
+        #     attention_probs = attention_probs + expanded_scaled_oo_probs
 
         try:
             assert round(float(attention_probs.sum().data)) == attention_probs.shape[0]*attention_probs.shape[1]*attention_probs.shape[2]

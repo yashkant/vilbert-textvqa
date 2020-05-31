@@ -3,21 +3,18 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-import os
-import json
 import _pickle as cPickle
 import logging
-from tools.registry import registry
-from tools.objects_to_byte_tensor import enc_obj2bytes, dec_bytes2obj
-import numpy as np
-import torch
+import multiprocessing as mp
+
+from easydict import EasyDict as edict
 from torch.utils.data import Dataset
 from tqdm import tqdm
-from .textvqa_processors import *
-from easydict import EasyDict as edict
-from ._image_features_reader import ImageFeaturesH5Reader
+
+from tools.objects_to_byte_tensor import enc_obj2bytes
 from vilbert.spatial_utils_regat import torch_broadcast_adj_matrix, torch_broadcast_gauss_bias, torch_broadcast_bins
-import multiprocessing as mp
+from ._image_features_reader import ImageFeaturesH5Reader
+from .textvqa_processors import *
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
@@ -88,18 +85,16 @@ class TextVQADataset(Dataset):
             bert_model,
             task="TextVQA",
             padding_index=0,
-            max_seq_length=16,
-            max_region_num=101,
             processing_threads=32,
-            extra_args=None
+            task_cfg=None
     ):
         """
         (YK): Builds self.entries by reading questions and answers and caches them.
         """
         super().__init__()
-        dataroot = extra_args["dataroot"]
+        dataroot = task_cfg["dataroot"]
         self.split = split
-        self._max_seq_length = max_seq_length
+        self._max_seq_length = task_cfg["max_seq_length"]
 
         if self.split == "test":
             self.obj_features_reader = ImageFeaturesH5Reader(
@@ -110,42 +105,42 @@ class TextVQADataset(Dataset):
             )
         else:
             self.obj_features_reader = ImageFeaturesH5Reader(
-                features_path=extra_args["features_h5path1"], in_memory=True
+                features_path=task_cfg["features_h5path1"], in_memory=True
             )
             self.ocr_features_reader = ImageFeaturesH5Reader(
-                features_path=extra_args["features_h5path2"], in_memory=True
+                features_path=task_cfg["features_h5path2"], in_memory=True
             )
         self._tokenizer = tokenizer
         self._padding_index = padding_index
-        self.max_obj_num = extra_args["max_obj_num"]
-        self.max_ocr_num = extra_args["max_ocr_num"]
+        self.max_obj_num = task_cfg["max_obj_num"]
+        self.max_ocr_num = task_cfg["max_ocr_num"]
         assert self.max_obj_num == 100
         assert self.max_ocr_num == 50
-        self.max_resnet_num = extra_args["max_resnet_num"]
-        self.debug = extra_args.get("debug", False)
-        self.vocab_type = extra_args.get("vocab_type", "4k")
-        self.dynamic_sampling = extra_args.get("dynamic_sampling", True)
-        self.distance_threshold = extra_args.get("distance_threshold", 0.5)
+        self.max_resnet_num = task_cfg["max_resnet_num"]
+        self.debug = task_cfg.get("debug", False)
+        self.vocab_type = task_cfg.get("vocab_type", "4k")
+        self.dynamic_sampling = task_cfg.get("dynamic_sampling", True)
+        self.distance_threshold = task_cfg.get("distance_threshold", 0.5)
         self.processing_threads = processing_threads
-        self.heads_type = extra_args.get("heads_type", "none")
-        self.clean_answers = extra_args.get("clean_answers", True)
-        self.randomize = extra_args.get("randomize", -1)
+        self.heads_type = task_cfg.get("heads_type", "none")
+        self.clean_answers = task_cfg.get("clean_answers", True)
+        self.randomize = task_cfg.get("randomize", -1)
         self.needs_spatial = False
-        self.use_gauss_bias = extra_args.get("use_gauss_bias", False)
-        self.gauss_bias_dev_factor = extra_args.get("gauss_bias_dev_factor", -1.0)
-        self.use_attention_bins = extra_args.get("use_attention_bins", False)
-        self.attention_bins = extra_args.get("attention_bins", [-1])
+        self.use_gauss_bias = task_cfg.get("use_gauss_bias", False)
+        self.gauss_bias_dev_factor = task_cfg.get("gauss_bias_dev_factor", -1.0)
+        self.use_attention_bins = task_cfg.get("use_attention_bins", False)
+        self.attention_bins = task_cfg.get("attention_bins", [-1])
         self.matrix_type_map = {
             "share3": ["3"],
             "share5": ["3", "5"],
             "share7": ["3", "5", "7"],
             "share9": ["3", "5", "7", "9"],
         }
-        self.restrict_oo = extra_args.get("restrict_oo", False)
-        self.extra_args = extra_args
+        self.restrict_oo = task_cfg.get("restrict_oo", False)
+        self.extra_args = task_cfg
 
-        if ( ("num_spatial_layers" in extra_args and extra_args["num_spatial_layers"] > 0) or 
-             ("layer_type_list" in extra_args and "s" in extra_args["layer_type_list"]) ):
+        if ( ("num_spatial_layers" in task_cfg and task_cfg["num_spatial_layers"] > 0) or
+             ("layer_type_list" in task_cfg and "s" in task_cfg["layer_type_list"])):
             self.needs_spatial = True
 
 
@@ -154,7 +149,7 @@ class TextVQADataset(Dataset):
         registry.randomize = self.randomize
         registry.use_gauss_bias = self.use_gauss_bias
         registry.gauss_bias_dev_factor = self.gauss_bias_dev_factor
-        registry.mix_list = extra_args.get("mix_list", ["none"])
+        registry.mix_list = task_cfg.get("mix_list", ["none"])
         registry.use_attention_bins = self.use_attention_bins
         registry.attention_bins = self.attention_bins
         registry.restrict_oo = self.restrict_oo
@@ -194,7 +189,7 @@ class TextVQADataset(Dataset):
                 + "_"
                 + "roberta"
                 + "_"
-                + str(max_seq_length)
+                + str(self._max_seq_length)
                 + clean_train
                 + ".pkl",
             )
@@ -202,7 +197,7 @@ class TextVQADataset(Dataset):
             cache_path = os.path.join(
                 dataroot,
                 "cache",
-                task + "_" + split + "_" + str(max_seq_length) + clean_train + f"_vocab_type{self.vocab_type}"
+                task + "_" + split + "_" + str(self._max_seq_length) + clean_train + f"_vocab_type{self.vocab_type}"
                 + f"_dynamic_{self.dynamic_sampling}" + ".pkl",
             )
 

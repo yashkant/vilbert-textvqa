@@ -1,3 +1,0 @@
-M4C-4layers
-M4C-6layers
-M4C-Spatial

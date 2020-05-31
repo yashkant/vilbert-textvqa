@@ -20,7 +20,7 @@ from tools.registry import registry
 
 import vilbert.utils as utils
 from vilbert.task_utils import (
-    LoadDatasets,
+    load_datasets,
     LoadLosses,
     ForwardModelsTrain,
     ForwardModelsVal,
@@ -192,11 +192,11 @@ class Evaluator:
         args.split = split
 
         # Load Dataset
-        self.return_tuple = LoadDatasets(args, task_cfg, args.tasks.split("-"),
-                                    split=split,
-                                    only_val=True,
-                                    test_val_bs=48,
-                                    test_val_workers=8)
+        self.return_tuple = load_datasets(args, task_cfg, args.tasks.split("-"),
+                                          split=split,
+                                          only_val=True,
+                                          test_val_bs=48,
+                                          test_val_workers=8)
 
         self.task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
 

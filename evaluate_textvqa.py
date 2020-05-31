@@ -20,7 +20,7 @@ from tools.registry import registry
 
 import vilbert.utils as utils
 from vilbert.task_utils import (
-    LoadDatasets,
+    load_datasets,
     LoadLosses,
     ForwardModelsTrain,
     ForwardModelsVal,
@@ -485,11 +485,11 @@ def main():
 
 
     # Load Dataset
-    return_tuple = LoadDatasets(args, task_cfg, args.tasks.split("-"),
-                                split=args.split,
-                                only_val=True,
-                                test_val_bs=64,
-                                test_val_workers=8)
+    return_tuple = load_datasets(args, task_cfg, args.tasks.split("-"),
+                                 split=args.split,
+                                 only_val=True,
+                                 test_val_bs=64,
+                                 test_val_workers=8)
 
     if "test" in args.split:
         (
