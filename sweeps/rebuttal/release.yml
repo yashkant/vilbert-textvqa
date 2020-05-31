@@ -48,6 +48,7 @@ heads_type: mix
 train_on: ["stvqa", "textvqa"]
 val_on: ["textvqa"]
 num_workers: 16
+needs_spatial: true
 
 M4C:
   obj_drop: 0.1

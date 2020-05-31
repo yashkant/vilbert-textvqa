@@ -138,10 +138,7 @@ class TextVQADataset(Dataset):
         }
         self.restrict_oo = task_cfg.get("restrict_oo", False)
         self.extra_args = task_cfg
-
-        if ( ("num_spatial_layers" in task_cfg and task_cfg["num_spatial_layers"] > 0) or
-             ("layer_type_list" in task_cfg and "s" in task_cfg["layer_type_list"])):
-            self.needs_spatial = True
+        self.needs_spatial = task_cfg.get("needs_spatial", False)
 
 
         registry.vocab_type = self.vocab_type
