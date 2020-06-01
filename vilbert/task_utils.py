@@ -240,6 +240,9 @@ def ForwardModelsVal(args,
             batch_dict["vil_prediction_gqa"], batch_dict["target"]
         ).sum() / float(batch_size)
 
+    elif task_cfg[task_id]["type"] == "VL-classifier-only-ce":
+        loss, batch_score = add_ce_loss(batch_dict[0], val_run=True)
+
     if registry.use_ce_loss:
         vl_loss, batch_score = add_ce_loss(batch_dict[0], val_run=True)
         # don't care about the scl-loss
@@ -313,12 +316,15 @@ def ForwardModelsTrain(
 
     # for different task, we use different output to calculate the loss.
     elif task_cfg[task_id]["type"] == "VL-classifier":
-        loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
-        loss = loss.mean() * batch_dict["target"].size(1)
-        batch_score = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"]).sum() / float(
-            batch_size
-        )
+        # loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
+        # loss = loss.mean() * batch_dict["target"].size(1)
+        # batch_score = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"]).sum() / float(
+        #     batch_size
+        # )
+        loss, score = add_ce_loss(batch_dict)
 
+    elif task_cfg[task_id]["type"] == "VL-classifier-only-ce":
+        loss, batch_score = add_ce_loss(batch_dict)
 
     elif task_cfg[task_id]["type"] == "VL-classifier-GQA":
         loss = task_losses[task_id](batch_dict["vil_prediction_gqa"], batch_dict["target"])
