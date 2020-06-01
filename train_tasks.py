@@ -394,13 +394,13 @@ def main():
 
     loss_values = []
     # TRAINING LOOP
-    import pdb
-    pdb.set_trace()
     for epoch_id in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
         model.train()
         for step, batch in tqdm(enumerate(dataloaders["train"]), desc="Iters"):
             send_to(batch, device)
-            iterId = start_iter_id + step + (epoch_id * median_num_iter)
+            import pdb
+            pdb.set_trace()
+
             loss, score = ForwardModelsTrain(
                 task_cfg,
                 model,
@@ -434,48 +434,40 @@ def main():
                 if step % (100 * args.gradient_accumulation_steps) == 0:
                     logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}")
 
-            # decided whether to evaluate on each tasks.
-            if (iterId != 0 and iterId % median_num_iter == 0) or (
-                    epoch_id == args.num_train_epochs - 1 and step == median_num_iter - 1
-            ):
-                curr_val_score = evaluate(
-                    args,
-                    task_dataloader_val,
-                    None,
-                    task_cfg,
-                    device,
-                    task_id,
-                    model,
-                    task_losses,
-                    epochId,
-                    default_gpu,
-                    tbLogger,
-                )
+        curr_val_score = evaluate(
+            args,
+            dataloaders["val"],
+            task_cfg,
+            device,
+            model,
+            epoch_id,
+            None,
+        )
 
-                # Save a trained model
-                logger.info("** ** * Saving fine - tuned model ** ** * ")
-                model_to_save = (
-                    model.module if hasattr(model, "module") else model
-                )
+        # Save a trained model
+        logger.info("** ** * Saving fine - tuned model ** ** * ")
+        model_to_save = (
+            model.module if hasattr(model, "module") else model
+        )
 
-                if curr_val_score > best_val_score:
-                    output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
-                    logger.info(f"Saving Checkpoint: {output_checkpoint}")
-                    logger.info(
-                        f"Current Validation Score: {curr_val_score} | Previous Best Validation Score: {best_val_score}")
-                    best_val_score = curr_val_score
-                    best_val_epoch = epochId
-                    torch.save(
-                        {
-                            "model_state_dict": model_to_save.state_dict(),
-                            "optimizer_state_dict": optimizer.state_dict(),
-                            "warmup_scheduler_state_dict": warmup_scheduler.state_dict(),
-                            "global_step": global_step,
-                            "epoch_id": epoch_id,
-                            "tb_logger": tbLogger,
-                        },
-                        output_checkpoint,
-                    )
+        if curr_val_score > best_val_score:
+            output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
+            logger.info(f"Saving Checkpoint: {output_checkpoint}")
+            logger.info(
+                f"Current Validation Score: {curr_val_score} | Previous Best Validation Score: {best_val_score}")
+            best_val_score = curr_val_score
+            best_val_epoch = epochId
+            torch.save(
+                {
+                    "model_state_dict": model_to_save.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "warmup_scheduler_state_dict": warmup_scheduler.state_dict(),
+                    "global_step": global_step,
+                    "epoch_id": epoch_id,
+                    "tb_logger": tbLogger,
+                },
+                output_checkpoint,
+            )
 
     tbLogger.txt_close()
     del model
@@ -485,32 +477,29 @@ def main():
 
 def evaluate(
     args,
-    task_dataloader_val,
-    task_stop_controller,
+    val_loader,
     task_cfg,
     device,
-    task_id,
     model,
-    task_losses,
     epochId,
-    default_gpu,
     tbLogger,
 ):
 
     model.eval()
     with torch.no_grad():
-        for i, batch in enumerate(task_dataloader_val[task_id]):
+        for i, batch in enumerate(val_loader):
+            send_to(batch, device)
             loss, score, batch_size = ForwardModelsVal(
                 args, task_cfg, device, task_id, batch, model, task_losses
             )
-            tbLogger.step_val(
-                epochId, float(loss), float(score), task_id, batch_size, "val"
-            )
-            if default_gpu:
-                sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
-                sys.stdout.flush()
+            # tbLogger.step_val(
+            #     epochId, float(loss), float(score), task_id, batch_size, "val"
+            # )
+            # if default_gpu:
+            #     sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
+            #     sys.stdout.flush()
 
-    score = tbLogger.showLossVal(task_id, task_stop_controller=None)
+    # score = tbLogger.showLossVal(task_id, task_stop_controller=None)
     model.train()
     return score
 

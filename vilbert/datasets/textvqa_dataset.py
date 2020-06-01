@@ -125,7 +125,6 @@ class TextVQADataset(Dataset):
         self.heads_type = task_cfg.get("heads_type", "none")
         self.clean_answers = task_cfg.get("clean_answers", True)
         self.randomize = task_cfg.get("randomize", -1)
-        self.needs_spatial = False
         self.use_gauss_bias = task_cfg.get("use_gauss_bias", False)
         self.gauss_bias_dev_factor = task_cfg.get("gauss_bias_dev_factor", -1.0)
         self.use_attention_bins = task_cfg.get("use_attention_bins", False)
@@ -146,7 +145,7 @@ class TextVQADataset(Dataset):
         registry.randomize = self.randomize
         registry.use_gauss_bias = self.use_gauss_bias
         registry.gauss_bias_dev_factor = self.gauss_bias_dev_factor
-        registry.mix_list = task_cfg.get("mix_list", ["none"])
+        registry.mix_list = task_cfg["M4C"].get("mix_list", ["none"])
         registry.use_attention_bins = self.use_attention_bins
         registry.attention_bins = self.attention_bins
         registry.restrict_oo = self.restrict_oo
@@ -162,8 +161,8 @@ class TextVQADataset(Dataset):
         logger.info(f"restrict_oo is {self.restrict_oo}")
 
         head_types = []
-        if "mix_list" in self.extra_args:
-            for head_type in set(self.extra_args["mix_list"]):
+        if "mix_list" in self.extra_args["M4C"]:
+            for head_type in set(self.extra_args["M4C"]["mix_list"]):
                 if head_type in self.matrix_type_map:
                     head_types.extend(self.matrix_type_map[head_type])
 
@@ -457,7 +456,7 @@ class TextVQADataset(Dataset):
         else:
             # Empty placeholder
             entry["train_prev_inds"] = torch.zeros(12, dtype=torch.long)
-        
+
         if self.needs_spatial:
             # In the first iteration expand all the spatial relation matrices
             if "spatial_adj_matrices" not in entry:

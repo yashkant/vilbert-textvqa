@@ -91,26 +91,11 @@ MetricsMap = {
 }
 
 
-def ForwardModelsVal(args,
-                     task_cfg,
-                     device,
-                     task_id,
+def ForwardModelsVal(task_cfg,
                      batch_dict,
                      model,
-                     task_losses,
                      return_batch=False):
     
-    for key, value in batch_dict.items():
-        if isinstance(value, torch.Tensor):
-            batch_dict[key] = value.cuda(device=device, non_blocking=True)
-        if isinstance(value, dict):
-            for k,v in value.items():
-                batch_dict[key][k] = v.cuda(device=device, non_blocking=True)
-
-    question = batch_dict["question_indices"]
-    batch_size = len(batch_dict["question_id"])
-    batch_dict["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
-
     results_dict = model(batch_dict)
     batch_dict.update(results_dict)
 
@@ -118,22 +103,14 @@ def ForwardModelsVal(args,
     if registry.get("is_running_validation", False):
         return None, None, None
 
-    if task_cfg["loss"] == "TextVQAandSpatialLoss":
-        loss = task_losses[task_id](batch_dict)
-    else:
-        loss = task_losses[task_id](batch_dict["textvqa_scores"], batch_dict["targets"], batch_dict["train_loss_mask"])
-
-    if "metric" in task_cfg:
-        textvqa_metric = MetricsMap[task_cfg["metric"]]
-    else:
-        textvqa_metric = MetricsMap["TextVQA"]
-
+    loss = LossMap[task_cfg["loss"]]
+    textvqa_metric = MetricsMap[task_cfg["metric"]]
+    loss = loss(batch_dict["textvqa_scores"], batch_dict["targets"], batch_dict["train_loss_mask"])
     batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, batch_dict["textvqa_scores"])
-
     if return_batch:
-        return float(loss), float(batch_acc), batch_size, batch_dict
+        return float(loss), float(batch_acc), len(batch_dict["question_id"]), batch_dict
 
-    return float(loss), float(batch_acc), batch_size
+    return float(loss), float(batch_acc), len(batch_dict["question_id"])
 
 
 def ForwardModelsTrain(task_cfg, model, batch_dict):

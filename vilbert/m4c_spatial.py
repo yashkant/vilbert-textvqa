@@ -677,28 +677,28 @@ class SpatialBertAttention(nn.Module):
         self.output = BertSelfOutput(config)
         self.pruned_heads = set()
 
-    def prune_heads(self, heads):
-        if len(heads) == 0:
-            return
-        mask = torch.ones(self.self.num_attention_heads, self.self.attention_head_size)
-        heads = set(heads) - self.pruned_heads  # Convert to set and emove already pruned heads
-        for head in heads:
-            # Compute how many pruned heads are before the head and move the index accordingly
-            head = head - sum(1 if h < head else 0 for h in self.pruned_heads)
-            mask[head] = 0
-        mask = mask.view(-1).contiguous().eq(1)
-        index = torch.arange(len(mask))[mask].long()
-
-        # Prune linear layers
-        self.self.query = prune_linear_layer(self.self.query, index)
-        self.self.key = prune_linear_layer(self.self.key, index)
-        self.self.value = prune_linear_layer(self.self.value, index)
-        self.output.dense = prune_linear_layer(self.output.dense, index, dim=1)
-
-        # Update hyper params and store pruned heads
-        self.self.num_attention_heads = self.self.num_attention_heads - len(heads)
-        self.self.all_head_size = self.self.attention_head_size * self.self.num_attention_heads
-        self.pruned_heads = self.pruned_heads.union(heads)
+    # def prune_heads(self, heads):
+    #     if len(heads) == 0:
+    #         return
+    #     mask = torch.ones(self.self.num_attention_heads, self.self.attention_head_size)
+    #     heads = set(heads) - self.pruned_heads  # Convert to set and emove already pruned heads
+    #     for head in heads:
+    #         # Compute how many pruned heads are before the head and move the index accordingly
+    #         head = head - sum(1 if h < head else 0 for h in self.pruned_heads)
+    #         mask[head] = 0
+    #     mask = mask.view(-1).contiguous().eq(1)
+    #     index = torch.arange(len(mask))[mask].long()
+    #
+    #     # Prune linear layers
+    #     self.self.query = prune_linear_layer(self.self.query, index)
+    #     self.self.key = prune_linear_layer(self.self.key, index)
+    #     self.self.value = prune_linear_layer(self.self.value, index)
+    #     self.output.dense = prune_linear_layer(self.output.dense, index, dim=1)
+    #
+    #     # Update hyper params and store pruned heads
+    #     self.self.num_attention_heads = self.self.num_attention_heads - len(heads)
+    #     self.self.all_head_size = self.self.attention_head_size * self.self.num_attention_heads
+    #     self.pruned_heads = self.pruned_heads.union(heads)
 
     def forward(self, input_tensor, attention_mask, spatial_adj_matrix, gauss_bias_matrix, head_mask=None):
         self_outputs = self.self(input_tensor, attention_mask, spatial_adj_matrix, gauss_bias_matrix, head_mask)
@@ -715,7 +715,7 @@ class SpatialBertLayer(nn.Module):
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
 
-    def forward(self, hidden_states, attention_mask, spatial_adj_matrix, gauss_bias_matrix, head_mask=None):
+    def forward(self, hidden_states, attention_mask, spatial_adj_matrix, gauss_bias_matrix=None, head_mask=None):
         attention_outputs = self.attention(hidden_states,
                                            attention_mask,
                                            spatial_adj_matrix,
@@ -736,35 +736,15 @@ class BertSpatialEncoder(nn.Module):
         self.output_attentions = config.output_attentions
         self.output_hidden_states = config.output_hidden_states
         from pytorch_transformers.modeling_bert import BertLayer
-
-
-        # backward compatibility
-        if config.layer_type_list is None:
-            logger.info("layer_type_list not passed, generating it!")
-            self.layer_type_list = ["n"]*config.num_hidden_layers
-
-            if hasattr(config, "num_implicit_relations") and config.num_implicit_relations != 0:
-                spatial_type = ["i"]
-            else:
-                spatial_type = ["s"]
-
-            if config.spatial_type == "bottom":
-                self.layer_type_list = spatial_type*config.num_spatial_layers + self.layer_type_list
-            if config.spatial_type == "top":
-                self.layer_type_list = self.layer_type_list + spatial_type*config.num_spatial_layers
-        else:
-            self.layer_type_list = config.layer_type_list
-
+        self.layer_type_list = config.layer_type_list
         logger.info(f"Layers type list is: {self.layer_type_list}")
         counter = Counter(self.layer_type_list)
 
         self.num_spatial_layers = counter["s"]
         self.num_normal_layers = counter["n"]
-        self.num_implicit_layers = counter["i"]
 
         logger.info(f"Num Spatial Layers: {self.num_spatial_layers}")
         logger.info(f"Num Normal Layers: {self.num_normal_layers}")
-        logger.info(f"Num Implicit Layers: {self.num_implicit_layers}")
 
         if not hasattr(config, "mix_list") or config.mix_list is None:
             self.mix_list = ["none"]*len(self.layer_type_list)
@@ -782,7 +762,6 @@ class BertSpatialEncoder(nn.Module):
 
         self.normal_layers = nn.ModuleList([BertLayer(config) for _ in range(self.num_normal_layers)])
         self.spatial_layers = nn.ModuleList([SpatialBertLayer(config) for _ in range(self.num_spatial_layers)])
-        self.implicit_layers = nn.ModuleList([SpatialBertLayer(config, True) for _ in range(self.num_implicit_layers)])
 
     def forward(self, hidden_states, attention_mask, batch_dict, head_mask=None):
         all_hidden_states = ()
@@ -790,7 +769,7 @@ class BertSpatialEncoder(nn.Module):
 
         normal_iter = iter(self.normal_layers)
         spatial_iter = iter(self.spatial_layers)
-        implicit_iter = iter(self.implicit_layers)
+        # implicit_iter = iter(self.implicit_layers)
 
         for layer_type, mix_type in zip(self.layer_type_list, self.mix_list):
             if self.output_hidden_states:
@@ -802,32 +781,7 @@ class BertSpatialEncoder(nn.Module):
                 layer_module = next(spatial_iter)
                 matrix_type = self.matrix_type_map[mix_type]
                 spatial_adj_matrix = batch_dict["spatial_adj_matrices"][matrix_type]
-
-                if registry.use_gauss_bias:
-                    gauss_bias_matrix = batch_dict["gauss_bias_matrices"][matrix_type]
-                elif registry.use_attention_bins:
-                    gauss_bias_matrix = batch_dict["bins_matrices"][matrix_type]
-                elif registry.full_spatial:
-                    gauss_bias_matrix = batch_dict["spatial_adj_matrices"]["full_spatial"]
-                else:
-                    gauss_bias_matrix = None
-
-                layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix, gauss_bias_matrix)
-            elif layer_type == "i":
-                layer_module = next(implicit_iter)
-                matrix_type = self.matrix_type_map[mix_type]
-                spatial_adj_matrix = batch_dict["spatial_adj_matrices"][matrix_type]
-
-                if registry.use_gauss_bias:
-                    gauss_bias_matrix = batch_dict["gauss_bias_matrices"][matrix_type]
-                elif registry.use_attention_bins:
-                    gauss_bias_matrix = batch_dict["bins_matrices"][matrix_type]
-                elif registry.full_spatial:
-                    gauss_bias_matrix = batch_dict["spatial_adj_matrices"]["full_spatial"]
-                else:
-                    gauss_bias_matrix = None
-
-                layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix, gauss_bias_matrix)
+                layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
             else:
                 raise ValueError
             hidden_states = layer_outputs[0]
@@ -836,7 +790,7 @@ class BertSpatialEncoder(nn.Module):
 
         assert next(normal_iter, None) is None
         assert next(spatial_iter, None) is None
-        assert next(implicit_iter, None) is None
+        # assert next(implicit_iter, None) is None
 
         # Add last layer
         if self.output_hidden_states:

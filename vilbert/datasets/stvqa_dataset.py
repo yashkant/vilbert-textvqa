@@ -124,7 +124,6 @@ class STVQADataset(TextVQADataset):
         self.heads_type = task_cfg.get("heads_type", "none")
         self.clean_answers = task_cfg.get("clean_answers", True)
         self.randomize = task_cfg.get("randomize", -1)
-        self.needs_spatial = False
         self.use_gauss_bias = task_cfg.get("use_gauss_bias", False)
         self.gauss_bias_dev_factor = task_cfg.get("gauss_bias_dev_factor", -1.0)
         self.use_attention_bins = task_cfg.get("use_attention_bins", False)
@@ -137,18 +136,14 @@ class STVQADataset(TextVQADataset):
         }
         self.restrict_oo = task_cfg.get("restrict_oo", False)
         self.extra_args = task_cfg
-
-        if ( ("num_spatial_layers" in task_cfg and task_cfg["num_spatial_layers"] > 0) or
-             ("layer_type_list" in task_cfg and "s" in task_cfg["layer_type_list"])):
-            self.needs_spatial = True
-
+        self.needs_spatial = task_cfg.get("needs_spatial", False)
 
         registry.vocab_type = self.vocab_type
         registry.distance_threshold = self.distance_threshold
         registry.randomize = self.randomize
         registry.use_gauss_bias = self.use_gauss_bias
         registry.gauss_bias_dev_factor = self.gauss_bias_dev_factor
-        registry.mix_list = task_cfg.get("mix_list", ["none"])
+        registry.mix_list = task_cfg["M4C"].get("mix_list", ["none"])
         registry.use_attention_bins = self.use_attention_bins
         registry.attention_bins = self.attention_bins
         registry.restrict_oo = self.restrict_oo
@@ -164,8 +159,8 @@ class STVQADataset(TextVQADataset):
         logger.info(f"restrict_oo is {self.restrict_oo}")
 
         head_types = []
-        if "mix_list" in self.extra_args:
-            for head_type in set(self.extra_args["mix_list"]):
+        if "mix_list" in self.extra_args["M4C"]:
+            for head_type in set(self.extra_args["M4C"]["mix_list"]):
                 if head_type in self.matrix_type_map:
                     head_types.extend(self.matrix_type_map[head_type])
 
