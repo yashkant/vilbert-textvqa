@@ -396,22 +396,26 @@ def main():
     # TRAINING LOOP
     for epoch_id in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
         model.train()
-        for step, batch in tqdm(enumerate(dataloaders["train"]), desc="Iters"):
+        for step, batch in tqdm(enumerate(dataloaders["train"]), desc="Iters", total=len(dataloaders["train"])):
             send_to(batch, device)
-            import pdb
-            pdb.set_trace()
-
             loss, score = ForwardModelsTrain(
                 task_cfg,
                 model,
                 batch
             )
+            loss_values.append(loss)
             loss.backward()
             if task_cfg["grad_clip_mode"] == "all":
                 clip_gradients(model, task_cfg["max_grad_norm"], task_cfg["grad_clip_mode"])
 
+            # apply gradients
+            optimizer.step()
             warmup_scheduler.step()
+
+            # reset gradients
             model.zero_grad()
+            optimizer.zero_grad()
+
             # if first_task:
             #     global_step += 1
             #     first_task = False
@@ -434,8 +438,10 @@ def main():
                 if step % (100 * args.gradient_accumulation_steps) == 0:
                     logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}")
 
+        import pdb
+        pdb.set_trace()
+
         curr_val_score = evaluate(
-            args,
             dataloaders["val"],
             task_cfg,
             device,
@@ -456,7 +462,7 @@ def main():
             logger.info(
                 f"Current Validation Score: {curr_val_score} | Previous Best Validation Score: {best_val_score}")
             best_val_score = curr_val_score
-            best_val_epoch = epochId
+            best_val_epoch = epoch_id
             torch.save(
                 {
                     "model_state_dict": model_to_save.state_dict(),
@@ -476,12 +482,11 @@ def main():
 
 
 def evaluate(
-    args,
     val_loader,
     task_cfg,
     device,
     model,
-    epochId,
+    epoch_id,
     tbLogger,
 ):
 
@@ -489,11 +494,9 @@ def evaluate(
     with torch.no_grad():
         for i, batch in enumerate(val_loader):
             send_to(batch, device)
-            loss, score, batch_size = ForwardModelsVal(
-                args, task_cfg, device, task_id, batch, model, task_losses
-            )
+            loss, score, batch_size = ForwardModelsVal(task_cfg, batch, model)
             # tbLogger.step_val(
-            #     epochId, float(loss), float(score), task_id, batch_size, "val"
+            #     epoch_id, float(loss), float(score), task_id, batch_size, "val"
             # )
             # if default_gpu:
             #     sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
