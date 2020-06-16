@@ -1,0 +1,5 @@
+Using GPUs: 1
+Processing split: train w/ languages: ['sv' 'it' 'ROMANCE'] w/ seq_id: 1
+Error with sv
+Error with it
+Error with ROMANCE

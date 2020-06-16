@@ -212,6 +212,7 @@ class BertImageEmbeddings(nn.Module):
         embeddings = self.dropout(embeddings)
         return embeddings
 
+
 class SpatialBertSelfAttention(nn.Module):
     """
     Todo: Keep 768 and build zero-mask for 12th head (not needed with identity relation)

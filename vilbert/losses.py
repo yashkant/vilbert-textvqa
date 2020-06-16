@@ -3,7 +3,20 @@ import numpy as np
 
 from tools.registry import registry
 import logging
+
 logger = logging.getLogger(__name__)
+
+
+# input: B x * x ... x *
+# dim: 0 < scalar
+# index: B x M
+def batched_index_select(input, dim, index):
+    views = [input.shape[0]] + [1 if i != dim else -1 for i in range(1, len(input.shape))]
+    expanse = list(input.shape)
+    expanse[0] = -1
+    expanse[dim] = -1
+    index = index.view(views).expand(expanse)
+    return torch.gather(input, dim, index)
 
 
 class NTXentLoss(torch.nn.Module):
@@ -83,7 +96,7 @@ class NTXentLoss(torch.nn.Module):
         preds = torch.argmax(logits, 1)
         scores = (preds == 0).float()
         scores = scores * extended_mask
-        batch_score = scores.sum()/extended_mask.sum()
+        batch_score = scores.sum() / extended_mask.sum()
 
         return loss / (2 * self.batch_size), batch_score
 
@@ -104,7 +117,6 @@ class SCLLoss(torch.nn.Module):
             return self._cosine_simililarity
         else:
             return self._dot_simililarity
-
 
     @staticmethod
     def _dot_simililarity(x, y):
@@ -145,8 +157,8 @@ class SCLLoss(torch.nn.Module):
         # calculate score
         preds = torch.argmax(logits, dim=1)
         scores = (preds == 0).float()
-        score = scores.sum()/len(scores)
-        loss = loss.sum()/len(loss)
+        score = scores.sum() / len(scores)
+        loss = loss.sum() / len(loss)
         return loss, score
 
     def row_loss_score_second(self, row_idx, row, row_mask):
@@ -175,8 +187,8 @@ class SCLLoss(torch.nn.Module):
         # calculate score
         preds = torch.argmax(logits, dim=1)
         scores = (preds == targets).float()
-        score = scores.sum()/len(scores)
-        loss = loss.sum()/len(loss)
+        score = scores.sum() / len(scores)
+        loss = loss.sum() / len(loss)
         return loss, score
 
     def forward(self, zis, zjs, scl_mask):
@@ -199,7 +211,7 @@ class SCLLoss(torch.nn.Module):
             total_loss.append(row_loss)
             total_score.append(row_score)
 
-        total_loss, total_score = sum(total_loss)/len(total_loss), sum(total_score)/len(total_score)
+        total_loss, total_score = sum(total_loss) / len(total_loss), sum(total_score) / len(total_score)
 
         return total_loss, total_score
 
@@ -207,8 +219,9 @@ class SCLLoss(torch.nn.Module):
 class SupConLoss(torch.nn.Module):
     """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
     It also supports the unsupervised contrastive loss in SimCLR"""
+
     def __init__(self, temperature=0.07, contrast_mode='all',
-                 base_temperature=0.07, formulation="original"):
+                 base_temperature=0.07, formulation="normal"):
         super(SupConLoss, self).__init__()
         self.temperature = temperature
         self.contrast_mode = contrast_mode
@@ -244,7 +257,7 @@ class SupConLoss(torch.nn.Module):
 
         # targets for the batch is the one with highest score
         # todo: fix this for multi-label setting!
-        labels = batch_dict[1]["target"].argmax(dim=-1).view(-1,1)
+        labels = batch_dict[1]["target"].argmax(dim=-1).view(-1, 1)
 
         # samples without an answer cannot work as anchor points
         mask_samples = (batch_dict[1]["target"].sum(dim=-1) != 0).int()
@@ -276,7 +289,7 @@ class SupConLoss(torch.nn.Module):
             mask = mask.float().to(device)
 
         # remove samples without gt
-        mask = mask*mask_samples
+        mask = mask * mask_samples
 
         contrast_count = features.shape[1]
         contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0)
@@ -330,7 +343,7 @@ class SupConLoss(torch.nn.Module):
         preds = torch.argmax(exp_logits, 1)
         scores = (preds == labels.squeeze().repeat(2)).float()
         scores = scores * mask
-        batch_score = scores.sum()/mask.sum()
+        batch_score = scores.sum() / mask.sum()
 
         # loss
         loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
@@ -339,28 +352,38 @@ class SupConLoss(torch.nn.Module):
         return loss, batch_score
 
 
+def MSELoss(batch_dict):
+    mse_loss = torch.nn.MSELoss(reduction="sum")
+    total_loss = 0
 
+    common_inds = batch_dict[0]["common_inds"]
+    common_inds = common_inds.unsqueeze(1).repeat(1, 12, 1).view(-1, 23)
+    common_inds_mask = (common_inds > 0).float().unsqueeze(-1)
 
+    pos_common_inds = batch_dict[1]["common_inds"]
+    pos_common_inds = pos_common_inds.unsqueeze(1).repeat(1, 12, 1).view(-1, 23)
+    pos_common_inds_mask = (pos_common_inds > 0).float().unsqueeze(-1)
 
+    for layer_attn1, layer_attn2, use_layer in zip(batch_dict[0]["attention_weights"],
+                                                   batch_dict[1]["attention_weights"],
+                                                   registry.squint_layers):
 
+        que_obj_attn1, que_obj_attn2 = layer_attn1[:, :, :23, -101:], layer_attn2[:, :, :23, -101:]
 
+        if registry.squint_type == "common":
+            common_attn1, common_attn2 = batched_index_select(que_obj_attn1.view(-1, 23, 101), 1, common_inds), \
+                                         batched_index_select(que_obj_attn2.view(-1, 23, 101), 1, pos_common_inds)
+            common_attn1, common_attn2 = common_attn1 * common_inds_mask, common_attn2 * pos_common_inds_mask
+        elif registry.squint_type == "average":
+            attn_mask1, attn_mask2 = batch_dict[0]["question_mask"].unsqueeze(dim=-2).unsqueeze(dim=-1), batch_dict[1]["question_mask"].unsqueeze(dim=-2).unsqueeze(dim=-1)
+            common_attn1, common_attn2 = que_obj_attn1 * attn_mask1, que_obj_attn2 * attn_mask2
+            common_attn1, common_attn2 = common_attn1.sum(dim=-2), common_attn2.sum(dim=-2)
 
+        else:
+            raise ValueError
 
+        if use_layer:
+            loss = mse_loss(common_attn1.view(-1, 101), common_attn2.view(-1, 101))
+            total_loss += loss
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    return total_loss

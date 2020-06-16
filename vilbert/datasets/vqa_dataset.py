@@ -543,12 +543,6 @@ class VQAClassificationDataset(Dataset):
                     entry["answer"]["labels"] = None
                     entry["answer"]["scores"] = None
 
-    def _debug(self):
-        for idx in tqdm(range(len(self.entries))):
-            x, y, z, _ = self._image_features_reader[self.entries[idx]["image_id"]]
-        import pdb
-        pdb.set_trace()
-
     def __getitem__(self, index):
         """
         1. Get image-features/bboxes and image mask (as nump-arrays), tensorize them.
@@ -558,15 +552,8 @@ class VQAClassificationDataset(Dataset):
         """
         # import  time
         # time_start = time.time()
-
-        # self._debug()
-
         start_time = time.time()
 
-        # # Can't have rephrasings as negatives
-        # if self.extra_args.get("contrastive", None) in ["simclr", "better"]:
-        #     _question_id = next(self.map_items[index][1]["iter"])
-        #     index = self.question_map[_question_id]
         entry = self.entries[index]
 
         entry_load_time = time.time()
@@ -722,11 +709,26 @@ class VQAClassificationDataset(Dataset):
                 import pdb
                 pdb.set_trace()
 
+            entry_tokens = set(entry['q_token'].tolist())
+            pos_entry_tokens = set(pos_entry['q_token'].tolist())
+            common_tokens = list(pos_entry_tokens.intersection(entry_tokens) - set([0, 101, 102]))
+            common_indices = torch.zeros_like(entry['q_token'])
+            common_indices_pos = torch.zeros_like(entry['q_token'])
+
+            for iter, tok in enumerate(common_tokens):
+                entry_idx = int(((tok == entry['q_token']) * 1).nonzero()[0][0])
+                pos_entry_idx = int(((tok == pos_entry['q_token']) * 1).nonzero()[0][0])
+                common_indices[iter] = entry_idx
+                common_indices_pos[iter] = pos_entry_idx
+
             item_pos_dict.update({
                 "question_indices": pos_entry["q_token"],
                 "question_mask": pos_entry["q_input_mask"],
                 "question_id": pos_entry["question_id"],
+                "common_inds": common_indices_pos
             })
+            item_dict["common_inds"] = common_indices
+
             return (item_dict, item_pos_dict)
 
         return item_dict

@@ -79,7 +79,7 @@ def clip_gradients(model, max_grad_l2_norm, clip_norm_mode):
             )
 
 
-def     get_optim_scheduler(args,
+def get_optim_scheduler(args,
                         config,
                         optimizer_grouped_parameters,
                         num_train_optimization_steps,
@@ -301,11 +301,26 @@ def ForwardModelsTrain(
             if isinstance(value, torch.Tensor):
                 batch[key] = value.cuda(device=device, non_blocking=True)
 
-        question = batch["question_indices"]
-        batch["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
-        batch_size = len(question)
+    question = batch_dict[0]["question_indices"]
+    # batch["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
+    batch_size = len(question)
+
+    # if not registry.squint_loss:
+    for batch in batch_dict:
         results_dict = model(batch)
         batch.update(results_dict)
+    # else:
+    #     squint_batches = [{}, {}]
+    #     assert len(batch_dict) == 2
+    #     hbs = int(len(batch_dict[0]["input_imgs"])/2)
+    #     for key in batch_dict[0].keys():
+    #         squint_batches[0][key] = torch.cat([batch_dict[0][key][:hbs], batch_dict[1][key][:hbs]])
+    #         squint_batches[1][key] = torch.cat([batch_dict[0][key][hbs:], batch_dict[1][key][hbs:]])
+    #
+    #     for batch in squint_batches:
+    #         results_dict = model(batch)
+    #         batch.update(results_dict)
+
 
     if len(batch_dict) == 1:
         batch_dict = batch_dict[0]
@@ -321,7 +336,7 @@ def ForwardModelsTrain(
         # batch_score = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"]).sum() / float(
         #     batch_size
         # )
-        loss, score = add_ce_loss(batch_dict)
+        loss, batch_score = add_ce_loss(batch_dict)
 
     elif task_cfg[task_id]["type"] == "VL-classifier-only-ce":
         loss, batch_score = add_ce_loss(batch_dict)
@@ -333,22 +348,31 @@ def ForwardModelsTrain(
             batch_dict["vil_prediction_gqa"], batch_dict["target"]
         ).sum() / float(batch_size)
 
+    losses = []
     if registry.use_ce_loss:
         vl_loss, batch_score = add_ce_loss(batch_dict)
+        losses.append(loss)
+        losses.append(vl_loss)
         assert registry.scl_coeff > 0
         loss = loss*registry.scl_coeff + vl_loss
+
+    if registry.squint_loss:
+        from vilbert.losses import MSELoss
+        squint_loss = MSELoss(batch_dict)
+        loss += squint_loss
+
 
     del results_dict
     del batch_dict
     # # we are storing tensors in batch-dict, refs to which cause OOM (I think)
 
 
-    return loss, float(batch_score)
+    return loss, float(batch_score), losses
 
 
 # todo: replace this in vl-classifier if-else
 def add_ce_loss(batch_dict, val_run=False):
-    if len(batch_dict) > 1 and not val_run:
+    if len(batch_dict) == 2 and not val_run:
         # train time
         vil_preds = torch.cat([batch_dict[0]["vil_prediction"], batch_dict[1]["vil_prediction"]], dim=0)
         vil_targets = torch.cat([batch_dict[0]["target"], batch_dict[1]["target"]], dim=0)

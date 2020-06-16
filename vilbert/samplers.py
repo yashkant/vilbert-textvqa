@@ -79,6 +79,7 @@ class NegativeSampler(Sampler):
         self.bin_ans_threshold = self.task_cfg.get("bin_ans_threshold", None)
         self.freq_ans_threshold = self.task_cfg.get("freq_ans_threshold", None)
         self.iter_count = 0
+        self.better_counter = 0  # increases with every build-call
 
         logger.info(f"Use GT answers is: {self.task_cfg.get('use_gt_answer', False)}")
 
@@ -214,9 +215,10 @@ class NegativeSampler(Sampler):
         use_gt_answer = self.task_cfg["use_gt_answer"]
         assert np.sum(neg_type_weights) == 1.0
         assert self.batch_size % init_batch_size == 0
-        num_passes = int(self.batch_size / init_batch_size) - 1
-
+        add_positives = self.num_positives > 0
+        num_passes = int((self.batch_size - init_batch_size*(self.num_positives + 1))/init_batch_size)
         assert neg_replace
+        init_pass_bs = init_batch_size + self.num_positives*init_batch_size
 
         # we ensure that we cover all the samples occur at least once
         # num_batches that will be created will be more than no. of batches in a single epoch
@@ -228,17 +230,17 @@ class NegativeSampler(Sampler):
         batches_answers_set = []
 
         # we monitor all the bins using self.entry_map and self.re_bins (both are mapped to same data)
-        np.random.shuffle(self.re_bins)
+        self.re_bins = self.shuffle(self.re_bins, start_idx=0, end_idx=len(self.re_bins))
 
         batches = []
         cycle_bins = cycle(list(range(len(self.re_bins))))
         batches_extension = [[] for _ in range(num_batches)]
 
-
         for batch_idx in tqdm(range(num_batches), total=num_batches, desc="Initial Pass: "):
             batch_inds = []
             batch_answers = []
             batch_bin_inds = []
+            batch_pos_inds = []
 
             while True:
                 idx = next(cycle_bins)
@@ -259,23 +261,33 @@ class NegativeSampler(Sampler):
                 entry_idx = bin["entry_inds"][bin["iter_idx"]]
 
                 # skip negatives with same ground-truth
-                if use_gt_answer:
-                    entry_answers = self.get_entry_answers(self.entries[entry_idx])
-
-                    if len(set(batch_answers).intersection(set(entry_answers))) > 0:
-                        continue
+                # if use_gt_answer:
+                #     print("skipping use-gt-answer")
+                #     entry_answers = self.get_entry_answers(self.entries[entry_idx])
+                #     if len(set(batch_answers).intersection(set(entry_answers))) > 0:
+                #         continue
 
                 bin["iter_idx"] += 1
                 batch_inds.append(entry_idx)
                 batch_answers.extend(self.get_entry_answers(self.entries[entry_idx]))
                 batch_bin_inds.append(idx)
 
-                # exit initial batches
-                if len(batch_inds) == init_batch_size:
-                    # shuffle left and right parts
-                    np.random.shuffle(self.re_bins[:idx+1])
-                    np.random.shuffle(self.re_bins[idx+1:])
+                if add_positives:
+                    # only add the needed amount
+                    num_pos = min(self.num_positives, init_pass_bs - (len(batch_inds) + len(batch_pos_inds)))
+                    self.add_positives(idx,
+                                       num_pos,
+                                       use_gt_answer,
+                                       neg_replace,
+                                       batch_inds,
+                                       batch_bin_inds,
+                                       batch_pos_inds=batch_pos_inds)
 
+                # exit initial batches
+                if (len(batch_inds) + len(batch_pos_inds)) == init_pass_bs:
+                    # shuffle left and right parts
+                    self.re_bins = self.shuffle(self.re_bins, start_idx=0, end_idx=idx+1)
+                    self.re_bins = self.shuffle(self.re_bins, start_idx=idx+1, end_idx=len(self.re_bins))
                     # iterator exhausted
                     if bin["iter_idx"] == len(bin["entry_inds"]):
                         bin["iter_idx"] = 0
@@ -284,6 +296,9 @@ class NegativeSampler(Sampler):
                 # iterator exhausted
                 if bin["iter_idx"] == len(bin["entry_inds"]):
                     bin["iter_idx"] = 0
+
+            # append pos-inds at last
+            batch_inds.extend(batch_pos_inds)
 
             # assert all are unique in a batch
             assert len(batch_inds) == len(set(batch_inds))
@@ -295,7 +310,7 @@ class NegativeSampler(Sampler):
             # select a batch
             for batch_idx in tqdm(range(len(batches)), total=len(batches)):
                 # select a sample
-                for biter_idx in range(len(batches[batch_idx])):
+                for biter_idx in range(init_batch_size):
 
                     # passed is triggered if we run out of better samples
                     passed = False
@@ -491,7 +506,8 @@ class NegativeSampler(Sampler):
                       use_gt_answer,
                       neg_replace,
                       batch_inds,
-                      batch_bin_inds):
+                      batch_bin_inds,
+                      batch_pos_inds=None):
 
         if num_positives <= 0:
             return
@@ -518,7 +534,6 @@ class NegativeSampler(Sampler):
         sample_ids, sample_weights = self.answer_map[int(answer)]
 
         filtered_sample_ids, filtered_sample_weights = [], []
-
         # filter questions from used-bins
         for sample_id, sample_weight in zip(sample_ids, sample_weights):
             bin_idx = self.entry_map[sample_id]["bin_idx"]
@@ -554,7 +569,10 @@ class NegativeSampler(Sampler):
             item["iter_idx"] += 1
             self.check_iterator(item, use_gt_answer=use_gt_answer, neg_replace=neg_replace)
 
-        batch_inds.extend(entry_inds)
+        if batch_pos_inds is not None:
+            batch_pos_inds.extend(entry_inds)
+        else:
+            batch_inds.extend(entry_inds)
         batch_bin_inds.extend(bin_inds)
 
     def __iter__(self):
@@ -564,16 +582,27 @@ class NegativeSampler(Sampler):
                      f"split_{self.split}_bt{self.bin_ans_threshold}_ft{self.freq_ans_threshold}_" \
                      f"pos_{self.num_positives}_batch_size_{self.batch_size}.npy"
         cache_name = os.path.join(base_path, cache_name)
-        logger.info(f"Sampler Cache Path: {cache_name}")
 
         if self.task_cfg["contrastive"] == "better":
             # if epochs are exhausted, replenish
             if self.epoch_idx >= len(self.epochs):
-                self.build_better_batches()
+                # todo: add negs_weights
+                cache_name = cache_name.split(".npy")[0] + f"better_cnt_{self.better_counter}_negw_{self.task_cfg['neg_type_weights']}" \
+                                                           f"init_bs_{self.task_cfg['init_batch_size']}.npy"
+                logger.info(f"Sampler Cache Path: {cache_name}")
+                if os.path.exists(cache_name):
+                    self.epochs = list(np.load(cache_name, allow_pickle=True))
+                    self.epoch_idx = 0
+                else:
+                    self.build_better_batches()
+                    self.better_counter += 1
+                    np.save(cache_name, self.epochs)
+
             epoch_indices = self.epochs[self.epoch_idx]
             self.epoch_idx += 1
 
         elif self.task_cfg["contrastive"] == "simclr":
+            logger.info(f"Sampler Cache Path: {cache_name}")
             if os.path.exists(cache_name):
                 logger.info("Using cache")
                 epoch_indices = list(np.load(cache_name, allow_pickle=True))

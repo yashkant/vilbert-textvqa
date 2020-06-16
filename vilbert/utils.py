@@ -175,6 +175,10 @@ class tbLogger(object):
         }
         self.task_ids = task_ids
         self.task_loss = {task_id: 0 for task_id in task_ids}
+        self.task_grad_dot = {task_id: 0 for task_id in task_ids}
+        self.task_grad_mag_scl = {task_id: 0 for task_id in task_ids}
+        self.task_grad_mag_ce = {task_id: 0 for task_id in task_ids}
+
         self.task_loss_tmp = {task_id: 0 for task_id in task_ids}
         self.task_score_tmp = {task_id: 0 for task_id in task_ids}
         self.task_norm_tmp = {task_id: 0 for task_id in task_ids}
@@ -217,12 +221,19 @@ class tbLogger(object):
         if self.save_logger:
             self.logger.add_scalar(split + "/" + key, val, step)
 
-    def step_train(self, epochId, stepId, loss, score, norm, task_id, split):
+    def step_train(self, epochId, stepId, loss, score, norm, task_id, split, extra_dict=None):
 
         self.task_loss[task_id] += loss
         self.task_loss_tmp[task_id] += loss
         self.task_score_tmp[task_id] += score
         self.task_norm_tmp[task_id] += norm
+
+        if extra_dict is not None:
+            for key in ["grad_dot", "grad_mag_scl", "grad_mag_ce"]:
+                new_value = getattr(self, f"task_{key}")
+                new_value[task_id] += extra_dict[key]
+                setattr(self, f"task_{key}", new_value)
+
         self.task_step[task_id] += self.gradient_accumulation_steps
         self.task_step_tmp[task_id] += self.gradient_accumulation_steps
         self.epochId = epochId
@@ -231,6 +242,10 @@ class tbLogger(object):
         self.linePlot(stepId, loss, split, self.task_id2name[task_id] + "_loss")
         self.linePlot(stepId, score, split, self.task_id2name[task_id] + "_score")
         self.linePlot(stepId, norm, split, self.task_id2name[task_id] + "_norm")
+
+        if extra_dict is not None:
+            for key in ["grad_dot", "grad_mag_scl", "grad_mag_ce"]:
+                self.linePlot(stepId, extra_dict[key], split, self.task_id2name[task_id] + f"_{key}")
 
     def step_train_CC(
         self,
@@ -403,6 +418,13 @@ class tbLogger(object):
                             / float(self.task_step_tmp[task_id]),
                         )
                     )
+                    extra_string = ""
+                    steps = float(self.task_num_iters[task_id])
+                    for key in ["grad_dot", "grad_mag_scl", "grad_mag_ce"]:
+                        value = getattr(self, f"task_{key}", None)
+                        if value is not None:
+                            extra_string += f" {key}: {value[task_id]/steps}"
+                    lossInfo += extra_string
 
         logger.info(lossInfo)
         print(lossInfo, file=self.txt_f)
@@ -411,6 +433,11 @@ class tbLogger(object):
         self.task_loss_tmp = {task_id: 0 for task_id in self.task_ids}
         self.task_score_tmp = {task_id: 0 for task_id in self.task_ids}
         self.task_norm_tmp = {task_id: 0 for task_id in self.task_ids}
+
+        for key in ["grad_dot", "grad_mag_scl", "grad_mag_ce"]:
+            value = getattr(self, f"task_{key}", None)
+            if value is not None:
+                setattr(self, f"task_{key}", {task_id: 0 for task_id in self.task_ids})
 
     def showLossValCC(self):
         progressInfo = "Eval Ep: %d " % self.epochId
