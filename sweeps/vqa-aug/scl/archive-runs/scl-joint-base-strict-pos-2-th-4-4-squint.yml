@@ -55,6 +55,9 @@ TASK19:
   val_neg_sampler: false
   # turn on revqa eval
   revqa_eval: true
-  val_workers: 16
-  train_workers: 16
+  val_workers: 0
+  train_workers: 0
   scl_coeff: 1.0
+  output_attentions: true
+  squint_loss: true
+  squint_layers: [true, true, true, true, true, true]

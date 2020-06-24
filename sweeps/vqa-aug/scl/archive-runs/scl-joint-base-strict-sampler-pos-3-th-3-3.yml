@@ -44,11 +44,11 @@ TASK19:
   neg_replace: true
   use_gt_answer: false
   # num of positives to add
-  num_positives: 2
+  num_positives: 3
   # min. frequency needed to be used for sampling positives
-  bin_ans_threshold: 4
+  bin_ans_threshold: 3
   # min. frequency needed to be sampled as a positive
-  freq_ans_threshold: 4
+  freq_ans_threshold: 3
   # use CE loss
   use_ce_loss: true
   # don't use negative sampler for validation

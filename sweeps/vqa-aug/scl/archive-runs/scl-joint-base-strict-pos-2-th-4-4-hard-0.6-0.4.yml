@@ -35,12 +35,12 @@ TASK19:
   model_type: m4c
   num_hidden_layers: 6
   contrast_out_dim: 128
-  batch_size: 208
-  val_batch_size: 208
+  batch_size: 205
+  val_batch_size: 205
   monitor_value: val_score
 
   # loss attributes
-  contrastive: simclr
+  contrastive: better
   neg_replace: true
   use_gt_answer: false
   # num of positives to add
@@ -58,3 +58,7 @@ TASK19:
   val_workers: 16
   train_workers: 16
   scl_coeff: 1.0
+  init_batch_size: 41 # 41 + 2x41
+  num_hard_negatives: 41 # == one per init sample
+  neg_type_weights: [0, 0.6, 0.4]
+  neg_question_thresh: 210

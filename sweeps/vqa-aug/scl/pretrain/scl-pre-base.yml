@@ -37,24 +37,17 @@ TASK19:
   contrast_out_dim: 128
   batch_size: 208
   val_batch_size: 208
-  monitor_value: val_score
+  monitor_value: val_loss
 
   # loss attributes
   contrastive: simclr
   neg_replace: true
   use_gt_answer: false
   # num of positives to add
-  num_positives: 2
+  num_positives: 1
   # min. frequency needed to be used for sampling positives
-  bin_ans_threshold: 4
+  bin_ans_threshold: 3
   # min. frequency needed to be sampled as a positive
-  freq_ans_threshold: 4
-  # use CE loss
-  use_ce_loss: true
-  # don't use negative sampler for validation
-  val_neg_sampler: false
-  # turn on revqa eval
-  revqa_eval: true
+  freq_ans_threshold: 3
   val_workers: 16
   train_workers: 16
-  scl_coeff: 1.0

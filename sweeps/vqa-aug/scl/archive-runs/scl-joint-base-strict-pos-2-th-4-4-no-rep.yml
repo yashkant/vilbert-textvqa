@@ -58,3 +58,4 @@ TASK19:
   val_workers: 16
   train_workers: 16
   scl_coeff: 1.0
+  use_rephrasings: false

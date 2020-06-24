@@ -22,11 +22,11 @@ data = []
 col_names = list(df.keys())
 embeddings_dict = {}
 
-sim_model = model = SentenceTransformer('bert-base-nli-stsb-mean-tokens')
+sim_model = SentenceTransformer('bert-base-nli-stsb-mean-tokens')
 for index, row in tqdm(df.iterrows(), total=len(df)):
     batch = list(row)
     ref_question = batch[0]
-    batch_embeddings = model.encode(batch)
+    batch_embeddings = sim_model.encode(batch)
     sim_scores = cos_sim([batch_embeddings[0]], batch_embeddings).round(2)[0]
     # bleu_scores = [round(sacrebleu.corpus_bleu([que], [[ref_question]]).score, 2) for que in batch]
 

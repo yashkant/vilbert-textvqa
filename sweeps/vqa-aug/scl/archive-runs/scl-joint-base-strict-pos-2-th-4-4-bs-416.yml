@@ -35,8 +35,9 @@ TASK19:
   model_type: m4c
   num_hidden_layers: 6
   contrast_out_dim: 128
-  batch_size: 208
-  val_batch_size: 208
+  batch_size: 416
+  val_batch_size: 416
+
   monitor_value: val_score
 
   # loss attributes

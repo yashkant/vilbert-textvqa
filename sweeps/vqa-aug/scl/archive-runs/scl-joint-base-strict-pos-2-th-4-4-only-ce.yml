@@ -1,6 +1,6 @@
 TASK19:
   name: VQA
-  type: ContrastiveProjection
+  type: VL-classifier-only-ce
   loss: SCLLoss
   process: normal
   task_id: 1
@@ -50,7 +50,7 @@ TASK19:
   # min. frequency needed to be sampled as a positive
   freq_ans_threshold: 4
   # use CE loss
-  use_ce_loss: true
+  use_ce_loss: false
   # don't use negative sampler for validation
   val_neg_sampler: false
   # turn on revqa eval

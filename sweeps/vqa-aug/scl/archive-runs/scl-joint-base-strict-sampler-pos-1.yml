@@ -44,7 +44,7 @@ TASK19:
   neg_replace: true
   use_gt_answer: false
   # num of positives to add
-  num_positives: 2
+  num_positives: 1
   # min. frequency needed to be used for sampling positives
   bin_ans_threshold: 4
   # min. frequency needed to be sampled as a positive

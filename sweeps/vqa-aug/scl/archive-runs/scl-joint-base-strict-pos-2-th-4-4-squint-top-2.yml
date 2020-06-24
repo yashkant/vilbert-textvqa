@@ -58,3 +58,6 @@ TASK19:
   val_workers: 16
   train_workers: 16
   scl_coeff: 1.0
+  output_attentions: true
+  squint_loss: true
+  squint_layers: [false, false, false, false, true, true]

@@ -26,7 +26,7 @@ TASK19:
   optim: Adam
   lr_scheduler: pythia_warmup_decay
   warmup_iters: 1364 # 2 epochs
-  lr: 0.0001  
+  lr: 0.00015
   warmpu_factors: 0.1
   lr_decay_iters: [4774, 9548] # 7, 14  epochs
   lr_decay: 0.2
@@ -58,3 +58,4 @@ TASK19:
   val_workers: 16
   train_workers: 16
   scl_coeff: 1.0
+  pcgrad: true

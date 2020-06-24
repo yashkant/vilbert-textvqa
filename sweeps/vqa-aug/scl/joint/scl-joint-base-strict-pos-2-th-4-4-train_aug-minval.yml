@@ -11,10 +11,10 @@ TASK19:
   val_annotations_jsonpath: ''
   max_seq_length: 23
   max_region_num: 101
-  train_split: re_train
-  val_split: re_val
+  train_split: train_aug
+  val_split: minval
   # Change at both places num_epochs
-  num_epoch: 40
+  num_epoch: 20
 
   # grad-clipping
   grad_clip_mode: all
@@ -26,11 +26,11 @@ TASK19:
   optim: Adam
   lr_scheduler: pythia_warmup_decay
   warmup_iters: 1364 # 2 epochs
-  lr: 0.0001  
+  lr: 0.0002
   warmpu_factors: 0.1
   lr_decay_iters: [4774, 9548] # 7, 14  epochs
   lr_decay: 0.2
-  debug: false
+  debug: true
   # model attributes
   model_type: m4c
   num_hidden_layers: 6
@@ -58,3 +58,7 @@ TASK19:
   val_workers: 16
   train_workers: 16
   scl_coeff: 1.0
+  aug_filter:
+    max_re_per_sample: 2
+    sim_threshold: 0.9
+    sampling: top # top (selects max_re_per_sample samples from top after thresholding), bottom and random
