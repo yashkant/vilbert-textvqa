@@ -246,21 +246,25 @@ class SupConLoss(torch.nn.Module):
             A loss scalar.
         """
 
-        # joint features
-        features = torch.cat(
-            [
-                batch_dict[0]["contrastive_projection_norm"].unsqueeze(dim=1),
-                batch_dict[1]["contrastive_projection_norm"].unsqueeze(dim=1)
-            ],
-            dim=1
-        )
+        if registry.use_rephrasings:
+            # joint features
+            features = torch.cat(
+                [
+                    batch_dict[0]["contrastive_projection_norm"].unsqueeze(dim=1),
+                    batch_dict[1]["contrastive_projection_norm"].unsqueeze(dim=1)
+                ],
+                dim=1
+            )
+        else:
+            # joint features
+            features = batch_dict[0]["contrastive_projection_norm"].unsqueeze(dim=1)
 
         # targets for the batch is the one with highest score
         # todo: fix this for multi-label setting!
-        labels = batch_dict[1]["target"].argmax(dim=-1).view(-1, 1)
+        labels = batch_dict[0]["target"].argmax(dim=-1).view(-1, 1)
 
         # samples without an answer cannot work as anchor points
-        mask_samples = (batch_dict[1]["target"].sum(dim=-1) != 0).int()
+        mask_samples = (batch_dict[0]["target"].sum(dim=-1) != 0).int()
 
         # mask
         mask = None
@@ -292,6 +296,7 @@ class SupConLoss(torch.nn.Module):
         mask = mask * mask_samples
 
         contrast_count = features.shape[1]
+
         contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0)
         if self.contrast_mode == 'one':
             anchor_feature = features[:, 0]
@@ -341,7 +346,11 @@ class SupConLoss(torch.nn.Module):
 
         # calculating score
         preds = torch.argmax(exp_logits, 1)
-        scores = (preds == labels.squeeze().repeat(2)).float()
+
+        if registry.use_rephrasings:
+            scores = (preds == labels.squeeze().repeat(2)).float()
+        else:
+            scores = (preds == labels.squeeze()).float()
         scores = scores * mask
         batch_score = scores.sum() / mask.sum()
 

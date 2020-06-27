@@ -30,7 +30,7 @@ TASK19:
   warmpu_factors: 0.1
   lr_decay_iters: [4774, 9548] # 7, 14  epochs
   lr_decay: 0.2
-  debug: true
+  debug: false
   # model attributes
   model_type: m4c
   num_hidden_layers: 6

@@ -156,6 +156,7 @@ def get_optim_scheduler(args,
     return optimizer, warmup_scheduler, lr_scheduler, scheduler_config, warmpu_steps
 
 
+
 def ForwardModelsVal(args,
                      task_cfg,
                      device,
@@ -202,13 +203,7 @@ def ForwardModelsVal(args,
         results_dict = model(batch)
         batch.update(results_dict)
 
-    if len(batch_dict) == 1:
-        batch_dict = batch_dict[0]
-
-
     if task_cfg[task_id]["type"] == "ContrastiveProjection":
-        assert len(batch_dict) == 2
-
         # x = torch.matmul(batch_dict[1]["contrastive_projection_norm"],
         #                  torch.transpose(batch_dict[0]["contrastive_projection_norm"], 0, 1))
         #
@@ -216,8 +211,11 @@ def ForwardModelsVal(args,
 
         loss, batch_score = task_losses[task_id](batch_dict)
 
+    if len(batch_dict) == 1:
+        batch_dict = batch_dict[0]
+
     # for different task, we use different output to calculate the loss.
-    elif task_cfg[task_id]["type"] == "VL-classifier":
+    if task_cfg[task_id]["type"] == "VL-classifier":
         loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
         loss = loss.mean() * batch_dict["target"].size(1)
         batch_scores = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"])
@@ -276,7 +274,8 @@ def ForwardModelsTrain(
     start_time = time.time()
     task_count[task_id] += 1
     batch_dict = task_iter_train[task_id].next()
-    # print(f"Build Batch Time: {time.time()-start_time}")
+    batch_time = time.time()
+    # print(f"Build Batch Time: {batch_time-start_time}")
 
     if not isinstance(batch_dict, tuple) and not isinstance(batch_dict, list):
         batch_dict = [batch_dict]
@@ -302,7 +301,7 @@ def ForwardModelsTrain(
                 batch[key] = value.cuda(device=device, non_blocking=True)
 
     question = batch_dict[0]["question_indices"]
-    # batch["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
+    # batch["task_tokens"] = question.new().resizeA_(question.size(0), 1).fill_(int(task_id[4:]))
     batch_size = len(question)
 
     # if not registry.squint_loss:
@@ -321,16 +320,17 @@ def ForwardModelsTrain(
     #         results_dict = model(batch)
     #         batch.update(results_dict)
 
+    forward_time = time.time()
+    # print(f"Forward Batch Time: {forward_time-batch_time}")
+
+    if task_cfg[task_id]["type"] == "ContrastiveProjection":
+        loss, batch_score = task_losses[task_id](batch_dict)
 
     if len(batch_dict) == 1:
         batch_dict = batch_dict[0]
 
-    if task_cfg[task_id]["type"] == "ContrastiveProjection":
-        assert len(batch_dict) == 2
-        loss, batch_score = task_losses[task_id](batch_dict)
-
     # for different task, we use different output to calculate the loss.
-    elif task_cfg[task_id]["type"] == "VL-classifier":
+    if task_cfg[task_id]["type"] == "VL-classifier":
         # loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
         # loss = loss.mean() * batch_dict["target"].size(1)
         # batch_score = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"]).sum() / float(
@@ -361,6 +361,9 @@ def ForwardModelsTrain(
         squint_loss = MSELoss(batch_dict)
         loss += squint_loss
 
+    loss_time = time.time()
+    # print(f"Loss Time: {loss_time - forward_time}")
+
 
     del results_dict
     del batch_dict
@@ -374,8 +377,15 @@ def ForwardModelsTrain(
 def add_ce_loss(batch_dict, val_run=False):
     if len(batch_dict) == 2 and not val_run:
         # train time
-        vil_preds = torch.cat([batch_dict[0]["vil_prediction"], batch_dict[1]["vil_prediction"]], dim=0)
-        vil_targets = torch.cat([batch_dict[0]["target"], batch_dict[1]["target"]], dim=0)
+        if not registry.ce_half:
+            vil_preds = torch.cat([batch_dict[0]["vil_prediction"], batch_dict[1]["vil_prediction"]], dim=0)
+            vil_targets = torch.cat([batch_dict[0]["target"], batch_dict[1]["target"]], dim=0)
+        else:
+            # randomly pick the half batch from SCL
+            idx = np.random.randint(2)
+            vil_preds = batch_dict[idx]["vil_prediction"]
+            vil_targets = batch_dict[idx]["target"]
+
     else:
         # validation time
         vil_preds = batch_dict["vil_prediction"]
@@ -388,7 +398,7 @@ def add_ce_loss(batch_dict, val_run=False):
     batch_score = batch_scores.sum() / len(vil_preds)
 
 
-    # calculate consistency scores
+    # calculate consistency scores during validation run!
     if registry.get("revqa_eval", False) and val_run and len(batch_dict) != 2:
         # fill the scores for each question into the batch-dict
         batch_dict["vqa_scores"] = batch_scores.sum(dim=-1).tolist()
@@ -523,7 +533,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
                     batch_size,
                     task_cfg,
                     args,
-                    split="train"
+                    split=task_cfg[task]["train_split"]
                 )
             elif args.local_rank == -1:
                 train_sampler = RandomSampler(task_datasets_train[task])
@@ -552,7 +562,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
                     batch_size,
                     task_cfg,
                     args,
-                    split="val"
+                    split=task_cfg[task]["val_split"]
                 )
             else:
                 logger.info("Using Simple Validation Sampler")

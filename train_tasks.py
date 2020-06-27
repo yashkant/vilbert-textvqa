@@ -72,7 +72,7 @@ def get_parser():
     )
     parser.add_argument(
         "--num_train_epochs",
-        default=40,
+        default=20,
         type=int,
         help="Total number of training epochs to perform.",
     )
@@ -238,6 +238,7 @@ def assert_add_registry(task_cfg, args):
         "val_batch_size",
         "val_workers",
         "train_workers",
+        "num_epoch",
         ("revqa_eval", False),
         ("use_ce_loss", False),
         ("scl_coeff", -1),
@@ -248,6 +249,9 @@ def assert_add_registry(task_cfg, args):
         ("squint_loss", False),
         ("squint_layers", None),
         ("squint_type", None),
+        ("ce_half", False),
+        ("use_rephrasings", True),
+        ("aug_filter", None)
 
     ]
 
@@ -630,6 +634,7 @@ def main():
             for task_id in task_ids:
                 is_forward = True
                 if is_forward:
+                    start_time = time.time()
                     loss, score, losses = ForwardModelsTrain(
                         args,
                         task_cfg,
@@ -641,6 +646,8 @@ def main():
                         model,
                         task_losses,
                     )
+                    iter_time = time.time()
+                    # print(f"Iter time: {iter_time - start_time}")
 
                     if task_cfg["TASK19"].get("pcgrad", False):
                         # if task_cfg["TASK19"].get("default_double", False):
@@ -769,6 +776,10 @@ def main():
                     else:
                         loss.backward()
 
+                    back_time = time.time()
+                    # print(f"Backward time: {back_time - iter_time}")
+
+
                     if task_cfg["TASK19"]["grad_clip_mode"] == "all":
                         clip_gradients(model, task_cfg["TASK19"]["max_grad_norm"], task_cfg["TASK19"]["grad_clip_mode"])
 
@@ -794,9 +805,13 @@ def main():
                         } if (task_cfg["TASK19"].get("pcgrad", False) or
                               task_cfg["TASK19"].get("pcgrad_module", False)) else None
                     )
+
                     del loss
                     del score
-            gc.collect()
+
+            # gc.collect()
+            finish_time = time.time()
+            # print(f"Finish time: {finish_time - back_time}")
 
             if "cosine" in lr_scheduler_config and global_step > warmpu_steps:
                 lr_scheduler.step()
@@ -888,6 +903,9 @@ def main():
                                 },
                                 output_checkpoint,
                             )
+            residue_time = time.time()
+            # print(f"Finish time: {residue_time - finish_time}")
+
 
         if lr_scheduler_config == "automatic":
             lr_scheduler.step(sum(val_scores.values()))
@@ -970,9 +988,4 @@ def sanity_checks(
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    finally:
-        import os
-
-        os.system("watch -n 1 session-quit-error")
+    main()

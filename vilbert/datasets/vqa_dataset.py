@@ -53,6 +53,61 @@ def _create_entry(question, answer):
     return entry
 
 
+def filter_aug(questions_list, answers_list):
+    questions, answers = [], []
+    max_samples = registry.aug_filter["max_re_per_sample"]
+    sim_threshold = registry.aug_filter["sim_threshold"]
+    sampling = registry.aug_filter["sampling"]
+
+    rephrasings_data = []
+    assert len(questions_list) == len(answers_list)
+
+    for idx, (que_list, ans_list) in tqdm(enumerate(zip(questions_list, answers_list)), total=len(questions_list),
+                                          desc="Filtering Data"):
+        assert len(que_list) == len(ans_list)
+        # filter for sim-threshold
+        if sim_threshold > 0:
+            que_list, ans_list = zip(*[(q,a) for q,a in zip(que_list, ans_list) if q["sim_score"] > sim_threshold])
+        # filter for max-samples
+        if max_samples > 0:
+            if sampling == "top":
+                que_list, ans_list = que_list[:max_samples], ans_list[:max_samples]
+            elif sampling == "bottom":
+                que_list, ans_list = que_list[-max_samples:], ans_list[-max_samples:]
+            elif sampling == "random":
+                rand_indices = np.random.choice(range(len(que_list)), min(max_samples, len(que_list)), replace=False)
+                rand_indices = sorted(rand_indices)
+                que_list, ans_list = np.array(que_list), np.array(ans_list)
+                que_list, ans_list = que_list[rand_indices], ans_list[rand_indices]
+            else:
+                raise ValueError
+
+        filtered_rephrasing_ids = [que["question_id"] for que in que_list]
+        for que in que_list:
+            que["rephrasing_ids"] = sorted([x for x in filtered_rephrasing_ids if x != que["question_id"]])
+
+        # add them to main list
+        questions.extend(que_list)
+        answers.extend(ans_list)
+        rephrasings_data.append(len(que_list))
+
+    return questions, answers
+
+
+def rephrasings_dict(split, questions):
+    question_rephrase_dict = {}
+    for question in questions:
+        if "rephrasing_of" in question:
+            question_rephrase_dict[question["question_id"]] = question["rephrasing_of"]
+        else:
+            question_rephrase_dict[question["question_id"]] = question["question_id"]
+
+    # used in evaluation, hack to set attribute
+    from easydict import EasyDict
+    super(EasyDict, registry).__setattr__(f"question_rephrase_dict_{split}", question_rephrase_dict)
+    super(EasyDict, registry).__setitem__(f"question_rephrase_dict_{split}", question_rephrase_dict)
+
+
 def _load_dataset(dataroot, name, clean_datasets):
     """Load entries
 
@@ -121,18 +176,7 @@ def _load_dataset(dataroot, name, clean_datasets):
         if registry.debug:
             questions = questions[:1000]
 
-        question_rephrase_dict = {}
-        for question in questions:
-            if "rephrasing_of" in question:
-                question_rephrase_dict[question["question_id"]] = question["rephrasing_of"]
-            else:
-                question_rephrase_dict[question["question_id"]] = question["question_id"]
-
-        # used in evaluation, hack to set attribute
-        from easydict import EasyDict
-        super(EasyDict, registry).__setattr__(f"question_rephrase_dict_{split}", question_rephrase_dict)
-        super(EasyDict, registry).__setitem__(f"question_rephrase_dict_{split}", question_rephrase_dict)
-
+        rephrasings_dict(split, questions)
 
         answers = cPickle.load(open(answers_path, "rb"))
         answers = sorted(answers, key=lambda x: x["question_id"])
@@ -147,6 +191,39 @@ def _load_dataset(dataroot, name, clean_datasets):
             except:
                 import pdb
                 pdb.set_trace()
+
+    elif name in ["train_aug", "val_aug", "trainval_aug", "minval_aug"]:
+        split_path_dict = {
+            "train_aug": ["datasets/VQA/back-translate/org_bt_v2_OpenEnded_mscoco_train2014_questions.pkl",
+                         "datasets/VQA/back-translate/org_bt_train_target.pkl", "train"],
+            "val_aug": ["datasets/VQA/back-translate/org_bt_v2_OpenEnded_mscoco_val2014_questions.pkl",
+                         "datasets/VQA/back-translate/org_bt_val_target.pkl", "val"],
+            "trainval_aug": ["datasets/VQA/back-translate/org_bt_v2_OpenEnded_mscoco_trainval2014_questions.pkl",
+                         "datasets/VQA/back-translate/org_bt_trainval_target.pkl", "trainval"],
+            "minval_aug": ["datasets/VQA/back-translate/org_bt_v2_OpenEnded_mscoco_minval2014_questions.pkl",
+                         "datasets/VQA/back-translate/org_bt_minval_target.pkl", "trainval"],
+        }
+        questions_path, answers_path, split = split_path_dict[name][0], split_path_dict[name][1], split_path_dict[name][-1]
+
+        if not registry.debug:
+            questions_list = cPickle.load(open(questions_path, "rb"))["questions"]
+            answers_list = cPickle.load(open(answers_path, "rb"))
+        else:
+            questions_path = questions_path.split(".")[0] + "_debug.pkl"
+            answers_path = answers_path.split(".")[0] + "_debug.pkl"
+            questions_list = cPickle.load(open(questions_path, "rb"))
+            answers_list = cPickle.load(open(answers_path, "rb"))
+
+        # filter-mech
+        questions, answers = filter_aug(questions_list, answers_list)
+        assert len(questions) == len(answers)
+
+        logger.info(f"Train Samples after filtering: {len(questions)}")
+        # this is needed for evaluation
+        rephrasings_dict(split, questions)
+
+        for question, answer in zip(questions, answers):
+            assert answer["question_id"] == question["question_id"]
 
     elif name == "re_total":
         question_path = "data/re-vqa/data/revqa_total.json"
@@ -203,7 +280,6 @@ def _load_dataset(dataroot, name, clean_datasets):
         answer_path_val = os.path.join(dataroot, "cache", "%s_target.pkl" % "val")
         answers_val = cPickle.load(open(answer_path_val, "rb"))
         answers_val = sorted(answers_val, key=lambda x: x["question_id"])
-        # Todo: What is this?
         questions = questions_train + questions_val[:-3000]
         answers = answers_train + answers_val[:-3000]
 
@@ -284,8 +360,12 @@ def _load_dataset(dataroot, name, clean_datasets):
         for question, answer in zip(questions, answers):
             if "train" in name and int(question["image_id"]) in remove_ids:
                 continue
-            assert_eq(question["question_id"], answer["question_id"])
-            assert_eq(question["image_id"], answer["image_id"])
+            try:
+                assert_eq(question["question_id"], answer["question_id"])
+                assert_eq(question["image_id"], answer["image_id"])
+            except:
+                import pdb
+                pdb.set_trace()
             entries.append(_create_entry(question, answer))
 
     return entries
@@ -375,9 +455,8 @@ class VQAClassificationDataset(Dataset):
         #         self.process_spatials()
         #     return
 
-
-        if not os.path.exists(cache_path) or extra_args.get("revqa_eval", False) or extra_args.get("contrastive", None) \
-                in ["simclr", "better"]:
+        if (not os.path.exists(cache_path) or extra_args.get("revqa_eval", False) or extra_args.get("contrastive", None) \
+                in ["simclr", "better"]) or True:
             self.entries = _load_dataset(dataroot, split, clean_datasets)
             # convert questions to tokens, create masks, segment_ids
             self.tokenize(max_seq_length)
@@ -385,7 +464,8 @@ class VQAClassificationDataset(Dataset):
                 self.process_spatials()
             # convert all tokens to tensors
             self.tensorize()
-            cPickle.dump(self.entries, open(cache_path, "wb"))
+            if not self.debug:
+                cPickle.dump(self.entries, open(cache_path, "wb"))
         else:
             logger.info("Loading from %s" % cache_path)
             self.entries = cPickle.load(open(cache_path, "rb"))
@@ -688,12 +768,17 @@ class VQAClassificationDataset(Dataset):
         self.mean_read_time = ((self.mean_read_time*self.num_samples) + total_time)/(self.num_samples+1)
         self.num_samples += 1
 
-        if self.extra_args.get("contrastive", None) in ["simclr", "better"]:
+        if self.extra_args.get("contrastive", None) in ["simclr", "better"] and registry.use_rephrasings:
+            common_indices = torch.zeros_like(entry['q_token'])
+            common_indices_pos = torch.zeros_like(entry['q_token'])
+            item_dict["common_inds"] = common_indices
+
             item_pos_dict = deepcopy(item_dict)
 
-            if registry.debug:
-                return item_dict, item_pos_dict
+            # if registry.debug:
+            #     return item_dict, item_pos_dict
 
+            # when there's no rephrasing available send the original
             if len(entry["rephrasing_ids"]) == 0:
                 item_dict["mask"] = item_dict["mask"]*0
                 item_pos_dict["mask"] = item_pos_dict["mask"]*0
@@ -712,8 +797,6 @@ class VQAClassificationDataset(Dataset):
             entry_tokens = set(entry['q_token'].tolist())
             pos_entry_tokens = set(pos_entry['q_token'].tolist())
             common_tokens = list(pos_entry_tokens.intersection(entry_tokens) - set([0, 101, 102]))
-            common_indices = torch.zeros_like(entry['q_token'])
-            common_indices_pos = torch.zeros_like(entry['q_token'])
 
             for iter, tok in enumerate(common_tokens):
                 entry_idx = int(((tok == entry['q_token']) * 1).nonzero()[0][0])
@@ -727,7 +810,6 @@ class VQAClassificationDataset(Dataset):
                 "question_id": pos_entry["question_id"],
                 "common_inds": common_indices_pos
             })
-            item_dict["common_inds"] = common_indices
 
             return (item_dict, item_pos_dict)
 
