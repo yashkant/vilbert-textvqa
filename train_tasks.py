@@ -954,6 +954,11 @@ def evaluate(
 
     c_scores = None
     if registry.revqa_eval:
+        for batch in tqdm(task_dataloader_val["revqa"], desc="Revqa Eval"):
+            with torch.no_grad():  # turn off autograd engine
+                loss, score, batch_size = ForwardModelsVal(
+                    args, task_cfg, device, task_id, batch, model, task_losses, revqa_eval=True
+                )
         c_scores = get_consistency_score()
 
     score, loss = tbLogger.showLossVal(task_id, task_stop_controller=None, c_scores=c_scores)

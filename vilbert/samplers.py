@@ -456,111 +456,16 @@ class NegativeSampler(Sampler):
         for _, thread_batches in zip(range(num_threads), batches_per_thread):
             _args = (self.entry_map, self.re_bins, self.answer_map, self.qid_ans_dict, extra_args, thread_batches)
             args_list.append(_args)
-        try:
-            batches_list = list(sp_pool.imap(NegativeSampler.get_batches, args_list))
-        except:
-            import pdb
-            pdb.set_trace()
 
+        batches_list = list(sp_pool.imap(NegativeSampler.get_batches, args_list))
         sp_pool.close()
         sp_pool.join()
+        logger.info(f"Done Processsing Batches with {self.processing_threads} threads!")
 
-        import pdb
-        pdb.set_trace()
-
-        logger.info(f"Done Processsing Quadrant Spatial Relations with {self.processing_threads} threads")
-
-        # batch = NegativeSampler.get_batch(
-        #     deepcopy(self.entry_map),
-        #     self.answer_map,
-        #     self.qid_ans_dict,
-        #     extra_args
-        # )
-        #
-        #
-        #
-        # batches = []
-        # self.re_bins = self.shuffle(self.re_bins, start_idx=0, end_idx=len(self.re_bins))
-        # # add positives for SCL
-        # add_positives = self.num_positives > 0
-        # exhausted_bins = []
-        # cycle_bins = cycle(list(range(len(self.re_bins))))
-        # use_gt_answer = self.task_cfg.get("use_gt_answer", False)
-        # if add_positives:
-        #     assert use_gt_answer is not True
-        # # replace bins: all bins will be used equally irrespective of their sizes
-        # neg_replace = self.task_cfg["neg_replace"]
-        # desc_string = f"SimCLR with neg_replace: {neg_replace}, use_gt: {use_gt_answer}, add_pos: {add_positives} "
-
-        # for batch_idx in tqdm(range(num_batches), total=num_batches, desc=desc_string):
-        #     batch_inds = []
-        #     batch_answers = []
-        #     batch_bin_inds = []
-        #
-        #     while True:
-        #         start_time = time.time()
-        #         idx = next(cycle_bins)
-        #
-        #         # skip exhausted bins (only used when use_gt and neg_replace are turned off)
-        #         if idx in exhausted_bins:
-        #             continue
-        #
-        #         # do not repeat bins if we are not exhausting bins with gt_answers
-        #         if (use_gt_answer or neg_replace) and idx in batch_bin_inds:
-        #             continue
-        #
-        #         # pick the value from (key,value) tuple
-        #         item = self.re_bins[idx][1]
-        #         entry_idx = item["entry_inds"][item["iter_idx"]]
-        #
-        #         # skip negatives with same ground-truth
-        #         if use_gt_answer and self.check_gt_condition(entry_idx, batch_answers):
-        #             continue
-        #
-        #         item["iter_idx"] += 1
-        #         batch_inds.append(entry_idx)
-        #         batch_bin_inds.append(idx)
-        #
-        #         # don't worry about batch_answers for SCL setting
-        #         batch_answers.extend(self.get_entry_answers(self.entries[entry_idx]))
-        #
-        #         pick_entry_time = time.time()
-        #         # print(f"pick entry time: {pick_entry_time-start_time}")
-        #
-        #         if add_positives:
-        #             # only add the needed amount
-        #             num_pos = min(self.num_positives, self.batch_size - len(batch_inds))
-        #             self.add_positives(idx, num_pos, use_gt_answer, neg_replace, batch_inds, batch_bin_inds)
-        #
-        #         add_pos_time = time.time()
-        #         # print(f"add pos time: {add_pos_time-pick_entry_time}")
-        #
-        #
-        #         # exit with complete batch
-        #         if len(batch_inds) == self.batch_size:
-        #             # Todo: think if shuffling was important here?
-        #             # shuffle left and right parts
-        #             # self.re_bins = self.shuffle(self.re_bins, start_idx=0, end_idx=idx+1)
-        #             # self.re_bins = self.shuffle(self.re_bins, start_idx=idx+1, end_idx=len(self.re_bins))
-        #
-        #             # iterator exhausted
-        #             self.check_iterator(item, exhausted_bins, idx, neg_replace, use_gt_answer)
-        #             break
-        #
-        #         # iterator exhausted
-        #         self.check_iterator(item, exhausted_bins, idx, neg_replace, use_gt_answer)
-        #         finish_time = time.time()
-        #         # print(f"finish time: {finish_time - add_pos_time}")
-        #
-        #     # assert all are unique in a batch
-        #     assert len(batch_inds) == len(set(batch_inds))
-        #     batches.append(batch_inds)
-        #
-        # # stitch all indices together
-        # epoch_indices = []
-        # for _batch in batches:
-        #     epoch_indices.extend(_batch)
-
+        epoch_indices = []
+        for batches in batches_list:
+            for _batch in batches:
+                epoch_indices.extend(_batch)
         return epoch_indices
 
     def check_iterator(self, item, exhausted_bins=None, bin_idx=-1, neg_replace=False, use_gt_answer=False):
@@ -583,71 +488,63 @@ class NegativeSampler(Sampler):
         bin_indices = list(range(len(re_bins)))
         batches = []
 
-        try:
-            for _ in tqdm(range(num_batches), total=num_batches, desc="Building Batches"):
-                # shuffle the bins
-                np.random.shuffle(bin_indices)
-                # NegativeSampler.shuffle(re_bins, start_idx=0, end_idx=len(re_bins))
+        for _ in tqdm(range(num_batches), total=num_batches, desc="Building Batches"):
+            # shuffle the bins
+            np.random.shuffle(bin_indices)
 
-                num_positives = extra_args.num_positives
-                add_positives = num_positives > 0
-                batch_size = extra_args.batch_size
+            num_positives = extra_args.num_positives
+            add_positives = num_positives > 0
+            batch_size = extra_args.batch_size
 
-                # start building a batch
-                batch_inds = []
-                # batch_answers = []
-                batch_bin_inds = []
+            # start building a batch
+            batch_inds = []
+            # batch_answers = []
+            batch_bin_inds = []
 
-                begin_time = time.time()
-                # print(f"Begin time: {begin_time - start_time}")
+            begin_time = time.time()
+            # print(f"Begin time: {begin_time - start_time}")
 
-                for bin_idx in bin_indices:
+            for bin_idx in bin_indices:
 
-                    # pick the value from (key,value) tuple
-                    item = re_bins[bin_idx][1]
+                # pick the value from (key,value) tuple
+                item = re_bins[bin_idx][1]
 
-                    # randomly pick one entry from the bin
-                    iter_idx = random.sample(range(len(item["question_ids"])), 1)[0]
-                    entry_idx = item["entry_inds"][iter_idx]
-                    batch_inds.append(entry_idx)
-                    batch_bin_inds.append(bin_idx)
+                # randomly pick one entry from the bin
+                iter_idx = random.sample(range(len(item["question_ids"])), 1)[0]
+                entry_idx = item["entry_inds"][iter_idx]
+                batch_inds.append(entry_idx)
+                batch_bin_inds.append(bin_idx)
 
-                    # entry_answers = entry["answer"]["labels"]
-                    # if entry_answers is None:
-                    #     entry_answers = []
-                    # else:
-                    #     entry_answers = entry_answers.tolist()
-                    # batch_answers.extend(entry_answers)
+                # entry_answers = entry["answer"]["labels"]
+                # if entry_answers is None:
+                #     entry_answers = []
+                # else:
+                #     entry_answers = entry_answers.tolist()
+                # batch_answers.extend(entry_answers)
 
-                    before_pos = time.time()
-                    if add_positives:
-                        # only add the needed amount
-                        num_pos = min(num_positives, batch_size - len(batch_inds))
-                        NegativeSampler.add_positives(
-                            re_bins,
-                            entry_map,
-                            qid_ans_dict,
-                            answer_map,
-                            bin_idx,
-                            num_pos,
-                            batch_inds,
-                            batch_bin_inds,
-                            extra_args,
-                        )
+                before_pos = time.time()
+                if add_positives:
+                    # only add the needed amount
+                    num_pos = min(num_positives, batch_size - len(batch_inds))
+                    NegativeSampler.add_positives(
+                        re_bins,
+                        entry_map,
+                        qid_ans_dict,
+                        answer_map,
+                        bin_idx,
+                        num_pos,
+                        batch_inds,
+                        batch_bin_inds,
+                        extra_args,
+                    )
 
-                    after_pos = time.time()
-                    # print(f"Positive time: {after_pos - before_pos}")
+                after_pos = time.time()
+                # print(f"Positive time: {after_pos - before_pos}")
 
-                    if len(batch_inds) == batch_size:
-                        break
+                if len(batch_inds) == batch_size:
+                    break
 
-                batches.append(batch_inds)
-        except Exception as e:
-            import pdb
-            pdb.set_trace()
-
-        # assert all are unique in a batch
-        # assert len(batch_inds) == len(set(batch_inds))
+            batches.append(batch_inds)
         return batches
 
     @staticmethod
@@ -664,8 +561,7 @@ class NegativeSampler(Sampler):
                       num_positives,
                       batch_inds,
                       batch_bin_inds,
-                      extra_args,
-                      batch_pos_inds=None):
+                      extra_args):
 
         if num_positives <= 0:
             return
@@ -729,14 +625,11 @@ class NegativeSampler(Sampler):
                 break
 
             bin_inds.append(item["bin_idx"])
-            iter_idx = item["iter_idx"]
-            entry_inds.append(item["entry_inds"][iter_idx])
-            item["iter_idx"] += 1
+            iter_idx = random.sample(range(len(item["question_ids"])), 1)[0]
+            entry_idx = item["entry_inds"][iter_idx]
+            entry_inds.append(entry_idx)
 
-        if batch_pos_inds is not None:
-            batch_pos_inds.extend(entry_inds)
-        else:
-            batch_inds.extend(entry_inds)
+        batch_inds.extend(entry_inds)
         batch_bin_inds.extend(bin_inds)
 
     # def add_positives(self,
@@ -888,20 +781,6 @@ class NegativeSampler(Sampler):
 
         elif self.task_cfg["contrastive"] == "simclr":
             logger.info(f"Sampler Cache Path: {cache_name}")
-            # missing_iters = []
-            # cache_holder = cache_name.split("_iter_")[0] + "_iter_{}_split_" + cache_name.split("_split_")[-1]
-            # for _iter in range(registry.num_epoch):
-            #     if not os.path.exists(cache_holder.format(_iter)):
-            #         missing_iters.append(_iter)
-            #
-            # if len(missing_iters) > 0:
-            #     logger.info(f"Found missing epochs: {missing_iters}, building them now...")
-            #     sp_pool = mp.Pool(len(missing_iters))
-            #     epoch_indices_list = list(tqdm(sp_pool.imap(self.build_batches())))
-            #
-            # import pdb
-            # pdb.set_trace()
-            # todo: try to optmize the sampling part, if not posible
             if os.path.exists(cache_name) and False:
                 logger.info("Using cache")
                 epoch_indices = list(np.load(cache_name, allow_pickle=True))

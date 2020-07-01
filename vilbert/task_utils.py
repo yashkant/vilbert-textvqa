@@ -155,6 +155,16 @@ def get_optim_scheduler(args,
     logger.info(f"LR Scheduler: {str(lr_scheduler)}")
     return optimizer, warmup_scheduler, lr_scheduler, scheduler_config, warmpu_steps
 
+def to_device(batch_dict, device):
+
+    if device.type == "cpu":
+        return
+
+    for batch in batch_dict:
+        for key, value in batch.items():
+            if isinstance(value, torch.Tensor):
+                batch[key] = value.cuda(device=device, non_blocking=True)
+
 
 
 def ForwardModelsVal(args,
@@ -164,87 +174,80 @@ def ForwardModelsVal(args,
                      batch_dict,
                      model,
                      task_losses,
+                     revqa_eval=False,
                      return_batch=False):
-
 
     if not isinstance(batch_dict, tuple) and not isinstance(batch_dict, list):
         batch_dict = [batch_dict]
-    else:
-        build_scl_mask(batch_dict)
+    # else:
+    #     build_scl_mask(batch_dict)
 
     # Sanity check negatives w/ negative sampler
-    if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"] and not task_cfg["TASK19"]["debug"]\
-            and task_cfg["TASK19"].get("val_neg_sampler", True):
-        for batch in batch_dict:
-            rephrasing_of = []
-            # iterate over question-ids
-            for question_id in batch["question_id"].tolist():
-                try:
-                    assert registry.question_rephrase_dict_val[question_id] not in rephrasing_of
-                    rephrasing_of.append(registry.question_rephrase_dict_val[question_id])
-                except:
-                    import pdb
-                    pdb.set_trace()
+    # if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"] and not task_cfg["TASK19"]["debug"]\
+    #         and task_cfg["TASK19"].get("val_neg_sampler", True):
+    #     for batch in batch_dict:
+    #         rephrasing_of = []
+    #         # iterate over question-ids
+    #         for question_id in batch["question_id"].tolist():
+    #             try:
+    #                 assert registry.question_rephrase_dict_val[question_id] not in rephrasing_of
+    #                 rephrasing_of.append(registry.question_rephrase_dict_val[question_id])
+    #             except:
+    #                 import pdb
+    #                 pdb.set_trace()
 
-    # random shuffle questions
-    # batch_dict[1]['question_indices'] = batch_dict[1]['question_indices'][torch.randperm(208), :]
-
-    # random shuffle images
-    # batch_dict[1]['input_imgs'] = batch_dict[1]['input_imgs'][torch.randperm(208), :]
+    # send to device
+    to_device(batch_dict, device)
 
     for batch in batch_dict:
-        for key, value in batch.items():
-            if isinstance(value, torch.Tensor):
-                batch[key] = value.cuda(device=device, non_blocking=True)
-
         question = batch["question_indices"]
-        batch["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
+        # batch["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
         batch_size = len(question)
         results_dict = model(batch)
         batch.update(results_dict)
 
-    if task_cfg[task_id]["type"] == "ContrastiveProjection":
-        # x = torch.matmul(batch_dict[1]["contrastive_projection_norm"],
-        #                  torch.transpose(batch_dict[0]["contrastive_projection_norm"], 0, 1))
+    # if task_cfg[task_id]["type"] == "ContrastiveProjection":
+    #     loss, batch_score = task_losses[task_id](batch_dict)
+    #
+    # if len(batch_dict) == 1:
+    #     batch_dict = batch_dict[0]
+    #
+    # # for different task, we use different output to calculate the loss.
+    # if task_cfg[task_id]["type"] == "VL-classifier":
+    #     loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
+    #     loss = loss.mean() * batch_dict["target"].size(1)
+    #     batch_scores = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"], device)
+    #     batch_score = batch_scores.sum() / float(batch_size)
+
+        # # calculate consistency scores
+        # if registry.get("revqa_eval", False):
+        #     # fill the scores for each question into the batch-dict
+        #     batch_dict["vqa_scores"] = batch_scores.sum(dim=-1).tolist()
         #
-        # y = (x * torch.eye(208).to(x.device)).sum()
-
-        loss, batch_score = task_losses[task_id](batch_dict)
-
-    if len(batch_dict) == 1:
-        batch_dict = batch_dict[0]
-
-    # for different task, we use different output to calculate the loss.
-    if task_cfg[task_id]["type"] == "VL-classifier":
-        loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
-        loss = loss.mean() * batch_dict["target"].size(1)
-        batch_scores = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"])
-        batch_score = batch_scores.sum() / float(batch_size)
-
-        # calculate consistency scores
-        if registry.get("revqa_eval", False):
-            # fill the scores for each question into the batch-dict
-            batch_dict["vqa_scores"] = batch_scores.sum(dim=-1).tolist()
-
-            # add vqa-scores to defaultdict(list) for each bin
-            for idx, qid in enumerate(batch_dict["question_id"].tolist()):
-                registry.revqa_bins[registry["question_rephrase_dict_val"][qid]].append(batch_dict["vqa_scores"][idx])
+        #     # add vqa-scores to defaultdict(list) for each bin
+        #     for idx, qid in enumerate(batch_dict["question_id"].tolist()):
+        #         registry.revqa_bins[registry["question_rephrase_dict_val"][qid]].append(batch_dict["vqa_scores"][idx])
 
 
-    elif task_cfg[task_id]["type"] == "VL-classifier-GQA":
-        loss = task_losses[task_id](batch_dict["vil_prediction_gqa"], batch_dict["target"])
-        loss = loss.mean() * batch_dict["target"].size(1)
-        batch_score = compute_score_with_logits(
-            batch_dict["vil_prediction_gqa"], batch_dict["target"]
-        ).sum() / float(batch_size)
+    # elif task_cfg[task_id]["type"] == "VL-classifier-GQA":
+    #     loss = task_losses[task_id](batch_dict["vil_prediction_gqa"], batch_dict["target"])
+    #     loss = loss.mean() * batch_dict["target"].size(1)
+    #     batch_score = compute_score_with_logits(
+    #         batch_dict["vil_prediction_gqa"], batch_dict["target"], device
+    #     ).sum() / float(batch_size)
+    #
+    # elif task_cfg[task_id]["type"] == "VL-classifier-only-ce":
+    #     loss, batch_score = add_ce_loss(batch_dict[0], device, val_run=True)
 
-    elif task_cfg[task_id]["type"] == "VL-classifier-only-ce":
-        loss, batch_score = add_ce_loss(batch_dict[0], val_run=True)
+    # if registry.use_ce_loss:
+    #     vl_loss, batch_score = add_ce_loss(batch_dict[0], device, val_run=True)
+    #     # don't care about the scl-loss
+    #     loss = vl_loss
 
-    if registry.use_ce_loss:
-        vl_loss, batch_score = add_ce_loss(batch_dict[0], val_run=True)
-        # don't care about the scl-loss
-        loss = vl_loss
+
+    # only report CE loss on validation-set
+    loss, batch_score = add_ce_loss(batch_dict[0], device, val_run=True, revqa_eval=revqa_eval)
+
 
     if registry.get("eval_only", False):
         return batch_dict
@@ -279,8 +282,8 @@ def ForwardModelsTrain(
 
     if not isinstance(batch_dict, tuple) and not isinstance(batch_dict, list):
         batch_dict = [batch_dict]
-    else:
-        build_scl_mask(batch_dict)
+    # else:
+    #     build_scl_mask(batch_dict)
 
     # Sanity check negatives
     if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"] and not task_cfg["TASK19"]["debug"]:
@@ -295,11 +298,8 @@ def ForwardModelsTrain(
                     import pdb
                     pdb.set_trace()
 
-    for batch in batch_dict:
-        for key, value in batch.items():
-            if isinstance(value, torch.Tensor):
-                batch[key] = value.cuda(device=device, non_blocking=True)
-
+    # send to device
+    to_device(batch_dict, device)
     question = batch_dict[0]["question_indices"]
     # batch["task_tokens"] = question.new().resizeA_(question.size(0), 1).fill_(int(task_id[4:]))
     batch_size = len(question)
@@ -336,21 +336,21 @@ def ForwardModelsTrain(
         # batch_score = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"]).sum() / float(
         #     batch_size
         # )
-        loss, batch_score = add_ce_loss(batch_dict)
+        loss, batch_score = add_ce_loss(batch_dict, device)
 
     elif task_cfg[task_id]["type"] == "VL-classifier-only-ce":
-        loss, batch_score = add_ce_loss(batch_dict)
+        loss, batch_score = add_ce_loss(batch_dict, device)
 
     elif task_cfg[task_id]["type"] == "VL-classifier-GQA":
         loss = task_losses[task_id](batch_dict["vil_prediction_gqa"], batch_dict["target"])
         loss = loss.mean() * batch_dict["target"].size(1)
         batch_score = compute_score_with_logits(
-            batch_dict["vil_prediction_gqa"], batch_dict["target"]
+            batch_dict["vil_prediction_gqa"], batch_dict["target"], device
         ).sum() / float(batch_size)
 
     losses = []
     if registry.use_ce_loss:
-        vl_loss, batch_score = add_ce_loss(batch_dict)
+        vl_loss, batch_score = add_ce_loss(batch_dict, device)
         losses.append(loss)
         losses.append(vl_loss)
         assert registry.scl_coeff > 0
@@ -374,7 +374,7 @@ def ForwardModelsTrain(
 
 
 # todo: replace this in vl-classifier if-else
-def add_ce_loss(batch_dict, val_run=False):
+def add_ce_loss(batch_dict, device, val_run=False, revqa_eval=False, split="re_total"):
     if len(batch_dict) == 2 and not val_run:
         # train time
         if not registry.ce_half:
@@ -394,18 +394,18 @@ def add_ce_loss(batch_dict, val_run=False):
 
     vl_loss = LossMap["BCEWithLogitLoss"](vil_preds, vil_targets)
     vl_loss = vl_loss.mean() * vil_targets.size(1)
-    batch_scores = compute_score_with_logits(vil_preds, vil_targets)
+    batch_scores = compute_score_with_logits(vil_preds, vil_targets, device)
     batch_score = batch_scores.sum() / len(vil_preds)
 
 
     # calculate consistency scores during validation run!
-    if registry.get("revqa_eval", False) and val_run and len(batch_dict) != 2:
+    if revqa_eval:
         # fill the scores for each question into the batch-dict
         batch_dict["vqa_scores"] = batch_scores.sum(dim=-1).tolist()
 
         # add vqa-scores to defaultdict(list) for each bin
         for idx, qid in enumerate(batch_dict["question_id"].tolist()):
-            registry.revqa_bins[registry["question_rephrase_dict_val"][qid]].append(batch_dict["vqa_scores"][idx])
+            registry.revqa_bins[registry[f"question_rephrase_dict_{split}"][qid]].append(batch_dict["vqa_scores"][idx])
 
     return vl_loss, batch_score
 
@@ -578,6 +578,39 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
                 drop_last=registry.val_drop_last
             )
 
+        # load the ReVQA val-split!
+        if registry.revqa_eval:
+            logger.info("Loding ReVQA Dataset!")
+            task_datasets_val["revqa"] = DatasetMapTrain[task_name](
+                task=task_cfg[task]["name"],
+                dataroot=task_cfg[task]["dataroot"],
+                annotations_jsonpath=task_cfg[task]["val_annotations_jsonpath"],
+                split="re_total",
+                image_features_reader=task_feature_reader1[
+                    task_cfg[task]["features_h5path1"]
+                ],
+                gt_image_features_reader=task_feature_reader2[
+                    task_cfg[task]["features_h5path2"]
+                ],
+                tokenizer=tokenizer,
+                bert_model=args.bert_model,
+                clean_datasets=args.clean_train_sets,
+                padding_index=0,
+                max_seq_length=task_cfg[task]["max_seq_length"],
+                max_region_num=task_cfg[task]["max_region_num"],
+                extra_args=task_cfg["TASK19"]
+            )
+
+            task_dataloader_val["revqa"] = DataLoader(
+                task_datasets_val["revqa"],
+                shuffle=False,
+                sampler=None,
+                batch_size=registry.val_batch_size,
+                num_workers=registry.val_workers,
+                pin_memory=True,
+                drop_last=False
+            )
+
     # debug_sampler(train_sampler)
     # debug_sampler(val_sampler)
 
@@ -592,9 +625,13 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
     )
 
 
-def compute_score_with_logits(logits, labels):
+def compute_score_with_logits(logits, labels, device):
     logits = torch.max(logits, 1)[1].data  # argmax
-    one_hots = torch.zeros(*labels.size()).cuda()
+    one_hots = torch.zeros(*labels.size())
+
+    if device.type != "cpu":
+        one_hots = one_hots.cuda()
+
     one_hots.scatter_(1, logits.view(-1, 1), 1)
     scores = one_hots * labels
     return scores

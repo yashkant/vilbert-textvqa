@@ -9,24 +9,24 @@ from tqdm import tqdm
 import _pickle as cPickle
 
 que_split_path_dict = {
-    "train": ("../../datasets/VQA/back-translate/org_bt_v2_OpenEnded_mscoco_train2014_questions.pkl",
+    "train": ("../../datasets/VQA/back-translate/org2_bt_v2_OpenEnded_mscoco_train2014_questions.pkl",
               "../../datasets/VQA/v2_OpenEnded_mscoco_train2014_questions.json"),
-    "val": ("../../datasets/VQA/back-translate/org_bt_v2_OpenEnded_mscoco_val2014_questions.pkl",
+    "val": ("../../datasets/VQA/back-translate/org2_bt_v2_OpenEnded_mscoco_val2014_questions.pkl",
             "../../datasets/VQA/v2_OpenEnded_mscoco_val2014_questions.json"),
-    "test": ("../../datasets/VQA/back-translate/org_bt_v2_OpenEnded_mscoco_test2015_questions.pkl",
+    "test": ("../../datasets/VQA/back-translate/org2_bt_v2_OpenEnded_mscoco_test2015_questions.pkl",
              "../../datasets/VQA/v2_OpenEnded_mscoco_test2015_questions.json"),
-    "trainval": ("../../datasets/VQA/back-translate/org_bt_v2_OpenEnded_mscoco_trainval2014_questions.pkl",
-             "../../datasets/VQA/back-translate/org_bt_v2_OpenEnded_mscoco_minval2014_questions.pkl"),
+    "trainval": ("../../datasets/VQA/back-translate/org2_bt_v2_OpenEnded_mscoco_trainval2014_questions.pkl",
+             "../../datasets/VQA/back-translate/org2_bt_v2_OpenEnded_mscoco_minval2014_questions.pkl"),
 }
 
 ans_split_path_dict = {
-    "train": ("../../datasets/VQA/back-translate/org_bt_train_target.pkl",
+    "train": ("../../datasets/VQA/back-translate/org2_bt_train_target.pkl",
               "../../datasets/VQA/cache/train_target.pkl"),
-    "val": ("../../datasets/VQA/back-translate/org_bt_val_target.pkl",
+    "val": ("../../datasets/VQA/back-translate/org2_bt_val_target.pkl",
             "../../datasets/VQA/cache/val_target.pkl"),
-    "test": ("../../datasets/VQA/back-translate/org_bt_test_target.pkl",
+    "test": ("../../datasets/VQA/back-translate/org2_bt_test_target.pkl",
              "../../datasets/VQA/cache/test_target.pkl"),
-    "trainval": ("../../datasets/VQA/back-translate/org_bt_trainval_target.pkl",
+    "trainval": ("../../datasets/VQA/back-translate/org2_bt_trainval_target.pkl",
              "../../datasets/VQA/back-translate/org_bt_minval_target.pkl"),
 }
 
@@ -96,7 +96,8 @@ for split in ["train", "val", "trainval"]:
 
             answers = []
             for que in questions:
-                que["rephrasing_ids"] = [x for x in rephrasing_ids if x != que["question_id"]]
+                # These change after filtering so not using them in the first place!
+                # que["rephrasing_ids"] = [x for x in rephrasing_ids if x != que["question_id"]]
                 answer = deepcopy(a_data)
                 answer["question_id"] = que["question_id"]
                 answers.append(answer)
@@ -104,8 +105,6 @@ for split in ["train", "val", "trainval"]:
             assert len(answers) == len(questions)
             answers_list.append(answers)
             questions_list.append(questions)
-            import pdb
-            pdb.set_trace()
 
     questions_list = sorted(questions_list, key=lambda item: item[0]["question_id"])
     answers_list = sorted(answers_list, key=lambda item: item[0]["question_id"])

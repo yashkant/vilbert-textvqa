@@ -28,7 +28,7 @@ TASK19:
   lr_decay: 0.2
   max_grad_norm: 0.25
   num_hidden_layers: 6
-  revqa_eval: false
+  revqa_eval: true
   monitor_value: val_score
   train_workers: 16
   val_workers: 16

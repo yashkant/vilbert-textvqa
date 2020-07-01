@@ -62,6 +62,15 @@ def filter_aug(questions_list, answers_list):
     rephrasings_data = []
     assert len(questions_list) == len(answers_list)
 
+    if not registry.use_rephrasings:
+        if max_samples != 1:
+            max_samples = 1
+            registry.aug_filter["max_re_per_sample"] = 1
+            print(f"Use rephrasings is False, setting max-samples to : {max_samples}")
+        else:
+            print(f"Use rephrasings is False w/ max-samples : {max_samples}")
+
+
     for idx, (que_list, ans_list) in tqdm(enumerate(zip(questions_list, answers_list)), total=len(questions_list),
                                           desc="Filtering Data"):
         assert len(que_list) == len(ans_list)
@@ -106,6 +115,7 @@ def rephrasings_dict(split, questions):
     from easydict import EasyDict
     super(EasyDict, registry).__setattr__(f"question_rephrase_dict_{split}", question_rephrase_dict)
     super(EasyDict, registry).__setitem__(f"question_rephrase_dict_{split}", question_rephrase_dict)
+    print(f"Built dictiionary: question_rephrase_dict_{split}")
 
 
 def _load_dataset(dataroot, name, clean_datasets):
@@ -228,27 +238,15 @@ def _load_dataset(dataroot, name, clean_datasets):
     elif name == "re_total":
         question_path = "data/re-vqa/data/revqa_total.json"
         questions = sorted(json.load(open(question_path))["questions"], key=lambda x: x["question_id"])
-
-        question_rephrase_dict = {}
-        for question in questions:
-            if "rephrasing_of" in question:
-                question_rephrase_dict[question["question_id"]] = question["rephrasing_of"]
-            else:
-                question_rephrase_dict[question["question_id"]] = question["question_id"]
-
-        # used in evaluation, hack to set attribute
-        from easydict import EasyDict
-        super(EasyDict, registry).__setattr__("question_rephrase_dict", question_rephrase_dict)
-        super(EasyDict, registry).__setitem__("question_rephrase_dict", question_rephrase_dict)
-
+        rephrasings_dict(name, questions)
         answer_path_val = "datasets/VQA/cache/revqa_total_target.pkl"
         answers_val = cPickle.load(open(answer_path_val, "rb"))
         answers = sorted(answers_val, key=lambda x: x["question_id"])
 
         # d_q, d_a = [], []
-        # assert len(questions) == len(answers)
-        # for question, answer in zip(questions, answers):
-        #     assert answer["question_id"] == question["question_id"]
+        assert len(questions) == len(answers)
+        for question, answer in zip(questions, answers):
+            assert answer["question_id"] == question["question_id"]
         #     if "rephrasing_of" not in question:
         #         d_q.append(question)
         #         d_a.append(answer)
@@ -352,7 +350,6 @@ def _load_dataset(dataroot, name, clean_datasets):
         assert_eq(len(questions), len(answers))
         entries = []
         remove_ids = []
-        # Todo: What is this?
         # Removing ids that are present in test-set of other tasks
         if clean_datasets:
             remove_ids = np.load(os.path.join(dataroot, "cache", "coco_test_ids.npy"))
@@ -394,7 +391,6 @@ class VQAClassificationDataset(Dataset):
         """
         super().__init__()
         self.split = split
-        # Todo: What are these?
         ans2label_path = os.path.join(dataroot, "cache", "trainval_ans2label.pkl")
         label2ans_path = os.path.join(dataroot, "cache", "trainval_label2ans.pkl")
         self.ans2label = cPickle.load(open(ans2label_path, "rb"))
@@ -464,8 +460,7 @@ class VQAClassificationDataset(Dataset):
                 self.process_spatials()
             # convert all tokens to tensors
             self.tensorize()
-            if not self.debug:
-                cPickle.dump(self.entries, open(cache_path, "wb"))
+            cPickle.dump(self.entries, open(cache_path, "wb"))
         else:
             logger.info("Loading from %s" % cache_path)
             self.entries = cPickle.load(open(cache_path, "rb"))
@@ -632,6 +627,16 @@ class VQAClassificationDataset(Dataset):
         """
         # import  time
         # time_start = time.time()
+
+        # if hasattr(self, "count"):
+        #     self.count += 1
+        # else:
+        #     self.count = 0
+        #
+        # if self.count <= 4:
+        #     import pdb
+        #     pdb.set_trace()
+
         start_time = time.time()
 
         entry = self.entries[index]
@@ -768,7 +773,10 @@ class VQAClassificationDataset(Dataset):
         self.mean_read_time = ((self.mean_read_time*self.num_samples) + total_time)/(self.num_samples+1)
         self.num_samples += 1
 
-        if self.extra_args.get("contrastive", None) in ["simclr", "better"] and registry.use_rephrasings:
+        # don't use while evaluation loop
+        if self.extra_args.get("contrastive", None) in ["simclr", "better"] \
+                and registry.use_rephrasings \
+                and self.split not in ["minval", "re_total", "re_val"]:
             common_indices = torch.zeros_like(entry['q_token'])
             common_indices_pos = torch.zeros_like(entry['q_token'])
             item_dict["common_inds"] = common_indices
@@ -778,11 +786,15 @@ class VQAClassificationDataset(Dataset):
             # if registry.debug:
             #     return item_dict, item_pos_dict
 
-            # when there's no rephrasing available send the original
-            if len(entry["rephrasing_ids"]) == 0:
-                item_dict["mask"] = item_dict["mask"]*0
-                item_pos_dict["mask"] = item_pos_dict["mask"]*0
-                return (item_dict, item_pos_dict)
+            try:
+                # when there's no rephrasing available send the original
+                if len(entry["rephrasing_ids"]) == 0:
+                    item_dict["mask"] = item_dict["mask"] * 0
+                    item_pos_dict["mask"] = item_pos_dict["mask"] * 0
+                    return (item_dict, item_pos_dict)
+            except:
+                import pdb
+                pdb.set_trace()
 
             que_id = np.random.choice(entry["rephrasing_ids"])
             pos_entry = self.entries[self.question_map[que_id]]
