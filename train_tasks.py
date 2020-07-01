@@ -1,8 +1,3 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
-
-# This source code is licensed under the MIT license found in the
-# LICENSE file in the root directory of this source tree.
-
 import argparse
 import json
 import logging
@@ -20,10 +15,13 @@ from tqdm import tqdm
 from evaluator import Evaluator
 from vilbert.task_utils import (
     load_datasets,
-    ForwardModelsTrain,
-    ForwardModelsVal,
     clip_gradients,
-    get_optim_scheduler)
+    get_optim_scheduler,
+    forward
+)
+
+import wandb
+wandb.init(project="spat")
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -56,29 +54,11 @@ def get_parser_cfg():
         type=str,
         help="The output directory where the model checkpoints will be written.",
     )
-    # parser.add_argument(
-    #     "--config_file",
-    #     required=True,
-    #     type=str,
-    #     help="The config file which specified the model details.",
-    # )
     parser.add_argument(
         "--num_train_epochs",
         default=100,
         type=int,
         help="Total number of training epochs to perform.",
-    )
-    parser.add_argument(
-        "--train_iter_multiplier",
-        default=1.0,
-        type=float,
-        help="multiplier for the multi-task training.",
-    )
-    parser.add_argument(
-        "--train_iter_gap",
-        default=4,
-        type=int,
-        help="forward every n iteration is the validation score is not improving over the last 3 epoch, -1 means will stop",
     )
     parser.add_argument(
         "--warmup_proportion",
@@ -106,24 +86,10 @@ def get_parser_cfg():
         "--seed", type=int, default=0, help="random seed for initialization"
     )
     parser.add_argument(
-        "--gradient_accumulation_steps",
-        type=int,
-        default=1,
-        help="Number of updates steps to accumualte before performing a backward/update pass.",
-    )
-    parser.add_argument(
         "--fp16",
         action="store_true",
         help="Whether to use 16-bit float precision instead of 32-bit",
     )
-    # parser.add_argument(
-    #     "--loss_scale",
-    #     type=float,
-    #     default=0,
-    #     help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
-    #          "0 (default value): dynamic loss scaling.\n"
-    #          "Positive power of 2: static loss scaling value.\n",
-    # )
     parser.add_argument(
         "--num_workers",
         type=int,
@@ -139,23 +105,6 @@ def get_parser_cfg():
     parser.add_argument(
         "--optim", default=None, type=str, help="what to use for the optimization."
     )
-    # parser.add_argument(
-    #     "--tasks", default="", type=str, help="1-2-3... training task separate by -"
-    # )
-    parser.add_argument(
-        "--freeze",
-        default=-1,
-        type=int,
-        help="till which layer of textual stream of vilbert need to fixed.",
-    )
-    parser.add_argument(
-        "--vision_scratch",
-        action="store_true",
-        help="whether pre-trained the image or not.",
-    )
-    parser.add_argument(
-        "--evaluation_interval", default=1, type=int, help="evaluate very n epoch."
-    )
     parser.add_argument(
         "--lr_scheduler",
         default=None,
@@ -167,31 +116,6 @@ def get_parser_cfg():
     )
     parser.add_argument(
         "--resume_file", default="", type=str, help="Resume from checkpoint"
-    )
-    parser.add_argument(
-        "--dynamic_attention",
-        action="store_true",
-        help="whether use dynamic attention.",
-    )
-    parser.add_argument(
-        "--clean_train_sets",
-        default=False,
-        type=bool,
-        help="whether clean train sets for multitask data.",
-    )
-    parser.add_argument(
-        "--visual_target",
-        default=0,
-        type=int,
-        help="which target to use for visual branch. \
-        0: soft label, \
-        1: regress the feature, \
-        2: NCE loss.",
-    )
-    parser.add_argument(
-        "--task_specific_tokens",
-        action="store_true",
-        help="whether to use task specific tokens for the multi-task learning.",
     )
     parser.add_argument(
         "--task_file", required=True, type=str, help="joint config file"
@@ -243,6 +167,10 @@ def build_save_path(args):
 
 
 def send_to(batch_dict, device):
+
+    if device.type == "cpu":
+        return
+
     for key, value in batch_dict.items():
         if isinstance(value, torch.Tensor):
             batch_dict[key] = value.cuda(device=device, non_blocking=True)
@@ -271,14 +199,10 @@ def main():
 
     base_lr = task_cfg["lr"]
     device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+    from tools.registry import registry
+    registry.device = device
     n_gpu = torch.cuda.device_count()
     logger.info(f"Device: {device}, Num. GPUs: {n_gpu}")
-
-    # logger.info(
-    #     "device: {} n_gpu: {}, distributed training: {}, 16-bits training: {}".format(
-    #         a, n_gpu, bool(args.local_rank != -1), args.fp16
-    #     )
-    # )
 
     # Apply gradient-clipping!
     if task_cfg["grad_clip_mode"] == "all":
@@ -291,42 +215,6 @@ def main():
     dataloaders = load_datasets(args, task_cfg, ["train", "val"])
     logdir = os.path.join(savePath, "logs")
 
-    # Todo: Add new logger
-    # tbLogger = utils.tbLogger(
-    #     logdir,
-    #     savePath,
-    #     task_names,
-    #     task_ids,
-    #     task_num_iters,
-    #     args.gradient_accumulation_steps,
-    # )
-
-    # if args.visual_target == 0:
-    #     config.v_target_size = 1601
-    #     config.visual_target = args.visual_target
-    # else:
-    #     config.v_target_size = 2048
-    #     config.visual_target = args.visual_target
-
-    # if args.task_specific_tokens:
-    #     config.task_specific_tokens = True
-
-    # if not os.path.exists(args.output_dir):
-    #     os.makedirs(args.output_dir)
-
-    # task_ave_iter = {}
-    # # task_stop_controller = {}
-    # for task_id, num_iter in task_num_iters.items():
-    #     task_ave_iter[task_id] = int(
-    #         task_cfg["num_epoch"]
-    #         * num_iter
-    #         * args.train_iter_multiplier
-    #         / args.num_train_epochs
-    #     )
-    #
-    # task_ave_iter_list = sorted(task_ave_iter.values())
-    median_num_iter = len(dataloaders["train"])
-
     # Build config
     mmt_config = BertConfig.from_dict(task_cfg["M4C"])
     text_bert_config = BertConfig.from_dict(task_cfg["TextBert"])
@@ -334,11 +222,7 @@ def main():
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Training Parameters: {trainable_params}")
     # LOAD LOSSES
-    # Todo: Just use the loss from dictionary in task_utils
-    # task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
     optimizer_grouped_parameters = model.get_optimizer_parameters(base_lr)
-    # Todo: what is this?
-    print(len(list(model.named_parameters())), len(optimizer_grouped_parameters))
 
     optimizer, warmup_scheduler = get_optim_scheduler(task_cfg, optimizer_grouped_parameters, base_lr)
 
@@ -375,13 +259,6 @@ def main():
     print("  Num Iters: ", len(dataloaders["train"]))
     print("  Batch size: ", task_cfg["batch_size"])
 
-    # task_iter_train = {name: None for name in task_ids}
-    # task_count = {name: 0 for name in task_ids}
-
-    # if start_epoch >= args.num_train_epochs:
-    #     logger.info("Resetting Train Epochs to 0")
-    #     start_epoch = 0
-
     # This validation score is used for model-saving.
     best_val_epoch, best_val_score = -1, 0
 
@@ -392,18 +269,23 @@ def main():
     global_step = 0
     start_epoch = 0
 
-    loss_values = []
+    loss_values, score_values = [], []
     # TRAINING LOOP
     for epoch_id in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
         model.train()
         for step, batch in tqdm(enumerate(dataloaders["train"]), desc="Iters", total=len(dataloaders["train"])):
             send_to(batch, device)
-            loss, score = ForwardModelsTrain(
-                task_cfg,
-                model,
-                batch
-            )
+            loss, score = forward(task_cfg, model, batch)
             loss_values.append(loss)
+            score_values.append(score)
+
+            # log to wandb
+            wandb.log({
+                'train_accuracy': float(score),
+                'train_loss': float(loss),
+                'learning_rate': float(optimizer.param_groups[0]["lr"])
+            })
+
             loss.backward()
             if task_cfg["grad_clip_mode"] == "all":
                 clip_gradients(model, task_cfg["max_grad_norm"], task_cfg["grad_clip_mode"])
@@ -416,30 +298,14 @@ def main():
             model.zero_grad()
             optimizer.zero_grad()
 
-            # if first_task:
-            #     global_step += 1
-            #     first_task = False
-            #
-            # if default_gpu:
-            #     tbLogger.step_train(
-            #         epochId,
-            #         iterId,
-            #         float(loss),
-            #         float(score),
-            #         optimizer.param_groups[0]["lr"],
-            #         task_id,
-            #         "train",
-            #     )
-
             if step % 20 == 0 and step != 0:
-                # tbLogger.showLossTrain()
-                print(f"Loss: {sum(loss_values)/len(loss_values)}")
-                loss_values = []
-                if step % (100 * args.gradient_accumulation_steps) == 0:
-                    logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}")
+                log_str = f"Batch: loss = {float(sum(loss_values)/len(loss_values))}; " \
+                          f"accuracy  = {float(sum(score_values)/len(score_values))}; "
+                loss_values, score_values = [], []
+                if step % (100) == 0:
+                    log_str += f"\n lr rates = {[float(grp['lr']) for grp in optimizer.param_groups]}"
+                logger.info(log_str)
 
-        import pdb
-        pdb.set_trace()
 
         curr_val_score = evaluate(
             dataloaders["val"],
@@ -492,39 +358,38 @@ def evaluate(
 
     model.eval()
     with torch.no_grad():
+        total_loss, total_score, total_batch_size = [], [], []
         for i, batch in enumerate(val_loader):
             send_to(batch, device)
-            loss, score, batch_size = ForwardModelsVal(task_cfg, batch, model)
-            # tbLogger.step_val(
-            #     epoch_id, float(loss), float(score), task_id, batch_size, "val"
-            # )
-            # if default_gpu:
-            #     sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
-            #     sys.stdout.flush()
+            loss, score, batch_size = forward(task_cfg, model,  batch, run_type="evaluation")
+            total_loss.append(loss)
+            total_score.append(score)
+            total_batch_size.append(batch_size)
 
-    # score = tbLogger.showLossVal(task_id, task_stop_controller=None)
+    # log to wandb
+    wandb.log({
+        'val_accuracy': sum(total_score) / sum(total_batch_size),
+        'val_loss': sum(total_loss) / sum(total_batch_size)
+    })
+
     model.train()
     return score
 
 
 if __name__ == "__main__":
-    try:
-        task_file_path, output_checkpoint_path, use_share2 = main()
-        assert os.path.exists(task_file_path)
-        assert os.path.exists(output_checkpoint_path)
+    task_file_path, output_checkpoint_path, use_share2 = main()
+    assert os.path.exists(task_file_path)
+    assert os.path.exists(output_checkpoint_path)
 
-        evaluator = Evaluator(
-            task_file=task_file_path,
-            config_file="config/spatial_m4c_mmt_textvqa.json",
-            batch_size=64,
-            model_ckpt=output_checkpoint_path,
-            short_eval=False,
-            use_share2=False,
-        )
-        for beam_size in [1, 5]:
-            for split in ["val", "test"]:
-                evaluator.load_split(split, beam_size)
-                evaluator.evaluate()
-    finally:
-        import os
-        os.system("watch -n 1 session-quit-error")
+    evaluator = Evaluator(
+        task_file=task_file_path,
+        config_file="config/spatial_m4c_mmt_textvqa.json",
+        batch_size=64,
+        model_ckpt=output_checkpoint_path,
+        short_eval=False,
+        use_share2=False,
+    )
+    for beam_size in [1, 5]:
+        for split in ["val", "test"]:
+            evaluator.load_split(split, beam_size)
+            evaluator.evaluate()

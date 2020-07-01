@@ -89,7 +89,9 @@ class TextVQAAccuracy:
             })
 
         accuracy, pred_scores = self.evaluator.eval_pred_list(predictions)
-        accuracy = torch.tensor(accuracy).cuda()
+
+        if registry.device.type != "cpu":
+            accuracy = torch.tensor(accuracy).cuda()
 
         # Todo: below code is used for m4c stats, but we can't use it in data_parallel
         #   otherwise the parallel model tries to gather it (and throws error, because it's a list)

@@ -49,3 +49,4 @@ checkpoints/
 .ipynb_checkpoints
 
 .vscode/
+wandb

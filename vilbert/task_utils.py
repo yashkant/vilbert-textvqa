@@ -90,12 +90,35 @@ MetricsMap = {
     "STVQA": STVQAAccuracy(),
 }
 
+def forward(
+        task_cfg,
+        model,
+        batch_dict,
+        return_batch=False,
+        run_type="train"
+    ):
+
+    if run_type == "evaluation" and registry.get("is_running_validation", False):
+        return None, None, None
+
+    loss = LossMap[task_cfg["loss"]]
+    textvqa_metric = MetricsMap[task_cfg["metric"]]
+    results_dict = model(batch_dict)
+    batch_dict.update(results_dict)
+    loss = loss(batch_dict["textvqa_scores"], batch_dict["targets"], batch_dict["train_loss_mask"])
+    batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, batch_dict["textvqa_scores"])
+
+    if return_batch:
+        return float(loss), float(batch_acc), len(batch_dict["question_id"]), batch_dict
+
+    return loss, batch_acc
+
 
 def ForwardModelsVal(task_cfg,
                      batch_dict,
                      model,
                      return_batch=False):
-    
+
     results_dict = model(batch_dict)
     batch_dict.update(results_dict)
 
