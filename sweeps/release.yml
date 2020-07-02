@@ -5,19 +5,20 @@ metric: TextVQA
 process: normal
 task_id: 19
 
-# TextVQA
-dataroot: datasets/textvqa
-features_h5path1: "/srv/share/ykant3/vilbert-mt/features/obj/trainval_obj.lmdb" # obj-features (use holder to different splits)
-features_h5path2: "/srv/share/ykant3/vilbert-mt/features/ocr/trainval_ocr.lmdb" # ocr-features
+# TextVQA holders and folders
+tvqa_dataroot: datasets/textvqa
+tvqa_obj_features: "/srv/share/ykant3/vilbert-mt/features/obj/{}_obj.lmdb"
+tvqa_ocr_features: "/srv/share/ykant3/vilbert-mt/features/ocr/{}_ocr.lmdb"
+tvqa_imdb: "/nethome/ykant3/pythia/data/imdb/textvqa_0.5/textvqa_{}.npy"
 
-# STVQA
+# ST-VQA holders and folders
 stvqa_dataroot: datasets/stvqa
-stvqa_features_h5path1: "/srv/share/ykant3/scene-text/features/obj/lmdbs/train_task_fixed.lmdb" # object features
-stvqa_features_h5path2: "/srv/share/ykant3/scene-text/features/ocr/lmdbs/train_task_fixed.lmdb" # ocr features
+stvqa_obj_features: "/srv/share/ykant3/scene-text/features/obj/lmdbs/train_task_fixed.lmdb"
+stvqa_ocr_features: "/srv/share/ykant3/scene-text/features/ocr/lmdbs/train_task_fixed.lmdb"
+stvqa_imdb: "/nethome/ykant3/pythia/data/imdb/textvqa_0.5/textvqa_{}.npy"
 
 max_seq_length: 20
 max_obj_num: 100 # object features + avg feature
-max_resnet_num: 100 # grid features + avg feature
 max_ocr_num: 50 # ocr tokens + avg feature
 batch_size: 96
 train_split: train
@@ -47,8 +48,10 @@ vocab_type: 5k
 heads_type: mix
 train_on: ["stvqa", "textvqa"]
 val_on: ["textvqa"]
-num_workers: 16
+num_workers: 0
 needs_spatial: true
+layer_type_list: [n,n,s,s,s,s]
+mix_list: [none, none, share3, share3, share3, share3]
 
 M4C:
   obj_drop: 0.1
@@ -72,8 +75,6 @@ M4C:
   max_obj_num: 100
   max_ocr_num: 50
   max_seq_length: 20
-  layer_type_list: [n,n,s,s,s,s]
-  mix_list: [none, none, share3, share3, share3, share3]
   attention_mask_quadrants: [1,2]
   beam_size: 1
 

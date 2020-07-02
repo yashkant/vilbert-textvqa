@@ -1,18 +1,13 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
-
-# This source code is licensed under the MIT license found in the
-# LICENSE file in the root directory of this source tree.
-
 import _pickle as cPickle
-import logging
 import multiprocessing as mp
+import os
 
 from easydict import EasyDict as edict
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
 from tools.objects_to_byte_tensor import enc_obj2bytes
-from vilbert.spatial_utils_regat import torch_broadcast_adj_matrix, torch_broadcast_gauss_bias, torch_broadcast_bins
+from vilbert.spatial_utils_regat import torch_broadcast_adj_matrix
 from ._image_features_reader import ImageFeaturesH5Reader
 from .textvqa_processors import *
 
@@ -20,36 +15,21 @@ logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 
-def assert_eq(real, expected):
-    assert real == expected, "%s (true) vs %s (expected)" % (real, expected)
-
-
-def _load_dataset(dataroot, name, debug, return_qid_map=False):
+def _load_dataset(path_holder, name, return_qid_map=False):
     """Load entries from Imdb
-
-    dataroot: root path of dataset
-    name: 'train', 'val', 'trainval', 'minsval'
-
     (YK): We load questions and answers corresponding to
         the splits, and return entries.
     """
 
-    if name == "train" or name == "val" or name == "test" or name == "train_val" or name =="mini_val":
-        imdb_holder = "imdb_google_det_bbox_textvqa_multidec_sa_info_ascii_{}.npy"
-        if name == "test":
-            imdb_holder = "imdb_google_det_bbox_textvqa_info_{}.npy"
-
-        if debug:
-            imdb_holder = "debug_" + imdb_holder
-
-        if "_val" in name:
-            imdb_holder = "{}.npy"
-
-        imdb_path = os.path.join(dataroot, "imdb/textvqa_0.5/", imdb_holder.format(name))
-        logger.info(f"Loading IMDB for {name}" if not debug else f"Loading IMDB for {name} in debug mode")
-        imdb_data = ImageDatabase(imdb_path)
+    # train and val features are in the same file
+    if name in ["train", "val", "test"]:
+        imdb_path = path_holder.format(name)
     else:
         assert False, "data split is not recognized."
+
+    logger.info(f"Loading IMDB for {name}" if not debug else f"Loading IMDB for {name} in debug mode")
+    logger.info(f"IMDB path: {imdb_path}")
+    imdb_data = ImageDatabase(imdb_path)
 
     # build entries with only the essential keys
     entries = []
@@ -62,12 +42,13 @@ def _load_dataset(dataroot, name, debug, return_qid_map=False):
         "image_height",
         "image_width",
         "google_ocr_tokens_filtered",
-        # "google_ocr_info_filtered",
     ]
+
+    assert len(store_keys) == len(imdb_data[1].keys())
 
     logger.info(f"Building Entries for {name}")
     for idx, instance in enumerate(imdb_data):
-        entry = dict([(key, instance[key]) for key in store_keys if key in instance])
+        entry = dict([(key, instance[key]) for key in store_keys])
         qid_map[idx] = instance["question_id"]
         entries.append(entry)
 
@@ -78,6 +59,56 @@ def _load_dataset(dataroot, name, debug, return_qid_map=False):
 
 
 class TextVQADataset(Dataset):
+
+    def _set_attrs(self, task_cfg):
+
+        keys = [
+            ("tvqa_dataroot", None),
+            ("max_seq_length", None),
+            ("tvqa_ocr_features", None),
+            ("tvqa_obj_features", None),
+            ("tvqa_imdb", None),
+            ("max_obj_num", None),
+            ("max_ocr_num", None),
+            ("mix_list", None),
+            ("debug", False),
+            ("vocab_type", "4k"),
+            ("dynamic_sampling", True),
+            ("distance_threshold", 0.5),
+            ("heads_type", "none"),
+            ("clean_answers", True)
+        ]
+
+        for key, default in keys:
+            if key in task_cfg:
+                setattr(self, key, task_cfg[key])
+            elif default is not None:
+                setattr(self, key, default)
+            else:
+                raise ValueError
+
+        registry_keys = [
+            ("vocab_type", "4k"),
+            ("distance_threshold", 0.5)
+        ]
+
+        for key, default in registry_keys:
+            if key in task_cfg:
+                registry[key] = task_cfg[key]
+            elif default is not None:
+                registry[key] = default
+            else:
+                raise ValueError
+
+    def set_head_types(self, task_cfg):
+        head_types = []
+        if "mix_list" in task_cfg:
+            for head_type in set(task_cfg["mix_list"]):
+                if head_type in self.matrix_type_map:
+                    head_types.extend(self.matrix_type_map[head_type])
+        self.head_types = list(set(head_types))
+        self.head_types.sort()
+
     def __init__(
             self,
             split,
@@ -88,197 +119,96 @@ class TextVQADataset(Dataset):
             processing_threads=32,
             task_cfg=None
     ):
-        """
-        (YK): Builds self.entries by reading questions and answers and caches them.
-        """
         super().__init__()
-        dataroot = task_cfg["dataroot"]
         self.split = split
-        self._max_seq_length = task_cfg["max_seq_length"]
+        self._set_attrs(task_cfg)
 
-        if self.split == "test":
-            self.obj_features_reader = ImageFeaturesH5Reader(
-                features_path="/srv/share/ykant3/vilbert-mt/features/obj/test_obj.lmdb", in_memory=True
-            )
-            self.ocr_features_reader = ImageFeaturesH5Reader(
-                features_path="/srv/share/ykant3/vilbert-mt/features/ocr/test_ocr.lmdb", in_memory=True
-            )
+        if split in ["train", "val"]:
+            format_str = "trainval"
         else:
-            self.obj_features_reader = ImageFeaturesH5Reader(
-                features_path=task_cfg["features_h5path1"], in_memory=True
-            )
-            self.ocr_features_reader = ImageFeaturesH5Reader(
-                features_path=task_cfg["features_h5path2"], in_memory=True
-            )
+            format_str = "test"
+
+        self.obj_features_reader = ImageFeaturesH5Reader(
+            features_path=self.tvqa_obj_features.format(format_str),
+            in_memory=True
+        )
+        self.ocr_features_reader = ImageFeaturesH5Reader(
+            features_path=self.tvqa_ocr_features.format(format_str),
+            in_memory=True
+        )
+
         self._tokenizer = tokenizer
         self._padding_index = padding_index
-        self.max_obj_num = task_cfg["max_obj_num"]
-        self.max_ocr_num = task_cfg["max_ocr_num"]
-        assert self.max_obj_num == 100
-        assert self.max_ocr_num == 50
-        self.max_resnet_num = task_cfg["max_resnet_num"]
-        self.debug = task_cfg.get("debug", False)
-        self.vocab_type = task_cfg.get("vocab_type", "4k")
-        self.dynamic_sampling = task_cfg.get("dynamic_sampling", True)
-        self.distance_threshold = task_cfg.get("distance_threshold", 0.5)
         self.processing_threads = processing_threads
-        self.heads_type = task_cfg.get("heads_type", "none")
-        self.clean_answers = task_cfg.get("clean_answers", True)
-        self.randomize = task_cfg.get("randomize", -1)
-        self.use_gauss_bias = task_cfg.get("use_gauss_bias", False)
-        self.gauss_bias_dev_factor = task_cfg.get("gauss_bias_dev_factor", -1.0)
-        self.use_attention_bins = task_cfg.get("use_attention_bins", False)
-        self.attention_bins = task_cfg.get("attention_bins", [-1])
         self.matrix_type_map = {
             "share3": ["3"],
             "share5": ["3", "5"],
             "share7": ["3", "5", "7"],
             "share9": ["3", "5", "7", "9"],
         }
-        self.restrict_oo = task_cfg.get("restrict_oo", False)
-        self.extra_args = task_cfg
-        self.needs_spatial = task_cfg.get("needs_spatial", False)
-
+        # check head types to process
+        self.set_head_types(task_cfg)
+        self.needs_spatial = len(self.head_types) > 0
 
         registry.vocab_type = self.vocab_type
         registry.distance_threshold = self.distance_threshold
-        registry.randomize = self.randomize
-        registry.use_gauss_bias = self.use_gauss_bias
-        registry.gauss_bias_dev_factor = self.gauss_bias_dev_factor
         registry.mix_list = task_cfg["M4C"].get("mix_list", ["none"])
-        registry.use_attention_bins = self.use_attention_bins
-        registry.attention_bins = self.attention_bins
-        registry.restrict_oo = self.restrict_oo
-
         logger.info(f"Dynamic Sampling is {self.dynamic_sampling}")
         logger.info(f"distance_threshold is {self.distance_threshold}")
         logger.info(f"heads_type: {self.heads_type}")
         logger.info(f"Clean Answers is {self.clean_answers}")
-        logger.info(f"Randomize is {self.randomize}")
         logger.info(f"needs_spatial is {self.needs_spatial}")
-        logger.info(f"use_gauss_bias is {self.use_gauss_bias}")
-        logger.info(f"gauss_bias_dev is {self.gauss_bias_dev_factor}")
-        logger.info(f"restrict_oo is {self.restrict_oo}")
 
-        head_types = []
-        if "mix_list" in self.extra_args["M4C"]:
-            for head_type in set(self.extra_args["M4C"]["mix_list"]):
-                if head_type in self.matrix_type_map:
-                    head_types.extend(self.matrix_type_map[head_type])
 
-        self.head_types = list(set(head_types))
-        self.head_types.sort()
+        cache_path = os.path.join(
+            self.tvqa_dataroot,
+            "cache",
+            f"{task}_{split}_{str(self.max_seq_length)}"
+            f"_vocab_type{self.vocab_type}_dynamic_"
+            f"{self.dynamic_sampling}.pkl",
+        )
 
-        # We only randomize the spatial-adj-matrix
-        if self.heads_type != "none":
-            assert self.randomize <= 0
-
-        clean_train = ""
-
-        if "roberta" in bert_model:
-            cache_path = os.path.join(
-                dataroot,
-                "cache",
-                task
-                + "_"
-                + split
-                + "_"
-                + "roberta"
-                + "_"
-                + str(self._max_seq_length)
-                + clean_train
-                + ".pkl",
-            )
-        else:
-            cache_path = os.path.join(
-                dataroot,
-                "cache",
-                task + "_" + split + "_" + str(self._max_seq_length) + clean_train + f"_vocab_type{self.vocab_type}"
-                + f"_dynamic_{self.dynamic_sampling}" + ".pkl",
-            )
-
-        if self.distance_threshold != 0.5:
-            raise AssertionError
-            cache_path = cache_path.split(".")[0]
-            cache_path = cache_path + f"_threshold_{self.distance_threshold}" + ".pkl"
-
-        if self.randomize > 0:
-            cache_path = cache_path.split(".")[0]
-            cache_path = cache_path + f"_randomize_{self.randomize}" + ".pkl"
-        elif self.needs_spatial:
+        if self.needs_spatial:
             cache_path = cache_path.split(".")[0]
             cache_path = cache_path + f"_spatial" + ".pkl"
-            if self.use_gauss_bias:
-                _types = list(set(registry.mix_list))
-                _types.sort()
-                _types = "-".join(_types)
-                cache_path = cache_path.split(".")[0]
-                cache_path = cache_path + f"_gauss_factor_{self.gauss_bias_dev_factor}_heads_type_{_types}" + ".pkl"
 
         logger.info(f"Cache Name:  {cache_path}")
 
         load_cache = False
-        # dirty hack
-        if "_val" in split:
-            load_cache = True
 
-        if (not os.path.exists(cache_path) or self.debug) and (not load_cache):
-            # Initialize Processors
-
+        if (not os.path.exists(cache_path) or self.debug) and (load_cache):
+            # initialize Processors (only once)
             if "processors" not in registry:
                 self.processors = Processors(self._tokenizer, vocab_type=self.vocab_type)
                 registry.processors = self.processors
             else:
                 self.processors = registry.processors
 
-            self.entries, _ = _load_dataset(dataroot, split, self.debug)
+            self.entries, _ = _load_dataset(self.tvqa_imdb, split)
+
             # convert questions to tokens, create masks, segment_ids
             self.process()
 
-            if self.randomize > 0:
-                raise AssertionError
-                self.process_random_spatials()
-            elif self.needs_spatial:
+            # process spatial graphs
+            if self.needs_spatial:
                 self.process_spatials()
 
+            # cache entries
             if not self.debug:
                 cPickle.dump(self.entries, open(cache_path, "wb"))
         else:
             if "processors_only_registry" not in registry:
+                # only initialize the M4C processor (for registry)
                 self.processors = Processors(
                     self._tokenizer,
                     only_registry=True,
                     vocab_type=self.vocab_type
-                )  # only initialize the M4C processor (for registry)
+                )
                 registry.processors_only_registry = self.processors
             else:
                 self.processors = registry.processors_only_registry
 
-            # dirty hack
-            if load_cache and "mini" not in cache_path:
-                logger.info("Loading from both caches!")
-                train_entries = cPickle.load(open("datasets/textvqa/cache/TextVQA_train_20_vocab_type5k_dynamic_True_spatial.pkl", "rb"))
-                val_entries = cPickle.load(open("datasets/textvqa/cache/TextVQA_val_20_vocab_type5k_dynamic_True_spatial.pkl", "rb"))
-                train_entries.extend(val_entries)
-                qid_map = {int(x["question_id"]):x for x in train_entries}
-                assert len(qid_map) == len(train_entries)
-                entries, _ = _load_dataset(dataroot, "train_val", False, return_qid_map=False)
-                self.entries = []
-                for entry in entries:
-                    self.entries.append(qid_map[entry["question_id"]])
-                return
-            elif load_cache and "mini" in cache_path:
-                logger.info("Loading from val cache!")
-                val_entries = cPickle.load(open("datasets/textvqa/cache/TextVQA_val_20_vocab_type5k_dynamic_True_spatial.pkl", "rb"))
-                qid_map = {int(x["question_id"]):x for x in val_entries}
-                assert len(qid_map) == len(val_entries)
-                entries, _ = _load_dataset(dataroot, "mini_val", False, return_qid_map=False)
-                self.entries = []
-                for entry in entries:
-                    self.entries.append(qid_map[entry["question_id"]])
-                return
-
-            # otherwise load cache!
+            # load cache!
             logger.info("Loading from %s" % cache_path)
             self.entries = cPickle.load(open(cache_path, "rb"))
 
@@ -339,35 +269,8 @@ class TextVQADataset(Dataset):
         
         assert len(results) == len(self.entries)
         for result, entry in zip(results, self.entries):
-            entry["spatial_adj_matrix_shared"] = result[0]
-            entry["spatial_gauss_bias_shared"] = result[1]
-
-    def process_random_spatials(self):
-        pad_obj_ocr_bboxes_list = []
-        for entry in tqdm(self.entries, desc="Reading Entries"):
-            # Adding spatial graph matrix
-            obj_features, obj_num_boxes, obj_bboxes, _ = self.obj_features_reader[entry["image_id"]]
-            obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes - 1, obj_bboxes[1:]
-            _, _, pad_obj_bboxes = self._pad_features(
-                obj_features, obj_bboxes, obj_num_boxes, self.max_obj_num, tensorize=False
-            )
-            ocr_features, ocr_num_boxes, ocr_bboxes, _ = self.ocr_features_reader[entry["image_id"]]
-            ocr_features, ocr_num_boxes, ocr_bboxes = ocr_features[1:], ocr_num_boxes - 1, ocr_bboxes[1:]
-            _, _, pad_ocr_bboxes = self._pad_features(
-                ocr_features, ocr_bboxes, ocr_num_boxes, self.max_ocr_num, tensorize=False
-            )
-            # Append bboxes to the list
-            pad_obj_ocr_bboxes_list.append(np.concatenate([pad_obj_bboxes[:, :-1], pad_ocr_bboxes[:, :-1]], axis=0))
-
-        logger.info(f"Processsing Random Spatial Relations with {self.processing_threads} threads")
-        pool = mp.Pool(self.processing_threads)
-        # map is synchronous (ordered)
-        results = pool.map(RandomSpatialProcessor, pad_obj_ocr_bboxes_list)
-        pool.close()
-        pool.join()
-        assert len(results) == len(self.entries)
-        for result, entry in zip(results, self.entries):
-            entry["spatial_adj_matrix"] = result
+            entry["spatial_adj_matrix_shared"] = result
+            # entry["spatial_gauss_bias_shared"] = result[1]
 
     def __len__(self):
         return len(self.entries)
@@ -394,18 +297,7 @@ class TextVQADataset(Dataset):
 
         return pad_features, mask_features, pad_bboxes
 
-    def _debug_inputs(self):
-        for entry in self.entries:
-            if entry["question_id"] == 24823:
-                return entry
-
     def __getitem__(self, index):
-        """
-        1. Get image-features/bboxes and image mask (as nump-arrays), tensorize them.
-        2. Get question, input_mask, segment_ids and coattention mask
-        3. Build target (vocab-dim) with VQA scores scattered at label-indices
-        4. Return
-        """
         entry = self.entries[index]
         image_id = entry["image_id"]
 
@@ -419,14 +311,13 @@ class TextVQADataset(Dataset):
 
         # add ocr-features and bounding boxes
         ocr_features, ocr_num_boxes, ocr_bboxes, _ = self.ocr_features_reader[image_id]
+
         # remove avg-features
         ocr_features, ocr_num_boxes, ocr_bboxes = ocr_features[1:], ocr_num_boxes - 1, ocr_bboxes[1:]
         pad_ocr_features, pad_ocr_mask, pad_ocr_bboxes = self._pad_features(
             ocr_features, ocr_bboxes, ocr_num_boxes, self.max_ocr_num
         )
 
-        co_attention_mask = torch.cat((pad_obj_mask, pad_ocr_mask))
-        co_attention_mask = co_attention_mask.unsqueeze(1).repeat(1, self._max_seq_length)
         segment_ids = torch.zeros_like(entry["question_mask"])
 
         item = edict({
@@ -438,8 +329,6 @@ class TextVQADataset(Dataset):
             "pad_ocr_bboxes": pad_ocr_bboxes,
             "segment_ids": segment_ids
         })
-
-        item["co_attention_mask"] = co_attention_mask
 
         if "answers" in entry:
             # process answers (dynamic sampling)
@@ -460,128 +349,62 @@ class TextVQADataset(Dataset):
         if self.needs_spatial:
             # In the first iteration expand all the spatial relation matrices
             if "spatial_adj_matrices" not in entry:
-                if self.randomize > 0:
-                    rows, cols, slices = entry["spatial_adj_matrix"].shape
-                    assert slices == self.randomize
-                    adj_matrices = []
+                entry["spatial_adj_matrices"] = {}
 
-                    # Expand each slice
-                    for slice_idx in range(slices):
-                        adj_matrix_slice = torch_broadcast_adj_matrix(
-                            torch.from_numpy(entry["spatial_adj_matrix"][:, :, slice_idx]),
-                            label_num=12
-                        )
-                        adj_matrices.append(adj_matrix_slice)
+                build_map = {
+                    "3": ["1", "31", "32"],
+                    "5": ["3", "51", "52"],
+                    "7": ["5", "71", "72"],
+                    "9": ["7", "91", "92"],
+                }
 
-                    # Aggregate each slice
-                    entry["spatial_adj_matrix"] = adj_matrices[0]
-                    for matrix_slice in adj_matrices[1:]:
-                        entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], matrix_slice)
+                entry["spatial_adj_matrices"]["1"] = torch_broadcast_adj_matrix(
+                    torch.from_numpy(entry["spatial_adj_matrix_shared"]["1"])
+                )
 
-                    entry["spatial_loss_mask"] = entry["spatial_ocr_relations"] = None
-                else:
-                    entry["spatial_adj_matrices"] = {}
-                    entry["gauss_bias_matrices"] = {}
-                    entry["bins_matrices"] = {}
+                entry["spatial_adj_matrices"]["full_spatial"] = \
+                    (torch.from_numpy(entry["spatial_adj_matrix_shared"]["1"]) != 0).int()
 
-                    build_map = {
-                        "3": ["1", "31", "32"],
-                        "5": ["3", "51", "52"],
-                        "7": ["5", "71", "72"],
-                        "9": ["7", "91", "92"],
-                    }
 
-                    entry["spatial_adj_matrices"]["1"] = torch_broadcast_adj_matrix(
-                        torch.from_numpy(entry["spatial_adj_matrix_shared"]["1"]),
-                        label_num=12
+                for head_type in self.head_types:
+                    use_matrix_types = build_map[head_type]
+                    assert use_matrix_types[0] in entry["spatial_adj_matrices"]
+                    init_matrix = entry["spatial_adj_matrices"][use_matrix_types[0]]
+                    first_matrix = torch_broadcast_adj_matrix(
+                        torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[1]])
                     )
-
-                    entry["spatial_adj_matrices"]["full_spatial"] = \
-                        (torch.from_numpy(entry["spatial_adj_matrix_shared"]["1"]) != 0).int()
-
-
-                    if self.use_gauss_bias:
-                        entry["gauss_bias_matrices"]["1"] = torch_broadcast_gauss_bias(
-                                torch.from_numpy(entry["spatial_adj_matrix_shared"]["1"]),
-                                torch.from_numpy(entry["spatial_gauss_bias_shared"]["1"])
-                            )
-
-                    if self.use_attention_bins:
-                        entry["bins_matrices"]["1"] = torch_broadcast_bins(
-                                torch.from_numpy(entry["spatial_adj_matrix_shared"]["1"]),
-                                1
-                            )
-
-
-                    for head_type in self.head_types:
-                        use_matrix_types = build_map[head_type]
-                        assert use_matrix_types[0] in entry["spatial_adj_matrices"]
-                        init_matrix = entry["spatial_adj_matrices"][use_matrix_types[0]]
-                        first_matrix = torch_broadcast_adj_matrix(
-                            torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[1]]),
-                            label_num=12
-                        )
-                        second_matrix = torch_broadcast_adj_matrix(
-                            torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[2]]),
-                            label_num=12
-                        )
-                        init_matrix = torch.max(init_matrix, first_matrix)
-                        init_matrix = torch.max(init_matrix, second_matrix)
-                        entry["spatial_adj_matrices"][head_type] = init_matrix
-
-                        if self.use_gauss_bias:
-                            assert use_matrix_types[0] in entry["spatial_gauss_bias_shared"]
-                            gauss_init_matrix = entry["gauss_bias_matrices"][use_matrix_types[0]]
-                            gauss_first_matrix = torch_broadcast_gauss_bias(
-                                torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[1]]),
-                                torch.from_numpy(entry["spatial_gauss_bias_shared"][use_matrix_types[1]]),
-                            )
-                            gauss_second_matrix = torch_broadcast_gauss_bias(
-                                torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[2]]),
-                                torch.from_numpy(entry["spatial_gauss_bias_shared"][use_matrix_types[2]]),
-                            )
-                            gauss_init_matrix = torch.max(gauss_init_matrix, gauss_first_matrix)
-                            gauss_init_matrix = torch.max(gauss_init_matrix, gauss_second_matrix)
-                            entry["gauss_bias_matrices"][head_type] = gauss_init_matrix
-
-                        if self.use_attention_bins:
-                            bins_init_matrix = entry["bins_matrices"][use_matrix_types[0]]
-                            bins_first_matrix = torch_broadcast_bins(
-                                torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[1]]),
-                                (int(use_matrix_types[1][0]) + 1)/2
-                            )
-                            bins_second_matrix = torch_broadcast_bins(
-                                torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[2]]),
-                                (int(use_matrix_types[2][0]) + 1)/2
-                            )
-                            bins_init_matrix = torch.max(bins_init_matrix, bins_first_matrix)
-                            bins_init_matrix = torch.max(bins_init_matrix, bins_second_matrix)
-                            entry["bins_matrices"][head_type] = bins_init_matrix
+                    second_matrix = torch_broadcast_adj_matrix(
+                        torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[2]])
+                    )
+                    init_matrix = torch.max(init_matrix, first_matrix)
+                    init_matrix = torch.max(init_matrix, second_matrix)
+                    entry["spatial_adj_matrices"][head_type] = init_matrix
 
         item.update(entry)
 
         # remove unwanted keys
-        unwanted_keys_item = ['spatial_gauss_bias_shared',
-                         'spatial_adj_matrix_shared',
-                         'cleaned_ocr_tokens',
-                         'image_id',
-                         'image_path']
+        unwanted_keys_item = [
+                 'spatial_adj_matrix_shared',
+                 'spatial_adj_matrix',
+                 'cleaned_ocr_tokens',
+                 'image_id',
+                 'image_path'
+        ]
 
         for key in unwanted_keys_item:
             if key in item:
                 item.pop(key, None)
 
-        unwanted_keys_entry = [
-            'spatial_adj_matrices',
-            'gauss_bias_matrices',
-            'bin_matrices',
-        ]
-
-        for key in unwanted_keys_entry:
-            if key in entry:
-                entry.pop(key, None)
+        # unwanted_keys_entry = [
+        #     'spatial_adj_matrices',
+        # ]
+        #
+        # for key in unwanted_keys_entry:
+        #     if key in entry:
+        #         entry.pop(key, None)
 
         # Collate Function doesn't work correctly with lists
+
         for key, value in item.items():
             if not isinstance(value, torch.Tensor) and not isinstance(value, dict):
                 try:
@@ -592,54 +415,6 @@ class TextVQADataset(Dataset):
                     pdb.set_trace()
 
         return item
-
-
-class Processors:
-    """
-    Contains static-processors used for processing question/ocr-tokens, image/ocr features,
-        decoding answer.
-    """
-
-    def __init__(self, bert_tokenizer, vocab_type="4k", only_registry=False):
-        logger.info("Loading Processors")
-        logger.info(f"Vocab Type: {vocab_type}")
-        # decode-answers
-        answer_config = edict()
-        answer_config.max_copy_steps = 12
-        answer_config.num_answers = 10
-        answer_config.max_ocr_tokens = 50
-        answer_config.vocab_type = vocab_type
-        self.answer_processor = M4CAnswerProcessor(answer_config)
-        self.only_registry = only_registry
-
-        # Attach bert-tokenizer
-        registry["bert_tokenizer"] = bert_tokenizer
-
-        if only_registry:
-            logger.info("Only registry processor initialized")
-            return
-
-        # question
-        question_config = edict()
-        question_config.max_length = 20
-        self.bert_processor = BertTokenizerProcessor(question_config, bert_tokenizer)
-
-        # ocr-tokens
-        ocr_config = edict()
-        ocr_config.max_length = 50
-        self.fasttext_processor = FastTextProcessor(ocr_config)
-        self.phoc_processor = PhocProcessor(ocr_config)
-
-    @staticmethod
-    def word_cleaner(word):
-        word = word.lower()
-        word = word.replace(",", "").replace("?", "").replace("'s", " 's")
-        return word.strip()
-
-    @staticmethod
-    def word_cleaner_lower(word):
-        word = word.lower()
-        return word.strip()
 
 
 class ImageDatabase(torch.utils.data.Dataset):

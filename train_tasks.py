@@ -5,6 +5,7 @@ import os
 import random
 import sys
 from io import open
+from tools.registry import registry
 
 import numpy as np
 import torch
@@ -129,10 +130,6 @@ def get_parser_cfg():
         "--model_type", default=None, type=str, help="Type of model 22 or 31 or 22nf or 22lf"
     )
 
-    # parser.add_argument(
-    #     "--from_scratch", action="store_true", help="Initialize ViLBERT weights from scratch/ does it make"
-    #                                                 "what about question encodings!?")
-
     parser.add_argument(
         "--only_eval", action="store_true", help="Initialize ViLBERT weights from scratch/ does it make"
                                                  "what about question encodings!?")
@@ -166,6 +163,26 @@ def build_save_path(args):
     return save_path, output_checkpoint_path
 
 
+def assert_add_registry(task_cfg, args):
+    assert task_cfg["num_epoch"] == args.num_train_epochs
+    assert_keys = [
+        "num_workers"
+    ]
+
+    for key in assert_keys:
+        assert key in task_cfg, f"Key not found: {key}"
+
+    add_keys = [
+        "layer_type_list",
+    ]
+
+    for key in add_keys:
+        if isinstance(key, tuple):
+            registry[key[0]] = task_cfg.get(key[0], key[1])
+        else:
+            registry[key] = task_cfg[key]
+
+
 def send_to(batch_dict, device):
 
     if device.type == "cpu":
@@ -181,8 +198,7 @@ def send_to(batch_dict, device):
 
 def main():
     task_cfg, args = get_parser_cfg()
-    # Todo: Fix num_epochs
-    assert task_cfg['num_epoch'] == args.num_train_epochs
+    assert_add_registry(task_cfg, args)
     model_type = task_cfg["model_type"] if args.model_type is None else args.model_type
     savePath, output_checkpoint_path = build_save_path(args)
 
@@ -199,7 +215,6 @@ def main():
 
     base_lr = task_cfg["lr"]
     device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
-    from tools.registry import registry
     registry.device = device
     n_gpu = torch.cuda.device_count()
     logger.info(f"Device: {device}, Num. GPUs: {n_gpu}")
@@ -213,7 +228,6 @@ def main():
 
 
     dataloaders = load_datasets(args, task_cfg, ["train", "val"])
-    logdir = os.path.join(savePath, "logs")
 
     # Build config
     mmt_config = BertConfig.from_dict(task_cfg["M4C"])
@@ -265,7 +279,6 @@ def main():
     if task_cfg["debug"]:
         median_num_iter = 2
 
-    start_iter_id = 0
     global_step = 0
     start_epoch = 0
 
@@ -352,8 +365,6 @@ def evaluate(
     task_cfg,
     device,
     model,
-    epoch_id,
-    tbLogger,
 ):
 
     model.eval()

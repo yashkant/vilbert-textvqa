@@ -1,34 +1,22 @@
-import argparse
 import sys
-import os
 import json
-import random
-import pdb
 import logging
-import torch
+import os
+import sys
+
 import numpy as np
 import pandas as pd
-import torch.nn.functional as F
-import torch.nn as nn
-import torch.distributed as dist
+import torch
 import yaml
-
-from tqdm import tqdm
-from bisect import bisect
 from easydict import EasyDict as edict
-from tools.registry import registry
 
-import vilbert.utils as utils
+from tools.registry import registry
+from vilbert.datasets.textvqa_metrics import TextVQAAccuracyEvaluator, STVQAANLSEvaluator
 from vilbert.task_utils import (
     load_datasets,
     LoadLosses,
-    ForwardModelsTrain,
-    ForwardModelsVal,
-    clip_gradients,
-    get_optim_scheduler
+    forward
 )
-
-from vilbert.datasets.textvqa_metrics import TextVQAAccuracyEvaluator, EvalAIAnswerProcessor, STVQAANLSEvaluator
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -240,7 +228,7 @@ class Evaluator:
             from vilbert.m4c_decode_rd import BertConfig
             from vilbert.m4c_decode_rd import M4C
         elif model_type == "22ss":
-            from vilbert.vilbert_ss import BertConfig, VILBertForVLTasks
+            from vilbert.vilbert_ss import BertConfig
         elif model_type == "m4c_spatial":
             logger.info("Using M4C-Spatial model")
             from vilbert.m4c_spatial import BertConfig, M4C
@@ -460,9 +448,7 @@ def evaluate(
         for i, batch in enumerate(task_dataloader_val[task_id]):
 
             # Don't bother for loss (beam-search changes output)
-            ForwardModelsVal(
-                args, task_cfg, device, task_id, batch, model, task_losses,
-            )
+            forward(task_cfg, model, batch, run_type="evaluation")
 
             save_keys = ['question_id', 'topkscores', 'complete_seqs']
 

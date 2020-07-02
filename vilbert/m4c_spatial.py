@@ -736,7 +736,7 @@ class BertSpatialEncoder(nn.Module):
         self.output_attentions = config.output_attentions
         self.output_hidden_states = config.output_hidden_states
         from pytorch_transformers.modeling_bert import BertLayer
-        self.layer_type_list = config.layer_type_list
+        self.layer_type_list = registry.layer_type_list
         logger.info(f"Layers type list is: {self.layer_type_list}")
         counter = Counter(self.layer_type_list)
 

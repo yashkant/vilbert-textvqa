@@ -41,93 +41,7 @@ def bb_intersection_over_union(boxA, boxB):
     return iou
 
 
-def build_graph_using_normalized_boxes(bbox, label_num=11, distance_threshold=0.5):
-    """ Build spatial graph
-    Args:
-        bbox: [num_boxes, 4]
-    Returns:
-        adj_matrix: [num_boxes, num_boxes, label_num]
-
-    # (YK): Fixed by @harsh
-    Remember
-        - Adjacency matrix [j, i] means relationship of j (target/blue) with respect to i (origin/red) (j is W-NW of i and so on)
-        - j_box is blue
-        - i_box is red
-        - blue arrow is from i_box (red box) to j_box (blue box) i.e from  origin to target
-        - red arrow is from j_box (blue box) to i_box (red box) i.e from target to origin
-    """
-    num_box = bbox.shape[0]
-    adj_matrix = np.zeros((num_box, num_box))
-    xmin, ymin, xmax, ymax = np.split(bbox, 4, axis=1)
-    # [num_boxes, 1]
-    # bbox_width = xmax - xmin
-    # bbox_height = ymax - ymin
-    # normalized coordinates
-    image_h = 1.0
-    image_w = 1.0
-    center_x = 0.5 * (xmin + xmax)
-    center_y = 0.5 * (ymin + ymax)
-    image_diag = math.sqrt(image_h ** 2 + image_w ** 2)
-    for i in range(num_box):
-        bbA = bbox[i]
-        # (YK): Padded bbox
-        if sum(bbA) == 0:
-            continue
-        adj_matrix[i, i] = 12
-        for j in range(i + 1, num_box):
-            bbB = bbox[j]
-            # (YK): Padded bbox
-            if sum(bbB) == 0:
-                continue
-            # class 1: inside (j inside i)
-            if xmin[i] < xmin[j] and xmax[i] > xmax[j] and ymin[i] < ymin[j] and ymax[i] > ymax[j]:
-                adj_matrix[i, j] = 1  # covers
-                adj_matrix[j, i] = 2  # inside
-            # class 2: cover (j covers i)
-            elif (xmin[j] < xmin[i] and xmax[j] > xmax[i] and
-                  ymin[j] < ymin[i] and ymax[j] > ymax[i]):
-                adj_matrix[i, j] = 2
-                adj_matrix[j, i] = 1
-            else:
-                ioU = bb_intersection_over_union(bbA, bbB)
-
-                # class 3: i and j overlap
-                if ioU >= 0.5:
-                    adj_matrix[i, j] = 3
-                    adj_matrix[j, i] = 3
-                else:
-                    y_diff = center_y[i] - center_y[j]
-                    x_diff = center_x[i] - center_x[j]
-                    diag = math.sqrt((y_diff) ** 2 + (x_diff) ** 2)
-                    if diag < distance_threshold * image_diag:
-                        sin_ij = y_diff / diag
-                        cos_ij = x_diff / diag
-                        # first quadrant
-                        if sin_ij >= 0 and cos_ij >= 0:
-                            label_i = np.arcsin(sin_ij)
-                            label_j = math.pi + label_i
-                        # fourth quadrant
-                        elif sin_ij < 0 and cos_ij >= 0:
-                            label_i = np.arcsin(sin_ij) + 2 * math.pi
-                            label_j = label_i - math.pi
-                        # second quadrant
-                        elif sin_ij >= 0 and cos_ij < 0:
-                            label_i = np.arccos(cos_ij)
-                            label_j = label_i + math.pi
-                        # third quadrant
-                        else:
-                            label_i = 2 * math.pi - np.arccos(cos_ij)
-                            label_j = label_i - math.pi
-                        # goes from [1-8] + 3 -> [4-11]
-                        # if (adj_matrix[i, j] > 0):
-                        adj_matrix[i, j] = int(np.ceil(label_i / (math.pi / 4))) + 3
-                        adj_matrix[j, i] = int(np.ceil(label_j / (math.pi / 4))) + 3
-    return adj_matrix
-
-
-def torch_broadcast_adj_matrix(adj_matrix,
-                               label_num=12,
-                               device=torch.device("cuda")):
+def torch_broadcast_adj_matrix(adj_matrix):
     """ broudcast spatial relation graph
 
     # (YK): Changed to work on single-instance as well
@@ -145,22 +59,6 @@ def torch_broadcast_adj_matrix(adj_matrix,
     result = torch.zeros_like(adj_matrix).unsqueeze(-1).repeat(1, 1, 12)
     _indices = (adj_matrix-1)*(adj_matrix > 0)
     result.scatter_(2, _indices.long().unsqueeze(-1), 1)
-    result[:, :, 0] = result[:, :, 0]*(adj_matrix > 0)
-    return result
-
-
-def torch_broadcast_gauss_bias(adj_matrix, gauss_bias):
-    gauss_bias_result = torch.zeros_like(adj_matrix).unsqueeze(-1).repeat(1, 1, 12).type_as(gauss_bias)
-    _indices = (adj_matrix-1)*(adj_matrix > 0)
-    gauss_bias_result.scatter_(2, _indices.long().unsqueeze(-1), gauss_bias.unsqueeze(-1))
-    gauss_bias_result[:, :, 0] = gauss_bias_result[:, :, 0] * (adj_matrix > 0)
-    return gauss_bias_result
-
-
-def torch_broadcast_bins(adj_matrix, fill_value):
-    result = torch.zeros_like(adj_matrix).unsqueeze(-1).repeat(1, 1, 12)
-    _indices = (adj_matrix-1)*(adj_matrix > 0)
-    result.scatter_(2, _indices.long().unsqueeze(-1), fill_value)
     result[:, :, 0] = result[:, :, 0]*(adj_matrix > 0)
     return result
 
@@ -212,10 +110,6 @@ def _build_replace_dict():
     return share_replace_dict
 
 
-def gaussian(x, mean, std_dev):
-    return np.exp(-np.power(x - mean, 2.) / (2 * np.power(std_dev, 2.)))
-
-
 def build_graph_using_normalized_boxes_share(bbox, label_num=11, distance_threshold=0.5, build_gauss_bias=False):
     """ Build spatial graph
     Args:
@@ -241,12 +135,12 @@ def build_graph_using_normalized_boxes_share(bbox, label_num=11, distance_thresh
     # adj_matrix = np.zeros((num_box, num_box))
     share_replace_dict = _build_replace_dict()
     adj_matrix_shared = {}
-    gauss_bias_shared = {}
+    # gauss_bias_shared = {}
 
     for key in share_replace_dict.keys():
         adj_matrix_shared[key] = np.zeros((num_box, num_box))
-        if build_gauss_bias:
-            gauss_bias_shared[key] = np.zeros((num_box, num_box))
+        # if build_gauss_bias:
+        #     gauss_bias_shared[key] = np.zeros((num_box, num_box))
 
     # adj_matrix_share3_1 = np.zeros((num_box, num_box))
     # adj_matrix_share3_2 = np.zeros((num_box, num_box))
@@ -322,156 +216,40 @@ def build_graph_using_normalized_boxes_share(bbox, label_num=11, distance_thresh
                                 adj_matrix_shared[key][i, j] = share_replace_dict[key].get(adj_matrix_shared["1"][i, j], 0)
                                 adj_matrix_shared[key][j, i] = share_replace_dict[key].get(adj_matrix_shared["1"][j, i], 0)
 
-                            if build_gauss_bias and int(adj_matrix_shared[key][i, j]) in mean_map:
-                                rad_ij = float(label_i)
-                                # print("Rad: ", rad_ij)
-                                mean_rad = mean_map[int(adj_matrix_shared[key][i, j])]
-
-                                # half-range of broadest head_type
-                                _keys = [int(head_type[-1]) for head_type in registry.mix_list if "share" in head_type]
-                                half_range_rad = ((max(_keys) - 1) / 2) * (math.pi / 4.0) + math.pi / 8.0
-                                gauss_dev_rad = half_range_rad / gauss_bias_dev_factor
-
-                                if len(key) == 1:
-                                    # mean and relation in same sector
-                                    angle = abs(mean_rad - rad_ij)
-                                    gauss_weight = gaussian(min(angle, 2*math.pi - angle), 0, gauss_dev_rad)
-                                else:
-                                    # mean and relation in different sectors
-                                    if key[1] == "1":
-                                        # use anti-clockwise angle from mean_rad
-                                        if mean_rad < rad_ij:
-                                            mean_rad += math.pi * 2
-                                        gauss_weight = gaussian(mean_rad - rad_ij, 0, gauss_dev_rad)
-                                    else:
-                                        # use clockwise angle from mean_rad
-                                        if rad_ij < mean_rad:
-                                            rad_ij += math.pi * 2
-                                        gauss_weight = gaussian(rad_ij - mean_rad, 0, gauss_dev_rad)
-
-                                # gaussian weight is symmetric
-                                gauss_bias_shared[key][i, j] = gauss_weight
-                                gauss_bias_shared[key][j, i] = gauss_weight
+                            # if build_gauss_bias and int(adj_matrix_shared[key][i, j]) in mean_map:
+                            #     raise ValueError
+                            #     rad_ij = float(label_i)
+                            #     # print("Rad: ", rad_ij)
+                            #     mean_rad = mean_map[int(adj_matrix_shared[key][i, j])]
+                            #
+                            #     # half-range of broadest head_type
+                            #     _keys = [int(head_type[-1]) for head_type in registry.mix_list if "share" in head_type]
+                            #     half_range_rad = ((max(_keys) - 1) / 2) * (math.pi / 4.0) + math.pi / 8.0
+                            #     gauss_dev_rad = half_range_rad / gauss_bias_dev_factor
+                            #
+                            #     if len(key) == 1:
+                            #         # mean and relation in same sector
+                            #         angle = abs(mean_rad - rad_ij)
+                            #         gauss_weight = gaussian(min(angle, 2*math.pi - angle), 0, gauss_dev_rad)
+                            #     else:
+                            #         # mean and relation in different sectors
+                            #         if key[1] == "1":
+                            #             # use anti-clockwise angle from mean_rad
+                            #             if mean_rad < rad_ij:
+                            #                 mean_rad += math.pi * 2
+                            #             gauss_weight = gaussian(mean_rad - rad_ij, 0, gauss_dev_rad)
+                            #         else:
+                            #             # use clockwise angle from mean_rad
+                            #             if rad_ij < mean_rad:
+                            #                 rad_ij += math.pi * 2
+                            #             gauss_weight = gaussian(rad_ij - mean_rad, 0, gauss_dev_rad)
+                            #
+                            #     # gaussian weight is symmetric
+                            #     gauss_bias_shared[key][i, j] = gauss_weight
+                            #     gauss_bias_shared[key][j, i] = gauss_weight
 
     for key in adj_matrix_shared.keys():
         adj_matrix_shared[key] = adj_matrix_shared[key].astype(np.int8)
 
-    return adj_matrix_shared, gauss_bias_shared
+    return adj_matrix_shared
 
-
-
-def build_graph_using_normalized_boxes_new():
-    pass
-
-
-def random_spatial_processor(pad_obj_ocr_bboxes):
-    randomize = [1, 3]
-    adj_matrix_random1_shape = (len(pad_obj_ocr_bboxes), len(pad_obj_ocr_bboxes), 1)
-    adj_matrix_random3_shape = (len(pad_obj_ocr_bboxes), len(pad_obj_ocr_bboxes), 3)
-    adj_matrix_random1 = np.zeros(adj_matrix_random1_shape, dtype=np.int8)
-    adj_matrix_random3 = np.zeros(adj_matrix_random3_shape, dtype=np.int8)
-    spatial_relations_types = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-
-    for matrix, _randomize in zip([adj_matrix_random1, adj_matrix_random3], randomize):
-        for row in range(matrix.shape[0]):
-            for col in range(matrix.shape[1]):
-                random_indices = np.random.choice(spatial_relations_types, size=_randomize, replace=False)
-                # remove none-edges
-                if 0 not in random_indices:
-                    matrix[row][col] = random_indices
-
-    # Remove masked relations
-    masked_inds = np.where(pad_obj_ocr_bboxes.sum(axis=-1) == 0)
-    adj_matrix_random1[masked_inds] = 0
-    adj_matrix_random1[:, masked_inds] = 0
-    adj_matrix_random3[masked_inds] = 0
-    adj_matrix_random3[:, masked_inds] = 0
-    return adj_matrix_random1.astype(np.int8), adj_matrix_random3.astype(np.int8)
-
-
-def torch_extract_position_embedding(position_mat, feat_dim, wave_length=1000,
-                                     device=torch.device("cuda")):
-    # position_mat, [batch_size,num_rois, nongt_dim, 4]
-    feat_range = torch.arange(0, feat_dim / 8)
-    dim_mat = torch.pow(torch.ones((1,)) * wave_length,
-                        (8. / feat_dim) * feat_range)
-    dim_mat = dim_mat.view(1, 1, 1, -1).to(device)
-    position_mat = torch.unsqueeze(100.0 * position_mat, dim=4)
-    div_mat = torch.div(position_mat.to(device), dim_mat)
-    sin_mat = torch.sin(div_mat)
-    cos_mat = torch.cos(div_mat)
-    # embedding, [batch_size,num_rois, nongt_dim, 4, feat_dim/4]
-    embedding = torch.cat([sin_mat, cos_mat], -1)
-    # embedding, [batch_size,num_rois, nongt_dim, feat_dim]
-    embedding = embedding.view(embedding.shape[0], embedding.shape[1],
-                               embedding.shape[2], feat_dim)
-    return embedding
-
-
-def torch_extract_position_matrix(bbox, nongt_dim=36):
-    """ Extract position matrix
-
-    Args:
-        bbox: [batch_size, num_boxes, 4]
-
-    Returns:
-        position_matrix: [batch_size, num_boxes, nongt_dim, 4]
-    """
-
-    xmin, ymin, xmax, ymax = torch.split(bbox, 1, dim=-1)
-    # [batch_size,num_boxes, 1]
-    bbox_width = xmax - xmin
-    bbox_height = ymax - ymin
-    center_x = 0.5 * (xmin + xmax)
-    center_y = 0.5 * (ymin + ymax)
-    # [batch_size,num_boxes, num_boxes]
-    delta_x = center_x - torch.transpose(center_x, 1, 2)
-    delta_x = torch.div(delta_x, bbox_width)
-
-    delta_x = torch.abs(delta_x)
-    threshold = 1e-3
-    delta_x[delta_x < threshold] = threshold
-    delta_x = torch.log(delta_x)
-    delta_y = center_y - torch.transpose(center_y, 1, 2)
-    delta_y = torch.div(delta_y, bbox_height)
-    delta_y = torch.abs(delta_y)
-    delta_y[delta_y < threshold] = threshold
-    delta_y = torch.log(delta_y)
-    delta_width = torch.div(bbox_width, torch.transpose(bbox_width, 1, 2))
-    delta_width = torch.log(delta_width)
-    delta_height = torch.div(bbox_height, torch.transpose(bbox_height, 1, 2))
-    delta_height = torch.log(delta_height)
-    concat_list = [delta_x, delta_y, delta_width, delta_height]
-    for idx, sym in enumerate(concat_list):
-        sym = sym[:, :nongt_dim]
-        concat_list[idx] = torch.unsqueeze(sym, dim=3)
-    position_matrix = torch.cat(concat_list, 3)
-    return position_matrix
-
-
-def prepare_graph_variables(relation_type, bb, sem_adj_matrix, spa_adj_matrix,
-                            num_objects, nongt_dim, pos_emb_dim, spa_label_num,
-                            sem_label_num, device):
-    pos_emb_var, sem_adj_matrix_var, spa_adj_matrix_var = None, None, None
-    if relation_type == "spatial":
-        assert spa_adj_matrix.dim() > 2, "Found spa_adj_matrix of wrong shape"
-        spa_adj_matrix = spa_adj_matrix.to(device)
-        spa_adj_matrix = spa_adj_matrix[:, :num_objects, :num_objects]
-        spa_adj_matrix = torch_broadcast_adj_matrix(
-            spa_adj_matrix, label_num=spa_label_num, device=device)
-        spa_adj_matrix_var = Variable(spa_adj_matrix).to(device)
-    if relation_type == "semantic":
-        assert sem_adj_matrix.dim() > 2, "Found sem_adj_matrix of wrong shape"
-        sem_adj_matrix = sem_adj_matrix.to(device)
-        sem_adj_matrix = sem_adj_matrix[:, :num_objects, :num_objects]
-        sem_adj_matrix = torch_broadcast_adj_matrix(
-            sem_adj_matrix, label_num=sem_label_num, device=device)
-        sem_adj_matrix_var = Variable(sem_adj_matrix).to(device)
-    else:
-        # (YK): Todo what's this here?
-        bb = bb.to(device)
-        pos_mat = torch_extract_position_matrix(bb, nongt_dim=nongt_dim)
-        pos_emb = torch_extract_position_embedding(
-            pos_mat, feat_dim=pos_emb_dim, device=device)
-        pos_emb_var = Variable(pos_emb).to(device)
-    return pos_emb_var, sem_adj_matrix_var, spa_adj_matrix_var
