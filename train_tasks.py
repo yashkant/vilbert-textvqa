@@ -251,8 +251,8 @@ def assert_add_registry(task_cfg, args):
         ("squint_type", None),
         ("ce_half", False),
         ("use_rephrasings", True),
-        ("aug_filter", None)
-
+        ("aug_filter", None),
+        ("use_old_sampler", False)
     ]
 
     for key in add_keys:
@@ -962,32 +962,6 @@ def evaluate(
         c_scores = get_consistency_score()
 
     score, loss = tbLogger.showLossVal(task_id, task_stop_controller=None, c_scores=c_scores)
-    model.train()
-    return score, loss
-
-
-def sanity_checks(
-        args,
-        task_dataloader_val,
-        task_cfg,
-        device,
-        task_id,
-        model,
-        task_losses,
-        epochId,
-        default_gpu,
-):
-    from vilbert.task_utils import ForwardModelsVal
-    model.eval()  # turn off dropout/batch-norm
-    for i, batch in enumerate(task_dataloader_val[task_id]):
-        with torch.no_grad():  # turn off autograd engine
-            loss, score, batch_size = ForwardModelsVal(
-                args, task_cfg, device, task_id, batch, model, task_losses
-            )
-        if default_gpu:
-            sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
-            sys.stdout.flush()
-
     model.train()
     return score, loss
 

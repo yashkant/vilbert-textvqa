@@ -84,10 +84,16 @@ def filter_aug(questions_list, answers_list):
             elif sampling == "bottom":
                 que_list, ans_list = que_list[-max_samples:], ans_list[-max_samples:]
             elif sampling == "random":
-                rand_indices = np.random.choice(range(len(que_list)), min(max_samples, len(que_list)), replace=False)
-                rand_indices = sorted(rand_indices)
-                que_list, ans_list = np.array(que_list), np.array(ans_list)
-                que_list, ans_list = que_list[rand_indices], ans_list[rand_indices]
+                # use only original question
+                if len(que_list) == 1:
+                    que_list, ans_list = que_list[0:1], ans_list[0:1]
+                else:
+                    rand_indices = np.random.choice(range(1, len(que_list)), min(max_samples - 1, len(que_list) - 1), replace=False)
+                    # add original question
+                    rand_indices = [0] + sorted(rand_indices)
+                    que_list, ans_list = np.array(que_list), np.array(ans_list)
+                    que_list, ans_list = que_list[rand_indices], ans_list[rand_indices]
+
             else:
                 raise ValueError
 
@@ -105,17 +111,22 @@ def filter_aug(questions_list, answers_list):
 
 def rephrasings_dict(split, questions):
     question_rephrase_dict = {}
+
     for question in questions:
         if "rephrasing_of" in question:
             question_rephrase_dict[question["question_id"]] = question["rephrasing_of"]
+        elif "rephrasing_ids" in question:
+            min_qid = min(question["rephrasing_ids"] + [question["question_id"]])
+            question_rephrase_dict[question["question_id"]] = min_qid
         else:
             question_rephrase_dict[question["question_id"]] = question["question_id"]
+
 
     # used in evaluation, hack to set attribute
     from easydict import EasyDict
     super(EasyDict, registry).__setattr__(f"question_rephrase_dict_{split}", question_rephrase_dict)
     super(EasyDict, registry).__setitem__(f"question_rephrase_dict_{split}", question_rephrase_dict)
-    print(f"Built dictiionary: question_rephrase_dict_{split}")
+    print(f"Built dictionary: question_rephrase_dict_{split}")
 
 
 def _load_dataset(dataroot, name, clean_datasets):
@@ -236,14 +247,20 @@ def _load_dataset(dataroot, name, clean_datasets):
             assert answer["question_id"] == question["question_id"]
 
     elif name == "re_total":
-        question_path = "data/re-vqa/data/revqa_total.json"
-        questions = sorted(json.load(open(question_path))["questions"], key=lambda x: x["question_id"])
-        rephrasings_dict(name, questions)
-        answer_path_val = "datasets/VQA/cache/revqa_total_target.pkl"
-        answers_val = cPickle.load(open(answer_path_val, "rb"))
-        answers = sorted(answers_val, key=lambda x: x["question_id"])
+        paths_dict = {
+            "re_train": ["data/re-vqa/data/revqa_train_proc.json", "datasets/VQA/cache/revqa_train_target.pkl", "train"],
+            "re_val": ["data/re-vqa/data/revqa_val_proc.json", "datasets/VQA/cache/revqa_val_target.pkl", "val"],
+        }
 
-        # d_q, d_a = [], []
+        questions, answers = [], []
+        for key, value in paths_dict.items():
+            _questions, _answers = json.load(open(value[0]))["questions"], cPickle.load(open(value[1], "rb"))
+            questions.extend(_questions)
+            answers.extend(_answers)
+        questions = sorted(questions, key=lambda x: x["question_id"])
+        answers = sorted(answers, key=lambda x: x["question_id"])
+        rephrasings_dict(name, questions)
+
         assert len(questions) == len(answers)
         for question, answer in zip(questions, answers):
             assert answer["question_id"] == question["question_id"]

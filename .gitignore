@@ -50,3 +50,5 @@ ENV/
 datasets/
 save
 jlogs/
+wandb
+dtrain.py

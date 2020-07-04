@@ -19,7 +19,6 @@ import torch.distributed as dist
 from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset, ConcatDataset
 
-from vilbert.samplers import RandomSampler, NegativeSampler
 from torch.utils.data.distributed import DistributedSampler
 from pytorch_transformers.tokenization_bert import BertTokenizer
 from pytorch_transformers.tokenization_roberta import RobertaTokenizer
@@ -424,6 +423,13 @@ def LoadLosses(args, task_cfg, task_ids):
 
 
 def LoadDatasets(args, task_cfg, ids, split="trainval"):
+
+    if registry.use_old_sampler:
+        logger.info("Using old sampler")
+        from vilbert.old_samplers import RandomSampler, NegativeSampler
+    else:
+        logger.info("Using new sampler")
+        from vilbert.samplers import RandomSampler, NegativeSampler
 
     if "roberta" in args.bert_model:
         tokenizer = RobertaTokenizer.from_pretrained(

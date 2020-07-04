@@ -39,32 +39,44 @@ data = {**train_data, **val_data}
 question_ids = np.array(list(data.keys()))
 questions_embed = np.stack([data[key] for key in question_ids])
 hard_negatives = {}
-num_iters = int(np.ceil(len(question_ids)/1000))
+num_iters = int(np.ceil(len(question_ids)/iter_limit))
 
 new_qids = []
 new_sim_qids = []
 new_sim_scores = []
 
-for idx in tqdm(range(num_iters)):
-    que_vector = questions_embed[idx * 1000: (idx+1) * 1000]
+
+
+def process (idx):
+    que_vector = questions_embed[idx * iter_limit: (idx+1) * iter_limit]
     que_scores = cos_sim(que_vector, questions_embed)
     # sort last-300 scores
     sorted_inds = np.argpartition(-1 * que_scores, kth=num_samples, axis=-1)[:, :num_samples]
 
-    qids = question_ids[idx * 1000: (idx+1) * 1000]
+    qids = question_ids[idx * iter_limit: (idx+1) * iter_limit]
     sim_qids = question_ids[sorted_inds]
     sim_scores = np.take_along_axis(que_scores, sorted_inds, -1)
-    new_qids.append(qids)
-    new_sim_qids.append(sim_qids)
-    new_sim_scores.append(sim_scores)
+    return qids, sim_qids, sim_scores
 
+import multiprocessing as mp
+
+sp_pool = mp.Pool(8)
+args_list = []
+for idx in (range(num_iters)):
+    _args = idx
+    args_list.append(_args)
+
+batches_list = list(tqdm(sp_pool.imap(process, args_list), total=len(args_list)))
+sp_pool.close()
+sp_pool.join()
+
+new_qids, new_sim_qids, new_sim_scores = list(zip(*batches_list))
 new_qids = np.concatenate(new_qids)
 new_sim_qids = np.concatenate(new_sim_qids)
 new_sim_scores = np.concatenate(new_sim_scores)
-
 print(f"Len: {len(new_qids)}")
-np.save(save_path, {
-    "qids": new_qids,
-    "sim_scores": new_sim_qids,
-    "sim_qids": new_sim_qids
-})
+
+import pdb
+pdb.set_trace()
+
+np.save(save_path, {"qids": new_qids, "sim_scores": new_sim_qids, "sim_qids": new_sim_qids})
