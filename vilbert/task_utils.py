@@ -19,6 +19,7 @@ import torch.distributed as dist
 from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset, ConcatDataset
 
+from vilbert.samplers import RandomSampler, NegativeSampler
 from torch.utils.data.distributed import DistributedSampler
 from pytorch_transformers.tokenization_bert import BertTokenizer
 from pytorch_transformers.tokenization_roberta import RobertaTokenizer
@@ -325,27 +326,27 @@ def ForwardModelsTrain(
     if task_cfg[task_id]["type"] == "ContrastiveProjection":
         loss, batch_score = task_losses[task_id](batch_dict)
 
-    if len(batch_dict) == 1:
-        batch_dict = batch_dict[0]
-
-    # for different task, we use different output to calculate the loss.
-    if task_cfg[task_id]["type"] == "VL-classifier":
-        # loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
-        # loss = loss.mean() * batch_dict["target"].size(1)
-        # batch_score = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"]).sum() / float(
-        #     batch_size
-        # )
-        loss, batch_score = add_ce_loss(batch_dict, device)
-
-    elif task_cfg[task_id]["type"] == "VL-classifier-only-ce":
-        loss, batch_score = add_ce_loss(batch_dict, device)
-
-    elif task_cfg[task_id]["type"] == "VL-classifier-GQA":
-        loss = task_losses[task_id](batch_dict["vil_prediction_gqa"], batch_dict["target"])
-        loss = loss.mean() * batch_dict["target"].size(1)
-        batch_score = compute_score_with_logits(
-            batch_dict["vil_prediction_gqa"], batch_dict["target"], device
-        ).sum() / float(batch_size)
+    # if len(batch_dict) == 1:
+    #     batch_dict = batch_dict[0]
+    #
+    # # for different task, we use different output to calculate the loss.
+    # elif task_cfg[task_id]["type"] == "VL-classifier":
+    #     # loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
+    #     # loss = loss.mean() * batch_dict["target"].size(1)
+    #     # batch_score = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"]).sum() / float(
+    #     #     batch_size
+    #     # )
+    #     loss, batch_score = add_ce_loss(batch_dict)
+    #
+    # elif task_cfg[task_id]["type"] == "VL-classifier-only-ce":
+    #     loss, batch_score = add_ce_loss(batch_dict)
+    #
+    # elif task_cfg[task_id]["type"] == "VL-classifier-GQA":
+    #     loss = task_losses[task_id](batch_dict["vil_prediction_gqa"], batch_dict["target"])
+    #     loss = loss.mean() * batch_dict["target"].size(1)
+    #     batch_score = compute_score_with_logits(
+    #         batch_dict["vil_prediction_gqa"], batch_dict["target"]
+    #     ).sum() / float(batch_size)
 
     losses = []
     if registry.use_ce_loss:
@@ -424,12 +425,17 @@ def LoadLosses(args, task_cfg, task_ids):
 
 def LoadDatasets(args, task_cfg, ids, split="trainval"):
 
-    if registry.use_old_sampler:
+    if registry.sampler_type is not None and registry.sampler_type == "linear":
+        logger.info("Using pseudo-linear new sampler")
+        from vilbert.samplers_lin import RandomSampler, NegativeSampler
+    elif registry.sampler_type is not None and registry.sampler_type == "old":
         logger.info("Using old sampler")
         from vilbert.old_samplers import RandomSampler, NegativeSampler
-    else:
-        logger.info("Using new sampler")
-        from vilbert.samplers import RandomSampler, NegativeSampler
+    elif registry.sampler_type is not None and registry.sampler_type == "new":
+        logger.info("Using old sampler")
+        from vilbert.samplers_new import RandomSampler, NegativeSampler
+
+
 
     if "roberta" in args.bert_model:
         tokenizer = RobertaTokenizer.from_pretrained(

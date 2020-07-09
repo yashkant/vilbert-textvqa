@@ -252,7 +252,10 @@ def assert_add_registry(task_cfg, args):
         ("ce_half", False),
         ("use_rephrasings", True),
         ("aug_filter", None),
-        ("use_old_sampler", False)
+        ("use_old_sampler", False),
+        ("sampler_type", None),
+        ("weighted_sampling", False),
+        ("remove_ambiguous", False),
     ]
 
     for key in add_keys:

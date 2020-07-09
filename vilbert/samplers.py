@@ -457,8 +457,8 @@ class NegativeSampler(Sampler):
         batches_per_thread = [num_batches // num_threads + (1 if x < num_batches % num_threads else 0)
                               for x in range(num_threads)]
         args_list = []
-        for _, thread_batches in zip(range(num_threads), batches_per_thread):
-            _args = (self.entry_map, self.re_bins, self.answer_map, self.qid_ans_dict, extra_args, thread_batches)
+        for th_id, thread_batches in zip(range(num_threads), batches_per_thread):
+            _args = (self.entry_map, self.re_bins, self.answer_map, self.qid_ans_dict, extra_args, thread_batches, th_id + self.iter_count)
             args_list.append(_args)
 
         batches_list = list(sp_pool.imap(NegativeSampler.get_batches, args_list))
@@ -470,6 +470,7 @@ class NegativeSampler(Sampler):
         for batches in batches_list:
             for _batch in batches:
                 epoch_indices.extend(_batch)
+
         return epoch_indices
 
     def check_iterator(self, item, exhausted_bins=None, bin_idx=-1, neg_replace=False, use_gt_answer=False):
@@ -488,7 +489,8 @@ class NegativeSampler(Sampler):
         args
     ):
         start_time = time.time()
-        entry_map, re_bins, answer_map, qid_ans_dict, extra_args, num_batches = args
+        entry_map, re_bins, answer_map, qid_ans_dict, extra_args, num_batches, thread_id = args
+        np.random.seed(thread_id)
         bin_indices = list(range(len(re_bins)))
         batches = []
 
@@ -801,7 +803,7 @@ class NegativeSampler(Sampler):
 
         elif self.task_cfg["contrastive"] == "simclr":
             logger.info(f"Sampler Cache Path: {cache_name}")
-            if os.path.exists(cache_name):
+            if os.path.exists(cache_name) and False:
                 logger.info("Using cache")
                 epoch_indices = list(np.load(cache_name, allow_pickle=True))
             else:
@@ -811,6 +813,7 @@ class NegativeSampler(Sampler):
         else:
             raise ValueError
 
+        logger.info(f"No. of Unique Samples: {len(set(epoch_indices))} / {len(epoch_indices)}")
         self.iter_count += 1
         return iter(epoch_indices)
 

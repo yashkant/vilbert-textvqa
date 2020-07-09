@@ -59,3 +59,4 @@ TASK19:
   train_workers: 16
   scl_coeff: 1.0
   use_old_sampler: false
+  sampler_type: new

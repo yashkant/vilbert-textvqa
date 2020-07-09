@@ -11,8 +11,8 @@ TASK19:
   val_annotations_jsonpath: ''
   max_seq_length: 23
   max_region_num: 101
-  train_split: re_train
-  val_split: re_val
+  train_split: train_aug
+  val_split: minval
   # Change at both places num_epochs
   num_epoch: 20
 
@@ -25,10 +25,10 @@ TASK19:
   # optimizer
   optim: Adam
   lr_scheduler: pythia_warmup_decay
-  warmup_iters: 1364 # 2 epochs
-  lr: 0.0001  
+  warmup_iters: 4266 # 2 epochs
+  lr: 0.0002
   warmpu_factors: 0.1
-  lr_decay_iters: [4774, 9548] # 7, 14  epochs
+  lr_decay_iters: [10665, 14931] # 5, 7 epochs
   lr_decay: 0.2
   debug: false
   # model attributes
@@ -54,8 +54,12 @@ TASK19:
   # don't use negative sampler for validation
   val_neg_sampler: false
   # turn on revqa eval
-  revqa_eval: false
+  revqa_eval: true
   val_workers: 16
   train_workers: 16
   scl_coeff: 1.0
-  use_old_sampler: false
+  aug_filter:
+    max_re_per_sample: 2
+    sim_threshold: 0.9
+    sampling: top # top (selects max_re_per_sample samples from top after thresholding), bottom and random
+  sampler_type: old

@@ -27,7 +27,7 @@ ans_split_path_dict = {
     "test": ("../../datasets/VQA/back-translate/org2_bt_test_target.pkl",
              "../../datasets/VQA/cache/test_target.pkl"),
     "trainval": ("../../datasets/VQA/back-translate/org2_bt_trainval_target.pkl",
-             "../../datasets/VQA/back-translate/org_bt_minval_target.pkl"),
+             "../../datasets/VQA/back-translate/org2_bt_minval_target.pkl"),
 }
 
 
