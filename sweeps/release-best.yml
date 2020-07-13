@@ -13,9 +13,13 @@ tvqa_imdb: "/nethome/ykant3/pythia/data/imdb/textvqa_0.5/textvqa_{}.npy"
 
 # ST-VQA holders and folders
 stvqa_dataroot: datasets/stvqa
-stvqa_obj_features: "/srv/share/ykant3/scene-text/features/obj/lmdbs/stvqa_train_task.lmdb"
-stvqa_ocr_features: "/srv/share/ykant3/scene-text/features/ocr/lmdbs/stvqa_train_task.lmdb"
-stvqa_imdb: "/srv/share/ykant3/scene-text/train/imdb/stvqa_{}.npy"
+stvqa_obj_features: "/srv/share/ykant3/scene-text/features/obj/lmdbs/train_task_fixed.lmdb"
+stvqa_ocr_features: "/srv/share/ykant3/scene-text/features/ocr/lmdbs/train_task_fixed.lmdb"
+stvqa_imdb: "/nethome/ykant3/pythia/data/imdb/textvqa_0.5/stvqa_{}.npy"
+
+#stvqa_obj_features: "/srv/share/ykant3/scene-text/features/obj/lmdbs/stvqa_train_task.lmdb"
+#stvqa_ocr_features: "/srv/share/ykant3/scene-text/features/ocr/lmdbs/stvqa_train_task.lmdb"
+#stvqa_imdb: "/srv/share/ykant3/scene-text/train/imdb/stvqa_{}.npy"
 
 max_seq_length: 20
 max_obj_num: 100 # object features + avg feature
@@ -41,7 +45,7 @@ heads_type: mix
 train_on: ["textvqa", "stvqa"]
 val_on: ["textvqa"]
 test_on: ["textvqa"]
-num_workers: 0
+num_workers: 16
 needs_spatial: true
 layer_type_list: [n,n,s,s,s,s]
 mix_list: [none, none, share3, share3, share3, share3]
@@ -50,8 +54,8 @@ M4C:
   obj_drop: 0.1
   ocr_drop: 0.1
   hidden_size: 768
-  num_hidden_layers: 4
-  num_spatial_layers: 2
+  num_hidden_layers: 2
+  num_spatial_layers: 4
   num_spatial_relations: 12
   type_vocab_size: 2
   vocab_size: 30522

@@ -145,7 +145,7 @@ class STVQADataset(TextVQADataset):
 
         registry.vocab_type = self.vocab_type
         registry.distance_threshold = self.distance_threshold
-        registry.mix_list = task_cfg["M4C"].get("mix_list", ["none"])
+        # registry.mix_list = task_cfg["M4C"].get("mix_list", ["none"])
 
         logger.info(f"Dynamic Sampling is {self.dynamic_sampling}")
         logger.info(f"distance_threshold is {self.distance_threshold}")

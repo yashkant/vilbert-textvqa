@@ -745,10 +745,10 @@ class BertSpatialEncoder(nn.Module):
         logger.info(f"Num Spatial Layers: {self.num_spatial_layers}")
         logger.info(f"Num Normal Layers: {self.num_normal_layers}")
 
-        if "mix_list" in registry:
+        if "mix_list" not in registry:
             self.mix_list = ["none"]*len(self.layer_type_list)
         else:
-            self.mix_list = config.mix_list
+            self.mix_list = registry.mix_list
 
         assert len(self.mix_list) == len(self.layer_type_list)
         logger.info(f"Mix list: {self.mix_list}")

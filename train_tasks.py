@@ -174,6 +174,7 @@ def assert_add_registry(task_cfg, args):
 
     add_keys = [
         "layer_type_list",
+        "mix_list",
     ]
 
     for key in add_keys:
