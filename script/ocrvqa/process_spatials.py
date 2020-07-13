@@ -12,7 +12,7 @@ import tqdm
 from PIL import Image
 import multiprocessing as mp
 import logging
-from vilbert.spatial_utils_regat import build_graph_using_normalized_boxes_new
+from vilbert.spatial_utils import build_graph_using_normalized_boxes_new
 
 MAP_SIZE = 1099511627776
 

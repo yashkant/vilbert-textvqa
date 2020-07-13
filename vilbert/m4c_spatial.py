@@ -184,7 +184,6 @@ class M4C(nn.Module):
     def forward(self, batch_dict):
         # fwd_results holds intermediate forward pass results
         # TODO possibly replace it with another sample list
-        # self._forward_txt_encoding(batch_dict)
         self._forward_obj_encoding(batch_dict)
         self._forward_ocr_encoding(batch_dict)
 
@@ -746,10 +745,11 @@ class BertSpatialEncoder(nn.Module):
         logger.info(f"Num Spatial Layers: {self.num_spatial_layers}")
         logger.info(f"Num Normal Layers: {self.num_normal_layers}")
 
-        if not hasattr(config, "mix_list") or config.mix_list is None:
+        if "mix_list" in registry:
             self.mix_list = ["none"]*len(self.layer_type_list)
         else:
             self.mix_list = config.mix_list
+
         assert len(self.mix_list) == len(self.layer_type_list)
         logger.info(f"Mix list: {self.mix_list}")
         self.matrix_type_map = {

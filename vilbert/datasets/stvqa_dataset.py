@@ -28,9 +28,6 @@ def _load_dataset(path_holder, name):
         the splits, and return entries.
     """
 
-    import pdb
-    pdb.set_trace()
-
     if name == "train" or name == "val":
         imdb_path = path_holder.format(name)
     elif name == "test":
@@ -47,7 +44,7 @@ def _load_dataset(path_holder, name):
     store_keys = [
         "question",
         "question_id",
-        "image_path",
+        "image_id",
         "answers",
         "image_height",
         "image_width",
@@ -59,7 +56,7 @@ def _load_dataset(path_holder, name):
     for instance in imdb_data:
         entry = dict([(key, instance[key]) for key in store_keys if key in instance])
         # Also need to add features-dir
-        entry["image_id"] = entry["image_path"].split(".")[0] + ".npy"
+        # entry["image_id"] = entry["image_path"].split(".")[0] + ".npy"
         entries.append(entry)
 
     return entries, imdb_data.metadata
@@ -110,7 +107,6 @@ class STVQADataset(TextVQADataset):
         self,
         split,
         tokenizer,
-        bert_model,
         task="STVQA",
         padding_index=0,
         processing_threads=32,
@@ -145,6 +141,7 @@ class STVQADataset(TextVQADataset):
         # check head types to process
         self.set_head_types(task_cfg)
         self.needs_spatial = len(self.head_types) > 0
+        self.path_holder = task_cfg['stvqa_imdb']
 
         registry.vocab_type = self.vocab_type
         registry.distance_threshold = self.distance_threshold
@@ -171,16 +168,15 @@ class STVQADataset(TextVQADataset):
 
         logger.info(f"Cache Name:  {cache_path}")
 
-        if not os.path.exists(cache_path) or self.debug:
+        if True:
             # Initialize Processors
-
             if "processors" not in registry:
                 self.processors = Processors(self._tokenizer, vocab_type=self.vocab_type)
                 registry.processors = self.processors
             else:
                 self.processors = registry.processors
 
-            self.entries, _ = _load_dataset(split)
+            self.entries, _ = _load_dataset(self.path_holder ,split)
             # convert questions to tokens, create masks, segment_ids
             self.process()
 

@@ -76,7 +76,7 @@ import torch
 from easydict import EasyDict as edict
 
 from tools.registry import registry
-from vilbert.spatial_utils_regat import build_graph_using_normalized_boxes_share
+from vilbert.spatial_utils import build_graph_using_normalized_boxes_share
 from .textvqa_vocab import VocabDict
 from ..phoc import build_phoc
 import logging
@@ -820,7 +820,6 @@ def SpatialProcessor(pad_obj_ocr_bboxes):
     adj_matrix_shared = build_graph_using_normalized_boxes_share(
         pad_obj_ocr_bboxes,
         distance_threshold=registry.distance_threshold,
-        build_gauss_bias=registry.use_gauss_bias
         )
     return adj_matrix_shared
 

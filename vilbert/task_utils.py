@@ -1,33 +1,21 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 
-# This source code is licensed under the MIT license found in the
-# LICENSE file in the root directory of this source tree.
-from bisect import bisect
 import logging
+from bisect import bisect
 
-import numpy as np
 import torch
-import torch.nn.functional as F
 import torch.nn as nn
-from torch.optim import Adam
-from torch.utils.data import DataLoader, Dataset, RandomSampler, ConcatDataset
-from torch.utils.data.distributed import DistributedSampler
+import torch.nn.functional as F
 from pytorch_transformers.tokenization_bert import BertTokenizer
-from pytorch_transformers.tokenization_roberta import RobertaTokenizer
-from vilbert.datasets import DatasetMapTrain
-from vilbert.datasets.textvqa_metrics import TextVQAAccuracy, STVQAAccuracy
+from torch.optim import Adam
 from torch.optim.lr_scheduler import (
     LambdaLR,
-    ReduceLROnPlateau,
-    CosineAnnealingLR,
-    CosineAnnealingWarmRestarts,
 )
-from pytorch_transformers.optimization import (
-    AdamW,
-    WarmupConstantSchedule,
-    WarmupLinearSchedule,
-)
+from torch.utils.data import DataLoader, RandomSampler, ConcatDataset
+
 from tools.registry import registry
+from vilbert.datasets import DatasetMapTrain
+from vilbert.datasets.textvqa_metrics import TextVQAAccuracy, STVQAAccuracy
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +27,6 @@ class M4CDecodingBCEWithMaskLoss(nn.Module):
         self.debug_count = 0
 
     def forward(self, scores, targets, loss_mask):
-        # self.debug_count += 1
         assert scores.dim() == 3 and loss_mask.dim() == 2
         losses = F.binary_cross_entropy_with_logits(scores, targets, reduction="none")
         losses *= loss_mask.unsqueeze(-1)
@@ -90,6 +77,7 @@ MetricsMap = {
     "STVQA": STVQAAccuracy(),
 }
 
+
 def forward(
         task_cfg,
         model,
@@ -98,15 +86,17 @@ def forward(
         run_type="train"
     ):
 
+    loss = LossMap[task_cfg["loss"]]
+    metric = MetricsMap[task_cfg["metric"]]
+
+    results_dict = model(batch_dict)
+    batch_dict.update(results_dict)
+
     if run_type == "evaluation" and registry.get("is_running_validation", False):
         return None, None, None
 
-    loss = LossMap[task_cfg["loss"]]
-    textvqa_metric = MetricsMap[task_cfg["metric"]]
-    results_dict = model(batch_dict)
-    batch_dict.update(results_dict)
     loss = loss(batch_dict["textvqa_scores"], batch_dict["targets"], batch_dict["train_loss_mask"])
-    batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, batch_dict["textvqa_scores"])
+    batch_acc, batch_scores = metric.calculate(batch_dict, batch_dict["textvqa_scores"])
 
     if return_batch:
         return float(loss), float(batch_acc), len(batch_dict["question_id"]), batch_dict
@@ -117,10 +107,9 @@ def forward(
     return loss, batch_acc
 
 
-def LoadLosses(args, task_cfg, task_ids):
+def load_losses(args, task_cfg, task_ids):
     losses = {}
     task_types = []
-    num_labels = 0
     for i, task_id in enumerate(task_ids):
         task = "TASK" + task_id
         model_type = task_cfg["type"]
@@ -141,8 +130,6 @@ def get_loader(args, task_cfg, tokenizer, split):
         _dataset = DatasetMapTrain[dset](
             split=split,
             tokenizer=tokenizer,
-            bert_model=args.bert_model,
-            padding_index=0,
             task_cfg=task_cfg
         )
         datasets.append(_dataset)
@@ -171,11 +158,3 @@ def load_datasets(args, task_cfg, splits):
     for split in splits:
         loaders[split] = get_loader(args, task_cfg, tokenizer, split)
     return loaders
-
-
-def compute_score_with_logits(logits, labels):
-    logits = torch.max(logits, 1)[1].data  # argmax
-    one_hots = torch.zeros(*labels.size()).cuda()
-    one_hots.scatter_(1, logits.view(-1, 1), 1)
-    scores = one_hots * labels
-    return scores

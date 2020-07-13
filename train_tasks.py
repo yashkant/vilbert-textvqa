@@ -199,8 +199,11 @@ def send_to(batch_dict, device):
 def main():
     task_cfg, args = get_parser_cfg()
     assert_add_registry(task_cfg, args)
+    registry.task_cfg = task_cfg
+    registry.args = vars(args)
+
     model_type = task_cfg["model_type"] if args.model_type is None else args.model_type
-    savePath, output_checkpoint_path = build_save_path(args)
+    save_path, output_checkpoint_path = build_save_path(args)
 
     # running only in evaluation mode
     if args.only_eval:
@@ -213,7 +216,6 @@ def main():
         logger.info("Did not recognize model!")
         raise ValueError
 
-    base_lr = task_cfg["lr"]
     device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
     registry.device = device
     n_gpu = torch.cuda.device_count()
@@ -223,42 +225,21 @@ def main():
     if task_cfg["grad_clip_mode"] == "all":
         logger.info(f"Using gradients clipping mode: {task_cfg['grad_clip_mode']}")
 
-    if not os.path.exists(savePath):
-        os.makedirs(savePath)
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
 
-
+    # Build datasets
     dataloaders = load_datasets(args, task_cfg, ["train", "val"])
 
-    # Build config
+    # Build model and optimizer
     mmt_config = BertConfig.from_dict(task_cfg["M4C"])
     text_bert_config = BertConfig.from_dict(task_cfg["TextBert"])
     model = M4C(mmt_config, text_bert_config)
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Training Parameters: {trainable_params}")
-    # LOAD LOSSES
+    base_lr = task_cfg["lr"]
     optimizer_grouped_parameters = model.get_optimizer_parameters(base_lr)
-
     optimizer, warmup_scheduler = get_optim_scheduler(task_cfg, optimizer_grouped_parameters, base_lr)
-
-    if args.resume_file != "" and os.path.exists(args.resume_file):
-        logger.info(f"Resuming from Checkpoint: {args.resume_file}")
-        checkpoint = torch.load(args.resume_file, map_location="cpu")
-        new_dict = {}
-        for attr in checkpoint["model_state_dict"]:
-            if attr.startswith("module."):
-                new_dict[attr.replace("module.", "", 1)] = checkpoint[
-                    "model_state_dict"
-                ][attr]
-            else:
-                new_dict[attr] = checkpoint["model_state_dict"][attr]
-        model.load_state_dict(new_dict)
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        warmup_scheduler.load_state_dict(checkpoint["warmup_scheduler_state_dict"])
-        global_step = checkpoint["global_step"]
-        start_epoch = int(checkpoint["epoch_id"]) + 1
-        tbLogger = checkpoint["tb_logger"]
-        del checkpoint
-
     model.to(device)
 
     for state in optimizer.state.values():
@@ -276,15 +257,11 @@ def main():
     # This validation score is used for model-saving.
     best_val_epoch, best_val_score = -1, 0
 
-    if task_cfg["debug"]:
-        median_num_iter = 2
-
     global_step = 0
-    start_epoch = 0
-
     loss_values, score_values = [], []
-    # TRAINING LOOP
-    for epoch_id in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
+
+    # Start training
+    for epoch_id in tqdm(range(0, args.num_train_epochs), desc="Epoch"):
         model.train()
         for step, batch in tqdm(enumerate(dataloaders["train"]), desc="Iters", total=len(dataloaders["train"])):
             send_to(batch, device)
@@ -325,21 +302,18 @@ def main():
             task_cfg,
             device,
             model,
-            epoch_id,
-            None,
         )
 
         # Save a trained model
-        logger.info("** ** * Saving fine - tuned model ** ** * ")
+        logger.info(
+            f"Current Validation Score: {curr_val_score} | Previous Best Validation Score: {best_val_score}")
         model_to_save = (
             model.module if hasattr(model, "module") else model
         )
 
         if curr_val_score > best_val_score:
-            output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
+            output_checkpoint = os.path.join(save_path, "pytorch_ckpt_latest.tar")
             logger.info(f"Saving Checkpoint: {output_checkpoint}")
-            logger.info(
-                f"Current Validation Score: {curr_val_score} | Previous Best Validation Score: {best_val_score}")
             best_val_score = curr_val_score
             best_val_epoch = epoch_id
             torch.save(
@@ -349,12 +323,10 @@ def main():
                     "warmup_scheduler_state_dict": warmup_scheduler.state_dict(),
                     "global_step": global_step,
                     "epoch_id": epoch_id,
-                    "tb_logger": tbLogger,
                 },
                 output_checkpoint,
             )
 
-    tbLogger.txt_close()
     del model
     print(f"Best Validation Score: {best_val_score}, Best Validation Epoch: {best_val_epoch}")
     return args.task_file, output_checkpoint, args.use_share2
@@ -370,21 +342,23 @@ def evaluate(
     model.eval()
     with torch.no_grad():
         total_loss, total_score, total_batch_size = [], [], []
-        for i, batch in enumerate(val_loader):
+        for i, batch in tqdm(enumerate(val_loader), total=len(val_loader), desc="Validation Run"):
             send_to(batch, device)
             loss, score, batch_size = forward(task_cfg, model,  batch, run_type="evaluation")
             total_loss.append(loss)
-            total_score.append(score)
+            total_score.append(score * batch_size)
             total_batch_size.append(batch_size)
+
+    val_accuracy = sum(total_score) / sum(total_batch_size)
 
     # log to wandb
     wandb.log({
-        'val_accuracy': sum(total_score) / sum(total_batch_size),
+        'val_accuracy': val_accuracy,
         'val_loss': sum(total_loss) / sum(total_batch_size)
     })
 
     model.train()
-    return score
+    return val_accuracy
 
 
 if __name__ == "__main__":
@@ -393,14 +367,11 @@ if __name__ == "__main__":
     assert os.path.exists(output_checkpoint_path)
 
     evaluator = Evaluator(
-        task_file=task_file_path,
-        config_file="config/spatial_m4c_mmt_textvqa.json",
-        batch_size=64,
         model_ckpt=output_checkpoint_path,
-        short_eval=False,
-        use_share2=False,
     )
-    for beam_size in [1, 5]:
+
+    # Evaluate w/ beam-search
+    for beam_size in [5]:
         for split in ["val", "test"]:
             evaluator.load_split(split, beam_size)
             evaluator.evaluate()

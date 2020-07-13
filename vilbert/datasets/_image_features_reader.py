@@ -65,7 +65,6 @@ class ImageFeaturesH5Reader(object):
         # If not loaded in memory, then list of None.
         self.env = lmdb.open(
             self.features_path,
-            max_readers=1,
             readonly=True,
             lock=False,
             readahead=False,
@@ -90,34 +89,40 @@ class ImageFeaturesH5Reader(object):
             - if not:
                 - read and generate normalized and un-normalized features and cache them
         """
+        sample_id = self._image_ids[0]
+        if type(sample_id) == str:
+            index = self._image_ids.index(image_id)
+        else:
+            image_id = str(image_id).encode()
+            index = self._image_ids.index(image_id)
 
-        # Todo: remove this dirty code
-        sample_id = self._image_ids[0].decode()
-        if "scene-text" in image_id:
-            sample_id = splitall(sample_id)
-            image_id = splitall(image_id)
-            # create new image-id
-            new_image_id = []
-            # join initial paths from sample
-            for part in sample_id:
-                if "task" in part:
-                    break
-                new_image_id.append(part)
-            # join the tail
-            append = False
-            for part in image_id:
-                if "task" in part or append:
-                    append = True
-                    new_image_id.append(part)
-            # weave all
-            image_id = os.path.join(*new_image_id)
+        # if "scene-text" in image_id:
+        #     key = os.path.join(* sample_id[-2:]).split(".")[0]
+        #     sample_id = splitall(sample_id)
+        #     image_id = splitall(image_id)
+        #     # create new image-id
+        #     new_image_id = []
+        #     # join initial paths from sample
+        #     for part in sample_id:
+        #         if "task" in part:
+        #             break
+        #         new_image_id.append(part)
+        #     # join the tail
+        #     append = False
+        #     for part in image_id:
+        #         if "task" in part or append:
+        #             append = True
+        #             new_image_id.append(part)
+        #     # weave all
+        #     image_id = os.path.join(*new_image_id)
+        #
+        # if "ocr-vqa" in sample_id:
+        #     base_path = os.path.split(sample_id)[0]
+        #     image_id = os.path.join(base_path, image_id)
 
-        if "ocr-vqa" in sample_id:
-            base_path = os.path.split(sample_id)[0]
-            image_id = os.path.join(base_path, image_id)
+        # image_id = str(image_id).encode()
+        # index = self._image_ids.index(image_id)
 
-        image_id = str(image_id).encode()
-        index = self._image_ids.index(image_id)
         if self._in_memory:
             # Load features during first epoch, all not loaded together as it
             # has a slow start.
@@ -128,6 +133,10 @@ class ImageFeaturesH5Reader(object):
                 image_location_ori = self.boxes_ori[index]
             else:
                 with self.env.begin(write=False) as txn:
+
+                    if type(image_id) == str:
+                        image_id = image_id.encode()
+
                     item = pickle.loads(txn.get(image_id))
                     # image_id = item["image_id"]
                     image_h = int(item["image_h"])

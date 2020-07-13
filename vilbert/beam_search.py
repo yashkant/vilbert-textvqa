@@ -130,7 +130,7 @@ class BeamSearch():
             'pad_obj_mask',
             'pad_ocr_mask',
             'spatial_adj_matrices',
-            'gauss_bias_matrices',
+            # 'gauss_bias_matrices',
             'ocr_mmt_in',
             'obj_mmt_in'
         ]

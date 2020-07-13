@@ -7,16 +7,27 @@ import sys
 import numpy as np
 import pandas as pd
 import torch
-import yaml
-from easydict import EasyDict as edict
 
 from tools.registry import registry
 from vilbert.datasets.textvqa_metrics import TextVQAAccuracyEvaluator, STVQAANLSEvaluator
 from vilbert.task_utils import (
     load_datasets,
-    LoadLosses,
+    load_losses,
     forward
 )
+
+
+def send_to(batch_dict, device):
+    if device.type == "cpu":
+        return
+
+    for key, value in batch_dict.items():
+        if isinstance(value, torch.Tensor):
+            batch_dict[key] = value.cuda(device=device, non_blocking=True)
+        if isinstance(value, dict):
+            for k,v in value.items():
+                batch_dict[key][k] = v.cuda(device=device, non_blocking=True)
+
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -105,56 +116,53 @@ anls_evaluator = STVQAANLSEvaluator()
 class Evaluator:
 
     def __init__(self,
-                 task_file,
-                 config_file,
-                 batch_size,
                  model_ckpt,
-                 short_eval,
-                 use_share2,
-                 ):
+                 batch_size=96):
+
+        task_cfg = registry.task_cfg
         self.device = torch.device(
             "cuda" if torch.cuda.is_available() else "cpu"
         )
         self.n_gpu = torch.cuda.device_count()
+        registry["is_running_validation"] = True
+        registry.model_ckpt = model_ckpt
 
-        # if default value is going to change, add those in command line arguments.
-        args = edict({
-            'bert_model': 'bert-base-uncased',
-            'val_df_file': '/srv/share3/hagrawal9/data/textvqa_val_googleocr_cocodetector.pkl',
-            'tasks': '19',
-            'do_lower_case': True,
-            'in_memory': True,
-            'gradient_accumulation_steps': 1,
-            'num_workers': 8,
-            'local_rank': -1,
-            'clean_train_sets': False,
-            'num_train_epochs': 100,
-            'train_iter_multiplier': 1.0,
-            'is_running_validation': True
-        })
+        # # if default value is going to change, add those in command line arguments.
+        # args = edict({
+        #     'bert_model': 'bert-base-uncased',
+        #     'val_df_file': '/srv/share3/hagrawal9/data/textvqa_val_googleocr_cocodetector.pkl',
+        #     'tasks': '19',
+        #     'do_lower_case': True,
+        #     'in_memory': True,
+        #     'gradient_accumulation_steps': 1,
+        #     'num_workers': 8,
+        #     'local_rank': -1,
+        #     'clean_train_sets': False,
+        #     'num_train_epochs': 100,
+        #     'train_iter_multiplier': 1.0,
+        #     'is_running_validation': True
+        # })
 
         # Extremely important to set this. Controls the behavior of evaluation during training or not.
-        registry["is_running_validation"] = True
-        args.update({
-            "task_file": task_file,
-            "config_file": config_file,
-            "batch_size": batch_size,
-            "model_ckpt": model_ckpt,
-            "short_eval": short_eval,
-            "use_share2": use_share2,
-        })
-        registry['args'] = args
-        self.args = args
+        # args.update({
+        #     "task_file": task_file,
+        #     "config_file": config_file,
+        #     "batch_size": batch_size,
+        #     "model_ckpt": model_ckpt,
+        #     "short_eval": short_eval,
+        #     "use_share2": use_share2,
+        # })
+        # registry['args'] = args
+        # self.args = args
 
-        # Load task config
-        with open(args.task_file, "r") as f:
-            task_cfg = edict(yaml.safe_load(f))
-        registry['task_config'] = task_cfg
+        # # Load task config
+        # with open(args.task_file, "r") as f:
+        #     task_cfg = edict(yaml.safe_load(f))
+        # registry['task_config'] = task_cfg
 
-
-        if task_cfg["TASK19"]["val_on"][0] == "textvqa":
+        if task_cfg["val_on"][0] == "textvqa":
             vocab_path = vocab_paths["textvqa"]
-        elif task_cfg["TASK19"]["val_on"][0] == "stvqa":
+        elif task_cfg["val_on"][0] == "stvqa":
             vocab_path = vocab_paths["stvqa"]
         else:
             raise AssertionError
@@ -170,24 +178,17 @@ class Evaluator:
 
 
     def load_split(self, split, beam_size):
-        args = self.args
+
+        args = registry.args
         args.update({
-            "split":split,
-            "beam_size":beam_size
+            "split": split,
+            "beam_size": beam_size
         })
-        task_cfg = registry['task_config']
+        task_cfg = registry['task_cfg']
         self.split = split
-        args.split = split
 
         # Load Dataset
-        self.return_tuple = load_datasets(args, task_cfg, args.tasks.split("-"),
-                                          split=split,
-                                          only_val=True,
-                                          test_val_bs=48,
-                                          test_val_workers=8)
-
-        self.task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
-
+        self.loaders = load_datasets(args, task_cfg, [split])
         # tvqa_eval_df = load_data_for_evaluation_tvqa()
         # tvqa_eval_df_test = load_data_for_evaluation_tvqa_test()
         # stvqa_eval_df = load_data_for_evaluation_stvqa("stvqa")
@@ -198,12 +199,12 @@ class Evaluator:
         # pd.to_pickle(stvqa_eval_df, eval_df_path_stvqa)
         # pd.to_pickle(stvqa_eval_df_test, eval_df_path_stvqa_test)
 
-        if task_cfg["TASK19"]["val_on"][0] == "textvqa":
+        if task_cfg["val_on"][0] == "textvqa":
             path = eval_df_path_tvqa
             if split == "test":
                 path = eval_df_path_tvqa_test
             eval_df = pd.read_pickle(path)
-        elif task_cfg["TASK19"]["val_on"][0] == "stvqa":
+        elif task_cfg["val_on"][0] == "stvqa":
             path = eval_df_path_stvqa
             if split == "test":
                 path = eval_df_path_stvqa_test
@@ -213,79 +214,23 @@ class Evaluator:
 
         self.eval_df = eval_df
 
-
     def load_model(self):
-        args = self.args
-        task_config = registry.get("task_config")
-        model_type = task_config["TASK19"]["model_type"]
+        task_cfg = registry.get("task_cfg")
+        model_type = task_cfg["model_type"]
 
-        if model_type == "m4c":
-            logger.info("Using M4C model")
-            from vilbert.m4c import BertConfig
-            from vilbert.m4c import M4C
-        elif model_type == "m4c_rd":
-            logger.info("Using M4C-RD model")
-            from vilbert.m4c_decode_rd import BertConfig
-            from vilbert.m4c_decode_rd import M4C
-        elif model_type == "22ss":
-            from vilbert.vilbert_ss import BertConfig
-        elif model_type == "m4c_spatial":
+        if model_type == "m4c_spatial":
             logger.info("Using M4C-Spatial model")
             from vilbert.m4c_spatial import BertConfig, M4C
-        elif model_type == "m4c_topk":
-            logger.info("Using M4C-Topk model")
-            from vilbert.m4c_topk import BertConfig, M4C
-        elif model_type == "m4c_topk_20x":
-            logger.info("Using M4C-Topk model")
-            from vilbert.m4c_topk_20x import BertConfig, M4C
-        elif model_type == "m4c_regat":
-            logger.info("Using M4C-Regat model")
-            from vilbert.m4c_regat import BertConfig, M4C
-        elif model_type == "m4c_regat_spatial":
-            logger.info("Using M4C-Regat_spatial model")
-            from vilbert.m4c_regat_spatial import BertConfig, M4C
-        elif model_type == "m4c_spatial_que_cond":
-            logger.info("Using M4C-Spatial Question Cond. model")
-            from vilbert.m4c_spatial_que_cond import BertConfig, M4C
         else:
+            logger.info("Did not recognize model!")
             raise ValueError
 
-        transfer_keys = ["attention_mask_quadrants",
-                         "hidden_size",
-                         "num_implicit_relations",
-                         "spatial_type",
-                         "num_hidden_layers",
-                         "num_spatial_layers",
-                         "layer_type_list",
-                         "cond_type",
-                         "full_spatial",
-                         "use_bias",
-                         "no_drop",
-                         "mix_list"
-                         ]
-        transfer_keys.extend(["aux_spatial_fusion", "use_aux_heads"])
-
-        with open(args.config_file, "r") as file:
-            config_dict = json.load(file)
-
-        # Adding blank keys that could be dynamically replaced later
-        config_dict["layer_type_list"] = None
-        config_dict["beam_size"] = 1
-        config_dict["mix_list"] = None
-
-        mmt_config = BertConfig.from_dict(config_dict)
-        # Replace keys
-        for key in transfer_keys:
-            if key in task_config["TASK19"]:
-                config_dict[key] = task_config["TASK19"][key]
-                logger.info(f"Transferring keys:  {key}, {config_dict[key]}")
-        mmt_config = BertConfig.from_dict(config_dict)
-
-        text_bert_config = BertConfig.from_json_file("config/m4c_textbert_textvqa.json")
+        mmt_config = BertConfig.from_dict(task_cfg["M4C"])
+        text_bert_config = BertConfig.from_dict(task_cfg["TextBert"])
         model = M4C(mmt_config, text_bert_config)
 
-        logger.info(f"Resuming from Checkpoint: {args.model_ckpt}")
-        checkpoint = torch.load(args.model_ckpt, map_location="cpu")
+        logger.info(f"Resuming from Checkpoint: {registry.model_ckpt}")
+        checkpoint = torch.load(registry.model_ckpt, map_location="cpu")
         new_dict = {}
 
         for attr in checkpoint["model_state_dict"]:
@@ -302,9 +247,10 @@ class Evaluator:
         return model
 
     def evaluate(self):
-        args = self.args
+        args = registry.args
+        args.short_eval = False
         eval_df = self.eval_df
-        task_cfg = registry['task_config']
+        task_cfg = registry.task_cfg
 
         # Load Model
         if self.model is None:
@@ -316,53 +262,19 @@ class Evaluator:
         #     self.model = torch.nn.DataParallel(self.model)
 
         model = self.model
-        task_losses = self.task_losses
-
-        if "test" in self.split:
-            (
-                task_batch_size,
-                task_num_iters,
-                task_ids,
-                task_datasets_train,
-                task_datasets_val,
-                task_datasets_test,
-                task_dataloader_train,
-                task_dataloader_val,
-                task_dataloader_test
-            ) = self.return_tuple
-        else:
-            (
-                task_batch_size,
-                task_num_iters,
-                task_ids,
-                task_datasets_train,
-                task_datasets_val,
-                task_dataloader_train,
-                task_dataloader_val
-            ) = self.return_tuple
-
-
         for split in ["test", "val"]:
             if split not in self.split:
                 continue
-
-            if "test" in split:
-                dataloader = task_dataloader_test
-            elif "val" in split:
-                dataloader = task_dataloader_val
 
             logger.info(f"Processing split: {split}")
             if split in self.split:
                 # Run evaluation
                 curr_score = evaluate(
                     args,
-                    dataloader,
-                    None,
+                    self.loaders[split],
                     task_cfg,
-                    self.device,
-                    "TASK19",
                     model,
-                    task_losses
+                    self.device
                 )
 
                 curr_score['complete_seqs'] = np.concatenate( [x.reshape(-1, 12) for x in curr_score['complete_seqs']], axis=0).tolist()
@@ -377,7 +289,7 @@ class Evaluator:
                 results_df = pd.DataFrame.from_dict(curr_score, orient='columns')
 
                 # # Get both type of accuracies!
-                # if task_cfg["TASK19"]["val_on"][0] == "stvqa":
+                # if task_cfg["val_on"][0] == "stvqa":
                 #     accuracies = evaluate_predictions(eval_df, results_df, acc_type="vqa", tokens_from="re")
                 # else:
                 accuracies = evaluate_predictions(eval_df, results_df, acc_type="vqa")
@@ -389,7 +301,7 @@ class Evaluator:
                             accuracies['vqa_accuracy'],
                             accuracies['accuracies_df'].shape,
                             self.split,
-                            task_cfg["TASK19"]["val_on"][0])
+                            task_cfg["val_on"][0])
                     )
 
                     accuracies_anls = evaluate_predictions(eval_df, results_df, acc_type="anls")
@@ -399,13 +311,13 @@ class Evaluator:
                             accuracies_anls['vqa_accuracy'],
                             accuracies_anls['accuracies_df'].shape,
                             self.split,
-                            task_cfg["TASK19"]["val_on"][0])
+                            task_cfg["val_on"][0])
                     )
 
-                evalai_file = os.path.join(os.path.dirname(args.model_ckpt),
+                evalai_file = os.path.join(os.path.dirname(registry.model_ckpt),
                                            '{}_evalai_beam_{}_short_eval_{}_share2_{}.json'.
                                            format(split, args.beam_size, args.short_eval, args.use_share2))
-                df_file = os.path.join(os.path.dirname(args.model_ckpt),
+                df_file = os.path.join(os.path.dirname(registry.model_ckpt),
                                        '{}_evalai_beam_{}_short_eval_{}_share2_{}.df'.
                                        format(split, args.beam_size, args.short_eval, args.use_share2))
 
@@ -426,13 +338,10 @@ class Evaluator:
 
 def evaluate(
         args,
-        task_dataloader_val,
-        task_stop_controller,
+        loader,
         task_cfg,
-        device,
-        task_id,
         model,
-        task_losses
+        device
 ):
     predictions = {
         'question_id': [],
@@ -440,13 +349,12 @@ def evaluate(
         'complete_seqs': [],
         # 'ocr_tokens': []
     }
-    scores = 0.0
-    data_size = 0
     model.eval()
 
     with torch.no_grad():
-        for i, batch in enumerate(task_dataloader_val[task_id]):
+        for i, batch in enumerate(loader):
 
+            send_to(batch, device)
             # Don't bother for loss (beam-search changes output)
             forward(task_cfg, model, batch, run_type="evaluation")
 
@@ -461,7 +369,7 @@ def evaluate(
                 #     batch[key] = [dec_bytes2obj(x) for x in batch[key]]
                 predictions[key].append(batch[key])
 
-            sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
+            sys.stdout.write("%d/%d\r" % (i, len(loader)))
             sys.stdout.flush()
 
             if args.short_eval and i == 1:

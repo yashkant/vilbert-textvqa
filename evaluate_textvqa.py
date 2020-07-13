@@ -21,7 +21,7 @@ from tools.registry import registry
 import vilbert.utils as utils
 from vilbert.task_utils import (
     load_datasets,
-    LoadLosses,
+    load_losses,
     ForwardModelsTrain,
     ForwardModelsVal,
     clip_gradients,
@@ -514,7 +514,7 @@ def main():
             task_dataloader_val
         ) = return_tuple
 
-    task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
+    task_losses = load_losses(args, task_cfg, args.tasks.split("-"))
 
     # tvqa_eval_df = load_data_for_evaluation_tvqa()
     # tvqa_eval_df_test = load_data_for_evaluation_tvqa_test()

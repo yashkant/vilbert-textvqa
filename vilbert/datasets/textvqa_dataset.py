@@ -7,7 +7,7 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 
 from tools.objects_to_byte_tensor import enc_obj2bytes
-from vilbert.spatial_utils_regat import torch_broadcast_adj_matrix
+from vilbert.spatial_utils import torch_broadcast_adj_matrix
 from ._image_features_reader import ImageFeaturesH5Reader
 from .textvqa_processors import *
 
@@ -15,25 +15,19 @@ logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 
-def _load_dataset(path_holder, name, return_qid_map=False):
-    """Load entries from Imdb
-    (YK): We load questions and answers corresponding to
-        the splits, and return entries.
-    """
-
+def load_imdb(path_holder, name):
     # train and val features are in the same file
     if name in ["train", "val", "test"]:
         imdb_path = path_holder.format(name)
     else:
         assert False, "data split is not recognized."
 
-    logger.info(f"Loading IMDB for {name}" if not debug else f"Loading IMDB for {name} in debug mode")
+    logger.info(f"Loading IMDB for {name} in debug mode")
     logger.info(f"IMDB path: {imdb_path}")
     imdb_data = ImageDatabase(imdb_path)
 
     # build entries with only the essential keys
     entries = []
-    qid_map = {}
     store_keys = [
         "question",
         "question_id",
@@ -49,11 +43,7 @@ def _load_dataset(path_holder, name, return_qid_map=False):
     logger.info(f"Building Entries for {name}")
     for idx, instance in enumerate(imdb_data):
         entry = dict([(key, instance[key]) for key in store_keys])
-        qid_map[idx] = instance["question_id"]
         entries.append(entry)
-
-    if return_qid_map:
-        return entries, imdb_data.metadata, return_qid_map
 
     return entries, imdb_data.metadata
 
@@ -113,7 +103,6 @@ class TextVQADataset(Dataset):
             self,
             split,
             tokenizer,
-            bert_model,
             task="TextVQA",
             padding_index=0,
             processing_threads=32,
@@ -123,6 +112,7 @@ class TextVQADataset(Dataset):
         self.split = split
         self._set_attrs(task_cfg)
 
+        # train + val features are in a single file!
         if split in ["train", "val"]:
             format_str = "trainval"
         else:
@@ -159,7 +149,6 @@ class TextVQADataset(Dataset):
         logger.info(f"Clean Answers is {self.clean_answers}")
         logger.info(f"needs_spatial is {self.needs_spatial}")
 
-
         cache_path = os.path.join(
             self.tvqa_dataroot,
             "cache",
@@ -174,17 +163,16 @@ class TextVQADataset(Dataset):
 
         logger.info(f"Cache Name:  {cache_path}")
 
-        load_cache = False
-
-        if (not os.path.exists(cache_path) or self.debug) and (load_cache):
-            # initialize Processors (only once)
+        if (not os.path.exists(cache_path) or self.debug):
+            # initialize processors (only once)
             if "processors" not in registry:
                 self.processors = Processors(self._tokenizer, vocab_type=self.vocab_type)
                 registry.processors = self.processors
             else:
                 self.processors = registry.processors
 
-            self.entries, _ = _load_dataset(self.tvqa_imdb, split)
+            # load imdbs
+            self.entries, _ = load_imdb(self.tvqa_imdb, split)
 
             # convert questions to tokens, create masks, segment_ids
             self.process()
@@ -247,7 +235,7 @@ class TextVQADataset(Dataset):
 
     def process_spatials(self):
         pad_obj_ocr_bboxes_list = []
-        for entry in tqdm(self.entries, desc="Reading Entries"):
+        for entry in tqdm(self.entries, desc="Reading object/ocr features"):
             # Adding spatial graph matrix
             obj_features, obj_num_boxes, obj_bboxes, _ = self.obj_features_reader[entry["image_id"]]
             obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes - 1, obj_bboxes[1:]
@@ -263,7 +251,10 @@ class TextVQADataset(Dataset):
             # Append bboxes to the list
             pad_obj_ocr_bboxes_list.append(np.concatenate([pad_obj_bboxes[:, :-1], pad_ocr_bboxes[:, :-1]], axis=0))
 
-        logger.info(f"Processsing Spatial Relations with {self.processing_threads} threads")
+        import pdb
+        pdb.set_trace()
+
+        logger.info(f"Building Spatial Graphs with {self.processing_threads} threads")
         with mp.Pool(self.processing_threads) as pool:
             results = list(tqdm(pool.imap(SpatialProcessor, pad_obj_ocr_bboxes_list), total=len(pad_obj_ocr_bboxes_list)))
         
