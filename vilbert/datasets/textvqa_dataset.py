@@ -479,7 +479,10 @@ class TextVQADataset(Dataset):
         else:
             # Empty placeholder
             entry["train_prev_inds"] = torch.zeros(12, dtype=torch.long)
-        
+
+        # import pdb
+        # pdb.set_trace()
+
         if self.needs_spatial:
             # In the first iteration expand all the spatial relation matrices
             if "spatial_adj_matrices" not in entry:
@@ -596,9 +599,9 @@ class TextVQADataset(Dataset):
                 item.pop(key, None)
 
         unwanted_keys_entry = [
-            'spatial_adj_matrices',
+            # 'spatial_adj_matrices',
             'gauss_bias_matrices',
-            'bin_matrices',
+            'bins_matrices',
         ]
 
         for key in unwanted_keys_entry:
