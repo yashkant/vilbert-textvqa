@@ -268,17 +268,34 @@ def ForwardModelsTrain(
     task_dataloader_train,
     model,
     task_losses,
+    train_type="scl"
 ):
-    # given the current task, decided whether to forward the model and forward with specific loss.
-    # reset the task iteration when needed.
-    if task_count[task_id] % len(task_dataloader_train[task_id]) == 0:
-        task_iter_train[task_id] = iter(task_dataloader_train[task_id])
+    if train_type == "ce" and registry.alt_train:
+        dataloader = task_dataloader_train[task_id + "alt"]
+        if task_count[task_id + "alt"] % len(dataloader) == 0:
+            task_iter_train[task_id + "alt"] = iter(dataloader)
+        task_count[task_id + "alt"] += 1
+        batch_dict = task_iter_train[task_id + "alt"].next()
+        if not registry.alt_re:
+            batch_dict = batch_dict[:1]
+    else:
+        dataloader = task_dataloader_train[task_id]
+        if task_count[task_id] % len(dataloader) == 0:
+            task_iter_train[task_id] = iter(dataloader)
+        task_count[task_id] += 1
+        batch_dict = task_iter_train[task_id].next()
+
+    # # given the current task, decided whether to forward the model and forward with specific loss.
+    # # reset the task iteration when needed.
+    # if task_count[task_id] % len(dataloader) == 0:
+    #     task_iter_train[task_id] = iter(dataloader)
 
     start_time = time.time()
-    task_count[task_id] += 1
-    batch_dict = task_iter_train[task_id].next()
     batch_time = time.time()
     # print(f"Build Batch Time: {batch_time-start_time}")
+
+    # import pdb
+    # pdb.set_trace()
 
     if not isinstance(batch_dict, tuple) and not isinstance(batch_dict, list):
         batch_dict = [batch_dict]
@@ -286,17 +303,17 @@ def ForwardModelsTrain(
     #     build_scl_mask(batch_dict)
 
     # Sanity check negatives
-    if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"] and not task_cfg["TASK19"]["debug"]:
-        for batch in batch_dict:
-            rephrasing_of = []
-            # iterate over question-ids
-            for question_id in batch["question_id"].tolist():
-                try:
-                    assert registry.question_rephrase_dict_train[question_id] not in rephrasing_of
-                    rephrasing_of.append(registry.question_rephrase_dict_train[question_id])
-                except:
-                    import pdb
-                    pdb.set_trace()
+    # if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"] and not task_cfg["TASK19"]["debug"]:
+    #     for batch in batch_dict:
+    #         rephrasing_of = []
+    #         # iterate over question-ids
+    #         for question_id in batch["question_id"].tolist():
+    #             try:
+    #                 assert registry.question_rephrase_dict_train[question_id] not in rephrasing_of
+    #                 rephrasing_of.append(registry.question_rephrase_dict_train[question_id])
+    #             except:
+    #                 import pdb
+    #                 pdb.set_trace()
 
     # send to device
     to_device(batch_dict, device)
@@ -323,24 +340,33 @@ def ForwardModelsTrain(
     forward_time = time.time()
     # print(f"Forward Batch Time: {forward_time-batch_time}")
 
+    if registry.alt_train:
+        losses = []
+        # use scl only
+        if train_type == "scl":
+            loss, batch_score = task_losses[task_id](batch_dict)
+        else:
+            loss, batch_score = add_ce_loss(batch_dict, device)
+        return loss, float(batch_score), losses
+
     if task_cfg[task_id]["type"] == "ContrastiveProjection":
         loss, batch_score = task_losses[task_id](batch_dict)
 
-    # if len(batch_dict) == 1:
-    #     batch_dict = batch_dict[0]
-    #
-    # # for different task, we use different output to calculate the loss.
-    # elif task_cfg[task_id]["type"] == "VL-classifier":
-    #     # loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
-    #     # loss = loss.mean() * batch_dict["target"].size(1)
-    #     # batch_score = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"]).sum() / float(
-    #     #     batch_size
-    #     # )
-    #     loss, batch_score = add_ce_loss(batch_dict)
-    #
-    # elif task_cfg[task_id]["type"] == "VL-classifier-only-ce":
-    #     loss, batch_score = add_ce_loss(batch_dict)
-    #
+    if len(batch_dict) == 1:
+        batch_dict = batch_dict[0]
+
+    # for different task, we use different output to calculate the loss.
+    if task_cfg[task_id]["type"] == "VL-classifier":
+        # loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
+        # loss = loss.mean() * batch_dict["target"].size(1)
+        # batch_score = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"]).sum() / float(
+        #     batch_size
+        # )
+        loss, batch_score = add_ce_loss(batch_dict, device)
+
+    elif task_cfg[task_id]["type"] == "VL-classifier-only-ce":
+        loss, batch_score = add_ce_loss(batch_dict, device)
+
     # elif task_cfg[task_id]["type"] == "VL-classifier-GQA":
     #     loss = task_losses[task_id](batch_dict["vil_prediction_gqa"], batch_dict["target"])
     #     loss = loss.mean() * batch_dict["target"].size(1)
@@ -385,8 +411,9 @@ def add_ce_loss(batch_dict, device, val_run=False, revqa_eval=False, split="re_t
             idx = np.random.randint(2)
             vil_preds = batch_dict[idx]["vil_prediction"]
             vil_targets = batch_dict[idx]["target"]
-
     else:
+        if len(batch_dict) == 1:
+            batch_dict = batch_dict[0]
         # validation time
         vil_preds = batch_dict["vil_prediction"]
         vil_targets = batch_dict["target"]
@@ -432,8 +459,10 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
         logger.info("Using old sampler")
         from vilbert.old_samplers import RandomSampler, NegativeSampler
     elif registry.sampler_type is not None and registry.sampler_type == "new":
-        logger.info("Using old sampler")
+        logger.info("Using new sampler")
         from vilbert.samplers_new import RandomSampler, NegativeSampler
+    else:
+        from vilbert.samplers_new import RandomSampler
 
 
 
@@ -538,7 +567,8 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
         task_num_iters[task] = 0
         task_batch_size[task] = 0
         if "train" in split:
-            if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"]:
+            if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"] \
+                    and not registry.scl_random_sampler:
                 logger.info("Using Negative Train Sampler")
                 train_sampler = NegativeSampler(
                     task_datasets_train[task],
@@ -562,6 +592,17 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
                 pin_memory=True,
                 drop_last=True
             )
+
+            if registry.alt_train:
+                alt_sampler = RandomSampler(task_datasets_train[task])
+                task_dataloader_train[task + "alt"] = DataLoader(
+                    task_datasets_train[task],
+                    sampler=alt_sampler,
+                    batch_size=batch_size * 2,
+                    num_workers=registry.train_workers,
+                    pin_memory=True,
+                    drop_last=True
+                )
 
             task_num_iters[task] = len(task_dataloader_train[task])
             task_batch_size[task] = batch_size

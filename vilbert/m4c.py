@@ -201,19 +201,27 @@ class M4C(nn.Module):
         # modules requiring custom learning rates (usually for finetuning)
         self.finetune_modules = []
 
+        # import pdb
+        # pdb.set_trace()
+
         # split model building into several components
         self._build_txt_encoding()
         self._build_mmt()
         self._build_output()
 
     def _build_txt_encoding(self):
-
+        # Todo: Just add a linear module to remove the TextBERT
         # from sentence_transformers import SentenceTransformer
         # Todo: Modify SentenceTransformer such that we can use three layers from it.
         #  the idea is — it will have better sensitivity to rephrasings.
         # model_type = 'bert-base-uncased'
         # if registry.use_sent_bert:
         #     model_type = ""
+
+        # if self.text_bert_config == None:
+        #     self.text_bert = nn.Identity()
+        #     logger.log("Not using TextBERT")
+        #     return
 
         TEXT_BERT_HIDDEN_SIZE = 768
         # self.text_bert_config = BertConfig(**self.config.text_bert)
@@ -394,33 +402,6 @@ class TextBert(BertPreTrainedModel):
         return seq_output
 
 
-class TextBert(BertPreTrainedModel):
-    def __init__(self, config):
-        super().__init__(config)
-        self.embeddings = BertEmbeddings(config)
-        self.encoder = BertEncoder(config)
-        # self.apply(self.init_weights)  # old versions of pytorch_transformers
-        self.init_weights()
-
-    def forward(self, batch_dict):
-        encoder_inputs = self.embeddings(batch_dict["question_indices"])
-        attention_mask = batch_dict["question_mask"]
-
-        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
-        assert not extended_attention_mask.requires_grad
-        head_mask = [None] * self.config.num_hidden_layers
-
-        encoder_outputs = self.encoder(
-            encoder_inputs,
-            extended_attention_mask,
-            head_mask=head_mask
-        )
-        seq_output = encoder_outputs[0]
-
-        return seq_output
-
-
 class BertImageEmbeddings(nn.Module):
     """Construct the embeddings from image, spatial location (omit now) and token_type embeddings.
     """
@@ -462,6 +443,8 @@ class MMT_VQA(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.image_embeddings = BertImageEmbeddings(config)
+        # self.text_embeddings = BertEmbeddings(config)
+        # Add this when TextBERT is identity function,
         self.encoder = BertEncoder(config)
         self.text_pooler = BertTextPooler(config)
         self.image_pooler = BertImagePooler(config)
@@ -472,6 +455,7 @@ class MMT_VQA(BertPreTrainedModel):
     def forward(self, batch_dict):
 
         text_embeddings = batch_dict["text_bert_emb"]
+        # text_embeddings = self.text_embeddings(batch_dict["question_indices"])
         image_embeddings = self.image_embeddings(
             batch_dict["input_imgs"],
             batch_dict["image_loc"]

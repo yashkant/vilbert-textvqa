@@ -15,6 +15,7 @@ from tqdm import tqdm
 import logging
 from tools.registry import registry
 import multiprocessing as mp
+import pickle as cPickle
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
@@ -74,7 +75,10 @@ class NegativeSampler(Sampler):
         self.replacement = replacement
         self.num_samples = num_samples
         self.batch_size = batch_size
-        self.split = split
+        if "train" in split:
+            self.split = "train"
+        elif "trainval" in split:
+            self.split = "trainval"
         self.task_cfg = task_cfg["TASK19"]
         self.epoch_idx = int(1e10)
         self.epochs = []
@@ -106,6 +110,19 @@ class NegativeSampler(Sampler):
         self.entries = data_source.entries
         # map from question-id -> entry-idx
         self.question_map = data_source.question_map
+
+        if self.task_cfg["contrastive"] == "better":
+            logger.info("Loading Hard Negatives")
+            self.load_hard_negatives()
+
+    def load_hard_negatives(self):
+        negs_path = "datasets/VQA/back-translate/fil_{}_question_negs.pkl".format(self.split)
+
+        assert os.path.exists(negs_path)
+        self.negs_data = cPickle.load(open(negs_path, "rb"))
+        self.negs_index_dict = {}
+        for idx, qid in enumerate(self.negs_data["qids"]):
+            self.negs_index_dict[qid] = idx
 
     def add_to_answer_map(self, entry_map_key):
         # maps gt_ans -> [(entry_map_key, ans_freq) ...]
@@ -189,251 +206,30 @@ class NegativeSampler(Sampler):
             entry_answers = entry_answers.tolist()
         return entry_answers
 
-    def check_bin(self, bin, use_gt_answer, batches, batches_extension, batches_answers_set, batch_idx):
-        flag = False
-        for nentry_idx in bin["entry_inds"]:
-            # skip negatives that are already present in batch/batch_extension
-            if nentry_idx in set(batches[batch_idx]) or nentry_idx in set(batches_extension[batch_idx]):
-                flag = True
-                break
-
-            # skip negatives with same ground-truth as other negatives in the batch.
-            if use_gt_answer:
-                entry_answers = self.get_entry_answers(self.entries[nentry_idx])
-                if len(set(batches_answers_set[batch_idx]).intersection(set(entry_answers))) > 0:
-                    flag = True
-                    break
-        return flag
-
-    def get_negative(self,
-                     batch_idx,
-                     negative_list,
-                     batches,
-                     batches_extension,
-                     use_gt_answer,
-                     batches_answers_set):
-
-        neg_entry_idx = -1
-        np.random.shuffle(negative_list)
-
-        # return if negatives list is empty
-        if len(negative_list) == 0:
-            return neg_entry_idx, True
-
-        # iterate over the negatives and pick one without adding a positive sample
-        for qid in negative_list:
-            source_id = getattr(registry, f"question_rephrase_dict_{self.split}")[qid]
-            bin = self.entry_map[source_id]
-            flag = self.check_bin(bin, use_gt_answer, batches, batches_extension, batches_answers_set, batch_idx)
-
-            # if passes add the sample
-            if not flag:
-                neg_entry_idx = bin["entry_inds"][bin["question_ids"].index(qid)]
-                break
-
-        return neg_entry_idx, flag
-
     @staticmethod
     def get_hard_negative(negative_list, batch_bins, entry_map, question_rephrase_dict):
         if len(negative_list) == 0:
-            return -1, True
+            return -1, True, -1
 
         for qid in negative_list:
+            if qid < 0:
+                assert qid == -1
+                break
+
+            # handle case when we don't use all the rephrasings
+            if qid not in question_rephrase_dict:
+                continue
+
             source_id = question_rephrase_dict[qid]
-            bin_idx = entry_map[source_id]["bin_idx"]
+            item = entry_map[source_id]
+            bin_idx = item["bin_idx"]
             if bin_idx not in batch_bins:
-                return qid, False
+                iter_idx = next(item["iter_idx"])
+                entry_idx = item["entry_inds"][iter_idx]
+                return entry_idx, False, bin_idx
 
-        return -1, True
+        return -1, True, -1
 
-
-    def build_better_batches(self):
-        self.build_maps()
-
-        neg_replace = self.task_cfg["neg_replace"]
-        init_batch_size = self.task_cfg["init_batch_size"]
-        neg_type_weights = self.task_cfg["neg_type_weights"]
-        neg_question_thresh = self.task_cfg["neg_question_thresh"]
-        use_gt_answer = self.task_cfg["use_gt_answer"]
-        assert np.sum(neg_type_weights) == 1.0
-        assert self.batch_size % init_batch_size == 0
-        add_positives = self.num_positives > 0
-        num_passes = int((self.batch_size - init_batch_size*(self.num_positives + 1))/init_batch_size)
-        assert neg_replace
-        init_pass_bs = init_batch_size + self.num_positives*init_batch_size
-
-        # we ensure that we cover all the samples occur at least once
-        # num_batches that will be created will be more than no. of batches in a single epoch
-        # Todo: We can reduce this by dividing only by samples from re-bins.
-        num_batches = int(len(self.entries)/init_batch_size)
-
-        # actual no. of batches to return (for one epoch)
-        self.num_batches = int(len(self.entries)/self.batch_size)
-        batches_answers_set = []
-
-        # we monitor all the bins using self.entry_map and self.re_bins (both are mapped to same data)
-        # self.re_bins = self.shuffle(self.re_bins, start_idx=0, end_idx=len(self.re_bins))
-
-        batches = []
-        cycle_bins = cycle(list(range(len(self.re_bins))))
-        batches_extension = [[] for _ in range(num_batches)]
-
-        for batch_idx in tqdm(range(num_batches), total=num_batches, desc="Initial Pass: "):
-            batch_inds = []
-            batch_answers = []
-            batch_bin_inds = []
-            batch_pos_inds = []
-
-            while True:
-                idx = next(cycle_bins)
-                bin = self.re_bins[idx][1]
-
-                # do not use image-negatives
-                if len(bin["entry_inds"]) == 1:
-                    continue
-
-                # we are not exhausting bins with gt_answers
-                if idx in batch_bin_inds:
-                    continue
-
-                # we are not exhausting
-                # if item["iter_idx"] is None:
-                #     continue
-
-                entry_idx = bin["entry_inds"][bin["iter_idx"]]
-
-                # skip negatives with same ground-truth
-                # if use_gt_answer:
-                #     print("skipping use-gt-answer")
-                #     entry_answers = self.get_entry_answers(self.entries[entry_idx])
-                #     if len(set(batch_answers).intersection(set(entry_answers))) > 0:
-                #         continue
-
-                bin["iter_idx"] += 1
-                batch_inds.append(entry_idx)
-                batch_answers.extend(self.get_entry_answers(self.entries[entry_idx]))
-                batch_bin_inds.append(idx)
-
-                if add_positives:
-                    # only add the needed amount
-                    num_pos = min(self.num_positives, init_pass_bs - (len(batch_inds) + len(batch_pos_inds)))
-                    self.add_positives(idx,
-                                       num_pos,
-                                       use_gt_answer,
-                                       neg_replace,
-                                       batch_inds,
-                                       batch_bin_inds,
-                                       batch_pos_inds=batch_pos_inds)
-
-                # exit initial batches
-                if (len(batch_inds) + len(batch_pos_inds)) == init_pass_bs:
-                    # shuffle left and right parts
-                    self.re_bins = self.shuffle(self.re_bins, start_idx=0, end_idx=idx+1)
-                    self.re_bins = self.shuffle(self.re_bins, start_idx=idx+1, end_idx=len(self.re_bins))
-                    # iterator exhausted
-                    if bin["iter_idx"] == len(bin["entry_inds"]):
-                        bin["iter_idx"] = 0
-                    break
-
-                # iterator exhausted
-                if bin["iter_idx"] == len(bin["entry_inds"]):
-                    bin["iter_idx"] = 0
-
-            # append pos-inds at last
-            batch_inds.extend(batch_pos_inds)
-
-            # assert all are unique in a batch
-            assert len(batch_inds) == len(set(batch_inds))
-            batches.append(batch_inds)
-            batches_answers_set.append(list(set(batch_answers)))
-
-        # each pass adds init_batch_size negatives to each batch
-        for pass_idx in tqdm(range(num_passes), total=num_passes, desc="Passes"):
-            # select a batch
-            for batch_idx in tqdm(range(len(batches)), total=len(batches)):
-                # select a sample
-                for biter_idx in range(init_batch_size):
-
-                    # passed is triggered if we run out of better samples
-                    passed = False
-
-                    entry_idx = batches[batch_idx][biter_idx]
-                    entry = self.entries[entry_idx]
-
-                    # pick a negative-type
-                    neg_choice = np.random.choice(["image_neg", "question_neg", "random"], p=neg_type_weights)
-                    image_neg_key, question_neg_key = "same_image_questions_neg", "top_k_questions_neg"
-
-
-                    if neg_choice == "image_neg":
-                        assert len(batches_answers_set) == len(batches)
-                        # add better negatives
-                        image_negatives = entry[image_neg_key]
-                        neg_entry_idx, passed = self.get_negative(batch_idx,
-                                                                  image_negatives,
-                                                                  batches,
-                                                                  batches_extension,
-                                                                  use_gt_answer,
-                                                                  batches_answers_set)
-
-                    # if image-negatives are exhausted we use question-negatives
-                    if neg_choice == "question_neg" or passed:
-                        question_neg_topk = entry[question_neg_key][:neg_question_thresh]
-                        neg_entry_idx, passed = self.get_negative(batch_idx,
-                                                                  question_neg_topk,
-                                                                  batches,
-                                                                  batches_extension,
-                                                                  use_gt_answer,
-                                                                  batches_answers_set)
-
-                    # if question-negatives are exhausted we use random negatives
-                    if neg_choice == "random" or passed:
-                        while True:
-                            idx = next(cycle_bins)
-                            bin = self.re_bins[idx][1]
-                            flag = self.check_bin(bin,
-                                                  use_gt_answer,
-                                                  batches,
-                                                  batches_extension,
-                                                  batches_answers_set,
-                                                  batch_idx)
-                            if flag:
-                                continue
-
-                            iter_indices = list(range(len(bin["entry_inds"])))
-                            np.random.shuffle(iter_indices)
-                            neg_entry_idx = bin["entry_inds"][iter_indices[0]]
-                            break
-
-                    try:
-                        assert neg_entry_idx != -1
-                    except:
-                        import pdb
-                        pdb.set_trace()
-                    batches_extension[batch_idx].append(neg_entry_idx)
-                    batches_answers_set[batch_idx].extend(self.get_entry_answers(self.entries[neg_entry_idx]))
-                    assert len(set(batches_extension[batch_idx])) == len(batches_extension[batch_idx])
-
-        # join batches together
-        for batch, batch_ext in zip(batches, batches_extension):
-            batch.extend(batch_ext)
-
-        num_epochs = int(len(batches)/self.num_batches)
-        epochs = []
-
-        # build epochs
-        for epoch_idx in range(num_epochs):
-            batch_start_idx = epoch_idx * self.num_batches
-            batch_end_idx = (epoch_idx+1) * self.num_batches
-            assert batch_end_idx <= len(batches)
-            epoch = []
-            for batch_idx in range(batch_start_idx, batch_end_idx):
-                assert len(batches[batch_idx]) == len(set(batches[batch_idx]))
-                epoch.extend(batches[batch_idx])
-            epochs.append(epoch)
-
-        self.epoch_idx = 0
-        self.epochs = epochs
 
     def build_hard_batches(self):
         self.build_maps()
@@ -458,23 +254,49 @@ class NegativeSampler(Sampler):
         extra_args = edict()
         extra_args.update({
             "num_positives": self.num_positives,
+            "bin_ans_threshold": self.bin_ans_threshold
         })
 
-        _args = (self.entry_map,
+        _args = [self.entry_map,
                  self.re_bins,
                  self.answer_map,
                  self.qid_ans_dict,
                  extra_args,
-                 num_batches,
-                 init_pass_bs)
+                 1000 if registry.sdebug else num_batches,
+                 init_pass_bs]
 
-        import pdb
-        pdb.set_trace()
+        # shuffle bins
+        self.re_bins = NegativeSampler.shuffle(self.re_bins, 0, len(self.re_bins))
 
+        # intial-pass
         batches, batches_bins = NegativeSampler.get_batches(_args)
+
+        # replace w/ original batch-size
+        _args[-1] = self.batch_size
+        _args += list([neg_type_weights, self.entries, self.negs_data, self.negs_index_dict])
+
+        # shuffle bins
+        self.re_bins = NegativeSampler.shuffle(self.re_bins, 0, len(self.re_bins))
         batches, batches_bins = NegativeSampler.add_hard_negatives(batches, batches_bins, _args, question_rephrase_dict)
-        epoch_indices = list(itertools.chain.from_iterable(batches))
-        return epoch_indices
+
+        if registry.sdebug:
+            self.debug(batches)
+
+        num_epochs = int(len(batches)/self.num_batches)
+        epochs = []
+        # build epochs
+        for epoch_idx in range(num_epochs):
+            batch_start_idx = epoch_idx * self.num_batches
+            batch_end_idx = (epoch_idx+1) * self.num_batches
+            assert batch_end_idx <= len(batches)
+            epoch = []
+            for batch_idx in range(batch_start_idx, batch_end_idx):
+                assert len(batches[batch_idx]) == len(set(batches[batch_idx]))
+                epoch.extend(batches[batch_idx])
+            epochs.append(epoch)
+
+        self.epoch_idx = 0
+        self.epochs = epochs
 
     def check_gt_condition(self, entry_idx, batch_answers):
         entry_answers = self.get_entry_answers(self.entries[entry_idx])
@@ -581,51 +403,81 @@ class NegativeSampler(Sampler):
         return batches, batches_bins
 
     @staticmethod
-    def add_hard_negatives(batches, batches_bins, args, question_rephrase_dict):
-        entry_map, re_bins, answer_map, qid_ans_dict, extra_args, num_batches, batch_size = args
-        num_positives = extra_args.num_positives
-        add_positives = num_positives > 0
+    def add_hard_negatives(batches,
+                           batches_bins,
+                           args,
+                           question_rephrase_dict):
+
+        (
+            entry_map,
+            re_bins,
+            answer_map,
+            qid_ans_dict,
+            extra_args,
+            num_batches,
+            batch_size,
+            neg_type_weights,
+            entries,
+            negs_data,
+            negs_index_dict
+        ) = args
+
         bins_iterator = cycle(range(len(re_bins)))
 
-        for batch_inds, batch_bins in zip(batches, batches_bins):
-            while True:
-                neg_choice = np.random.choice(["image_neg", "question_neg", "random"], p=neg_type_weights)
-                passed = False
+        for batch_inds, batch_bins in tqdm(zip(batches, batches_bins), total=len(batches), desc="Adding Hard Negatives"):
+            batch_inds_iter = cycle(batch_inds)
 
-                if neg_choice == "image_neg":
-                    # add better negatives
-                    image_negatives = []
-                    neg_entry_idx, passed = NegativeSampler.get_hard_negative(image_negatives,
-                                                                              batch_bins,
-                                                                              entry_map,
-                                                                              question_rephrase_dict)
+            try:
+                while True:
+                    neg_choice = np.random.choice(["image_neg", "question_neg", "random"], p=neg_type_weights)
+                    passed = False
 
-                # if image-negatives are exhausted we use question-negatives
-                if neg_choice == "question_neg" or passed:
-                    que_negatives = []
-                    neg_entry_idx, passed = NegativeSampler.get_hard_negative(que_negatives,
-                                                                              batch_bins,
-                                                                              entry_map,
-                                                                              question_rephrase_dict)
+                    if neg_choice in ["image_neg"]:
+                        entry_idx = next(batch_inds_iter)
+                        question_id = entries[entry_idx]["question_id"]
+                        negs_idx = negs_index_dict[question_id]
+                        negatives_list = negs_data["same_image_questions_neg"][negs_idx]
+                        # add better negatives
+                        neg_entry_idx, passed, bin_idx = NegativeSampler.get_hard_negative(negatives_list, batch_bins, entry_map, question_rephrase_dict)
+                        if not passed:
+                            batch_inds.append(neg_entry_idx)
+                            batch_bins.append(bin_idx)
 
-                # if question-negatives are exhausted we use random negatives
-                if neg_choice == "random" or passed:
-                    while True:
-                        bin_idx = next(bins_iterator)
-                        # to account for bins-used by positive sampler
-                        if bin_idx in batch_bins:
-                            continue
-                        # pick the value from (key,value) tuple
-                        item = re_bins[bin_idx][1]
-                        # randomly pick one entry from the bin
-                        iter_idx = next(item["iter_idx"])
-                        entry_idx = item["entry_inds"][iter_idx]
-                        batch_inds.append(entry_idx)
-                        batch_bins.append(bin_idx)
+                    if neg_choice in ["question_neg"] or passed:
+                        entry_idx = next(batch_inds_iter)
+                        question_id = entries[entry_idx]["question_id"]
+                        negs_idx = negs_index_dict[question_id]
+                        negatives_list = negs_data["question_negs"][negs_idx]
+                        # add better negatives
+                        neg_entry_idx, passed, bin_idx = NegativeSampler.get_hard_negative(negatives_list, batch_bins, entry_map, question_rephrase_dict)
+                        if not passed:
+                            batch_inds.append(neg_entry_idx)
+                            batch_bins.append(bin_idx)
+
+                    if neg_choice == "random" or passed:
+                        while True:
+                            bin_idx = next(bins_iterator)
+                            # to account for bins-used by positive sampler
+                            if bin_idx in batch_bins:
+                                continue
+                            # pick the value from (key,value) tuple
+                            item = re_bins[bin_idx][1]
+                            # randomly pick one entry from the bin
+                            iter_idx = next(item["iter_idx"])
+                            entry_idx = item["entry_inds"][iter_idx]
+                            batch_inds.append(entry_idx)
+                            batch_bins.append(bin_idx)
+                            break
+
+                    if len(batch_inds) == batch_size:
+                        assert len(batch_bins) == len(set(batch_bins)) == batch_size
                         break
-
-                if len(batch_inds) == batch_size:
-                    break
+                    elif len(batch_inds) > batch_size:
+                        import pdb
+                        pdb.set_trace()
+            except:
+                import pdb
+                pdb.set_trace()
 
         return batches, batches_bins
 
@@ -707,7 +559,7 @@ class NegativeSampler(Sampler):
     def __iter__(self):
         base_path = "datasets/VQA/cache/samplers/"
         assert os.path.exists(base_path)
-        cache_name = f"lin_cache_{self.task_cfg['contrastive']}_iter_{self.iter_count}_" \
+        cache_name = f"latest_cache_{self.task_cfg['contrastive']}_iter_{self.iter_count}_" \
                      f"split_{self.split}_bt{self.bin_ans_threshold}_ft{self.freq_ans_threshold}_" \
                      f"pos_{self.num_positives}_batch_size_{self.batch_size}.npy"
 
@@ -722,15 +574,14 @@ class NegativeSampler(Sampler):
         if self.task_cfg["contrastive"] == "better":
             # if epochs are exhausted, replenish
             if self.epoch_idx >= len(self.epochs):
-                # todo: add negs_weights
                 cache_name = cache_name.split(".npy")[0] + f"better_cnt_{self.better_counter}_negw_{self.task_cfg['neg_type_weights']}" \
                                                            f"init_bs_{self.task_cfg['init_batch_size']}.npy"
                 logger.info(f"Sampler Cache Path: {cache_name}")
-                if os.path.exists(cache_name):
+                if os.path.exists(cache_name)  and False:
                     self.epochs = list(np.load(cache_name, allow_pickle=True))
                     self.epoch_idx = 0
                 else:
-                    self.build_better_batches()
+                    self.build_hard_batches()
                     self.better_counter += 1
                     np.save(cache_name, self.epochs)
 
@@ -748,6 +599,7 @@ class NegativeSampler(Sampler):
                 np.save(cache_name, epoch_indices)
         else:
             raise ValueError
+        registry.sampler_cache_name = cache_name
 
         logger.info(f"No. of Unique Samples: {len(set(epoch_indices))} / {len(epoch_indices)}")
         self.iter_count += 1
@@ -756,5 +608,18 @@ class NegativeSampler(Sampler):
     def __len__(self):
         return len(self.data_source)
 
+    def debug(self, batches):
+        ans_freq_counters = []
 
+        import pdb
+        pdb.set_trace()
+
+        for batch in batches:
+            batch_answers = [self.entries[idx]["answer"]["labels"][:1] for idx in batch]
+            batch_answers = list(itertools.chain.from_iterable(batch_answers))
+            counter = Counter(batch_answers)
+            ans_freq_counters.append(counter)
+
+        import pdb
+        pdb.set_trace()
 

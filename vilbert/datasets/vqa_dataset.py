@@ -215,19 +215,19 @@ def _load_dataset(dataroot, name, clean_datasets):
 
     elif name in ["train_aug", "val_aug", "trainval_aug", "minval_aug"]:
         split_path_dict = {
-            "train_aug": ["datasets/VQA/back-translate/org_bt_v2_OpenEnded_mscoco_train2014_questions.pkl",
-                         "datasets/VQA/back-translate/org_bt_train_target.pkl", "train"],
-            "val_aug": ["datasets/VQA/back-translate/org_bt_v2_OpenEnded_mscoco_val2014_questions.pkl",
-                         "datasets/VQA/back-translate/org_bt_val_target.pkl", "val"],
-            "trainval_aug": ["datasets/VQA/back-translate/org_bt_v2_OpenEnded_mscoco_trainval2014_questions.pkl",
-                         "datasets/VQA/back-translate/org_bt_trainval_target.pkl", "trainval"],
-            "minval_aug": ["datasets/VQA/back-translate/org_bt_v2_OpenEnded_mscoco_minval2014_questions.pkl",
-                         "datasets/VQA/back-translate/org_bt_minval_target.pkl", "trainval"],
+            "train_aug": ["datasets/VQA/back-translate/org3_bt_v2_OpenEnded_mscoco_train2014_questions.pkl",
+                         "datasets/VQA/back-translate/org2_bt_train_target.pkl", "train"],
+            "val_aug": ["datasets/VQA/back-translate/org3_bt_v2_OpenEnded_mscoco_val2014_questions.pkl",
+                         "datasets/VQA/back-translate/org2_bt_val_target.pkl", "val"],
+            "trainval_aug": ["datasets/VQA/back-translate/org3_bt_v2_OpenEnded_mscoco_trainval2014_questions.pkl",
+                         "datasets/VQA/back-translate/org2_bt_trainval_target.pkl", "trainval"],
+            "minval_aug": ["datasets/VQA/back-translate/org3_bt_v2_OpenEnded_mscoco_minval2014_questions.pkl",
+                         "datasets/VQA/back-translate/org2_bt_minval_target.pkl", "minval"],
         }
         questions_path, answers_path, split = split_path_dict[name][0], split_path_dict[name][1], split_path_dict[name][-1]
 
         if not registry.debug:
-            questions_list = cPickle.load(open(questions_path, "rb"))["questions"]
+            questions_list = cPickle.load(open(questions_path, "rb"))
             answers_list = cPickle.load(open(answers_path, "rb"))
         else:
             questions_path = questions_path.split(".")[0] + "_debug.pkl"
@@ -371,7 +371,7 @@ def _load_dataset(dataroot, name, clean_datasets):
         if clean_datasets:
             remove_ids = np.load(os.path.join(dataroot, "cache", "coco_test_ids.npy"))
             remove_ids = [int(x) for x in remove_ids]
-        for question, answer in zip(questions, answers):
+        for question, answer in tqdm(zip(questions, answers), total=len(questions), desc="Building Entries"):
             if "train" in name and int(question["image_id"]) in remove_ids:
                 continue
             try:
@@ -471,13 +471,15 @@ class VQAClassificationDataset(Dataset):
         if (not os.path.exists(cache_path) or extra_args.get("revqa_eval", False) or extra_args.get("contrastive", None) \
                 in ["simclr", "better"]) or True:
             self.entries = _load_dataset(dataroot, split, clean_datasets)
+
             # convert questions to tokens, create masks, segment_ids
             self.tokenize(max_seq_length)
             if self.heads_type != "none" or self.randomize > 0:
                 self.process_spatials()
             # convert all tokens to tensors
-            self.tensorize()
-            cPickle.dump(self.entries, open(cache_path, "wb"))
+            if not registry.sdebug:
+                self.tensorize()
+            # cPickle.dump(self.entries, open(cache_path, "wb"))
         else:
             logger.info("Loading from %s" % cache_path)
             self.entries = cPickle.load(open(cache_path, "rb"))
@@ -574,6 +576,10 @@ class VQAClassificationDataset(Dataset):
         self.question_map = {}
         for _idx, entry in enumerate(tqdm(self.entries, desc="Tokenizing...")):
             self.question_map[entry["question_id"]] = _idx
+
+            if registry.sdebug:
+                continue
+
             tokens = self._tokenizer.encode(entry["question"])
             tokens = tokens[: max_length - 2]
             tokens = self._tokenizer.add_special_tokens_single_sentence(tokens)
@@ -653,6 +659,7 @@ class VQAClassificationDataset(Dataset):
         # if self.count <= 4:
         #     import pdb
         #     pdb.set_trace()
+        item_dict = {}
 
         start_time = time.time()
 
@@ -662,6 +669,29 @@ class VQAClassificationDataset(Dataset):
 
         image_id = entry["image_id"]
         question_id = entry["question_id"]
+
+        if registry.sdebug:
+            item_dict.update({
+                "idx": index,
+                "image_id": image_id,
+                "question_id": question_id,
+            })
+
+            if len(entry["rephrasing_ids"]) == 0:
+                pos_entry = entry
+            else:
+                que_id = np.random.choice(entry["rephrasing_ids"])
+                pos_entry = self.entries[self.question_map[que_id]]
+            item_pos_dict = {}
+            item_pos_dict.update({
+                "idx": index,
+                "question_id": pos_entry["question_id"],
+                "image_id": entry["image_id"]
+            })
+
+            return (item_dict, item_pos_dict)
+
+
         features, num_boxes, boxes, _ = self._image_features_reader[image_id]
 
         features_load_time = time.time()
@@ -687,7 +717,6 @@ class VQAClassificationDataset(Dataset):
 
         target = torch.zeros(self.num_labels)
 
-        item_dict = {}
 
         # In the first iteration expand all the spatial relation matrices
         if "spatial_adj_matrix" in entry:

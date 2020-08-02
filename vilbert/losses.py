@@ -267,7 +267,7 @@ class SupConLoss(torch.nn.Module):
         mask_samples = (batch_dict[0]["target"].sum(dim=-1) != 0).int()
 
         # mask
-        mask = None
+        pos_mask = None
 
         device = (torch.device('cuda')
                   if features.is_cuda
@@ -280,20 +280,20 @@ class SupConLoss(torch.nn.Module):
             features = features.view(features.shape[0], features.shape[1], -1)
 
         batch_size = features.shape[0]
-        if labels is not None and mask is not None:
+        if labels is not None and pos_mask is not None:
             raise ValueError('Cannot define both `labels` and `mask`')
-        elif labels is None and mask is None:
-            mask = torch.eye(batch_size, dtype=torch.float32).to(device)
+        elif labels is None and pos_mask is None:
+            pos_mask = torch.eye(batch_size, dtype=torch.float32).to(device)
         elif labels is not None:
             labels = labels.contiguous().view(-1, 1)
             if labels.shape[0] != batch_size:
                 raise ValueError('Num of labels does not match num of features')
-            mask = torch.eq(labels, labels.T).float().to(device)
+            pos_mask = torch.eq(labels, labels.T).float().to(device)
         else:
-            mask = mask.float().to(device)
+            pos_mask = pos_mask.float().to(device)
 
         # remove samples without gt
-        mask = mask * mask_samples
+        pos_mask = pos_mask * mask_samples
 
         contrast_count = features.shape[1]
 
@@ -317,48 +317,80 @@ class SupConLoss(torch.nn.Module):
         logits = anchor_dot_contrast - logits_max.detach()
 
         # tile mask
-        mask = mask.repeat(anchor_count, contrast_count)
+        pos_mask = pos_mask.repeat(anchor_count, contrast_count)
+
         # mask-out self-contrast cases
         logits_mask = torch.scatter(
-            torch.ones_like(mask),
+            torch.ones_like(pos_mask),
             1,
             torch.arange(batch_size * anchor_count).view(-1, 1).to(device),
             0
         )
         # This is just an inverted identity matrix
         # assert logits_mask.cpu() == (torch.eye(logits_mask.shape[0]) == 0).int()
-        mask = mask * logits_mask
+        pos_mask = pos_mask * logits_mask
 
         # compute log_prob
         exp_logits = torch.exp(logits) * logits_mask
 
         if self.formulation == "custom":
-            negs_mask = (mask == 0).int() * logits_mask
+            negs_mask = (pos_mask == 0).int() * logits_mask
             negs_sum = (exp_logits * negs_mask).sum(dim=-1, keepdim=True)
-            denominator = negs_sum + exp_logits * mask
+            denominator = negs_sum + exp_logits * pos_mask
             log_prob = logits - torch.log(denominator.sum(1, keepdim=True))
         else:
             assert self.formulation == "normal"
             log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
 
+        # import pdb
+        # pdb.set_trace()
+
+        # limit the positives
+        # todo: try pulling closer positives w/ rephrasings?
+        scl_mask_thresh = int(registry.scl_mask_thresh)
+        if scl_mask_thresh > 0:
+            secondary_mask = torch.zeros_like(pos_mask)
+            half_batch_size = int(len(secondary_mask) / 2)
+            secondary_mask[:half_batch_size, half_batch_size:] = torch.eye(half_batch_size)
+            secondary_mask[half_batch_size:, :half_batch_size] = torch.eye(half_batch_size)
+            for idx, row in enumerate(pos_mask):
+                nz_inds = row.nonzero().squeeze(-1).tolist()
+                if len(nz_inds) > 0:
+                    nz_inds = np.random.choice(nz_inds, size=min(scl_mask_thresh, len(nz_inds)), replace=False)
+                    secondary_mask[idx][nz_inds] = 1
+            pos_mask = pos_mask * secondary_mask
+
+        # re-scaling rephrasings
+        scl_mask_rescale_factor = registry.scl_mask_rescale_factor
+        if scl_mask_rescale_factor > 0:
+            secondary_mask = torch.zeros_like(pos_mask)
+            half_batch_size = int(len(secondary_mask) / 2)
+            secondary_mask[:half_batch_size, half_batch_size:] = torch.eye(half_batch_size)
+            secondary_mask[half_batch_size:, :half_batch_size] = torch.eye(half_batch_size)
+            secondary_mask = secondary_mask * scl_mask_rescale_factor
+            secondary_mask[secondary_mask == 0] = 1
+            pos_mask = pos_mask * secondary_mask
+
         # compute mean of log-likelihood over positive
-        mean_log_prob_pos = (mask * log_prob).sum(1) / torch.max(mask.sum(1), torch.ones(1).to(mask.device))
+        mean_log_prob_pos = (pos_mask * log_prob).sum(1) / torch.max(pos_mask.sum(1), torch.ones(1).to(pos_mask.device))
 
-        # calculating score
-        preds = torch.argmax(exp_logits, 1)
-
-        if registry.use_rephrasings:
-            scores = (preds == labels.squeeze().repeat(2)).float()
-        else:
-            scores = (preds == labels.squeeze()).float()
-        scores = scores * mask
-        batch_score = scores.sum() / mask.sum()
+        # # calculating score (seems pointless)
+        # preds = torch.argmax(exp_logits, 1)
+        #
+        # if registry.use_rephrasings:
+        #     scores = (preds == labels.squeeze().repeat(2)).float()
+        # else:
+        #     scores = (preds == labels.squeeze()).float()
+        # scores = scores * pos_mask
+        # batch_score = scores.sum() / pos_mask.sum()
 
         # loss
+
+
         loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
         loss = loss.view(anchor_count, batch_size).mean()
 
-        return loss, batch_score
+        return loss, -1
 
 
 def MSELoss(batch_dict):
