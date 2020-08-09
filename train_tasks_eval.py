@@ -4,7 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import argparse
-import gc
+import bisect
 import json
 import logging
 import os
@@ -18,7 +18,6 @@ import pprint
 from tensorboardX import SummaryWriter
 from torch.optim import Adam
 from tqdm import tqdm
-from bisect import bisect
 import yaml
 from easydict import EasyDict as edict
 
@@ -51,14 +50,14 @@ def get_parser():
         default="bert-base-uncased",
         type=str,
         help="Bert pre-trained model selected in the list: bert-base-uncased, "
-        "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.",
+             "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.",
     )
     parser.add_argument(
         "--from_pretrained",
         default="bert-base-uncased",
         type=str,
         help="Bert pre-trained model selected in the list: bert-base-uncased, "
-        "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.",
+             "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.",
     )
     parser.add_argument(
         "--output_dir",
@@ -74,7 +73,7 @@ def get_parser():
     )
     parser.add_argument(
         "--num_train_epochs",
-        default=40,
+        default=20,
         type=int,
         help="Total number of training epochs to perform.",
     )
@@ -95,7 +94,7 @@ def get_parser():
         default=0.1,
         type=float,
         help="Proportion of training to perform linear learning rate warmup for. "
-        "E.g., 0.1 = 10%% of training.",
+             "E.g., 0.1 = 10%% of training.",
     )
     parser.add_argument(
         "--no_cuda", action="store_true", help="Whether not to use CUDA when available"
@@ -131,8 +130,8 @@ def get_parser():
         type=float,
         default=0,
         help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
-        "0 (default value): dynamic loss scaling.\n"
-        "Positive power of 2: static loss scaling value.\n",
+             "0 (default value): dynamic loss scaling.\n"
+             "Positive power of 2: static loss scaling value.\n",
     )
     parser.add_argument(
         "--num_workers",
@@ -240,13 +239,36 @@ def assert_add_registry(task_cfg, args):
         "val_batch_size",
         "val_workers",
         "train_workers",
+        "num_epoch",
         ("revqa_eval", False),
         ("use_ce_loss", False),
         ("scl_coeff", -1),
         "batch_size",
         ("mask_image", False),
         ("scl_formulation", "normal"),
-        ("val_drop_last", True)
+        ("val_drop_last", True),
+        ("squint_loss", False),
+        ("squint_layers", None),
+        ("squint_type", None),
+        ("ce_half", False),
+        ("use_rephrasings", True),
+        ("aug_filter", None),
+        ("use_old_sampler", False),
+        ("sampler_type", None),
+        ("weighted_sampling", False),
+        ("remove_ambiguous", False),
+        ("sdebug", False),
+        ("scl_mask_thresh", -1),
+        ("scl_mask_rescale_factor", -1),
+        ("scl_random_sampler", False),
+        ("alt_train", False),
+        ("alt_re", True),
+        ("ce_freq", 2),
+        ("scl_freq", 2),
+        ("use_freq", "ce"),
+        ("save_top", 3),
+        ("use_bt_re", False),
+        ("revqa_eval_on_val", False),
     ]
 
     for key in add_keys:
@@ -264,7 +286,7 @@ def main():
     with open(args.task_file, "r") as f:
         task_cfg = edict(yaml.safe_load(f))
 
-    logger.info("-"*20 + "Config Start" + "-"*20)
+    logger.info("-" * 20 + "Config Start" + "-" * 20)
     print(json.dumps(vars(args), indent=2))
     print(json.dumps(vars(task_cfg["TASK19"]), indent=2))
     seed = task_cfg["TASK19"].get("seed", args.seed)
@@ -319,11 +341,11 @@ def main():
     else:
         prefix = ""
     timeStamp = (
-        "-".join(task_names)
-        + "_"
-        + args.config_file.split("/")[1].split(".")[0]
-        + prefix
-        + f"-{args.tag}"
+            "-".join(task_names)
+            + "_"
+            + args.config_file.split("/")[1].split(".")[0]
+            + prefix
+            + f"-{args.tag}"
     )
     savePath = os.path.join(args.output_dir, timeStamp)
 
@@ -401,7 +423,6 @@ def main():
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
-
     task_ave_iter = {}
     # task_stop_controller = {}
     for task_id, num_iter in task_num_iters.items():
@@ -415,7 +436,7 @@ def main():
     task_ave_iter_list = sorted(task_ave_iter.values())
     median_num_iter = task_ave_iter_list[-1]
     num_train_optimization_steps = (
-        median_num_iter * args.num_train_epochs // args.gradient_accumulation_steps
+            median_num_iter * args.num_train_epochs // args.gradient_accumulation_steps
     )
 
     # LOAD PRETRAINED VILBERT
@@ -466,7 +487,9 @@ def main():
                                       "freeze_mmt_and_textbert",
                                       "lr_scale_text_bert",
                                       "contrast_out_dim",
-                                      "lr_scale_mmt"])
+                                      "lr_scale_mmt",
+                                      "output_attentions",
+                                      ])
 
                 # Load config-file M4C
                 with open(args.config_file, "r") as file:
@@ -598,6 +621,8 @@ def main():
     import time
     task_id = "TASK19"
 
+    # import pdb
+    # pdb.set_trace()
 
     logger.info("Starting Validation Run....")
     evaluate(
@@ -630,7 +655,7 @@ def evaluate(
     registry.eval_only = True
 
     # reset revqa_bins for each evaluation!
-    if registry.revqa_eval:
+    if registry.revqa_eval or registry.revqa_eval_on_val:
         from easydict import EasyDict
         dd = defaultdict(list)
         super(EasyDict, registry).__setattr__("revqa_bins", dd)
@@ -639,25 +664,17 @@ def evaluate(
     model.eval()
     results = {}
     final_results = {}
+
     for batch in tqdm(task_dataloader_val[task_id]):
-        batch_dict = ForwardModelsVal(
-            args, task_cfg, device, task_id, batch, model, task_losses
-        )
+        with torch.no_grad():  # turn off autograd engine
+            batch_dict = ForwardModelsVal(
+                args, task_cfg, device, task_id, batch, model, task_losses, revqa_eval=registry.revqa_eval_on_val
+            )
 
         # Eval-AI file
         if registry["eval_only"]:
             # build the json file here!
             logits = torch.max(batch_dict["vil_prediction"], 1)[1].data  # argmax
-
-            # for idx in range(logits.size(0)):
-            #     results.append(
-            #         {
-            #             "question_id": batch_dict["question_id"][idx].item(),
-            #             "answer": task_dataloader_val[task_id].dataset.label2ans[
-            #                 logits[idx].item()
-            #             ],
-            #         }
-            #     )
 
             for idx in range(logits.size(0)):
                 results[batch_dict["question_id"][idx].item()] = \
@@ -669,67 +686,33 @@ def evaluate(
                         "vqa_score": np.round(batch_dict["vqa_scores"][idx], 1) if "vqa_scores" in batch_dict else None
                     }
 
-    # # bin the vqa-scores
-    revqa_bins_scores = {}
+
+    c_scores = None
     if registry.revqa_eval:
-        # vqa-score of all the samples
-        total_vqa_scores = []
+        for batch in tqdm(task_dataloader_val["revqa"], desc="Revqa Eval"):
+            with torch.no_grad():  # turn off autograd engine
+                batch_dict = ForwardModelsVal(
+                    args, task_cfg, device, task_id, batch, model, task_losses, revqa_eval=True
+                )
+        c_scores, revqa_bins_scores = get_consistency_score(results=results, bins_scores=True)
 
-        try:
-            for key, value in registry.revqa_bins.items():
-                k_values = range(1, 1+len(value))
-                revqa_bins_scores[key] = {
-                    "vqa_scores": value,
-                }
+    elif registry.revqa_eval_on_val:
+        logger.info("Ran re-vqa eval on validation!")
+        c_scores, revqa_bins_scores = get_consistency_score(results=results, bins_scores=True)
 
-                total_vqa_scores.extend(value)
-
-                # for subsets of size = k, check VQA accuracy
-                for k_value in k_values:
-                    value_subsets = list(combinations(value, k_value))
-                    value_subset_scores = []
-                    for subset in value_subsets:
-                        if 0.0 not in subset:
-                            value_subset_scores.append(1.0)
-                        else:
-                            value_subset_scores.append(0.0)
-                    revqa_bins_scores[key][k_value] = sum(value_subset_scores)/len(value_subsets)
-
-            # Consistency Score Calculation
-            for k_value in range(1, 5):
-                scores = []
-                for key, value in revqa_bins_scores.items():
-                    scores.append(value[k_value])
-                print(f"Consensus Score with K={k_value} is {sum(scores)/len(scores)}")
-        except:
-            import pdb
-            pdb.set_trace()
-
-        print(f"VQA Accuracy: {np.mean(total_vqa_scores)}")
 
     final_results["results"] = results
     final_results["question_rephrase_dict_val"] = registry.question_rephrase_dict_val
     final_results["revqa_bins_scores"] = revqa_bins_scores
+    final_results["c_scores"] = c_scores
 
-    # save_file_path = f"save/{args.tag}"
-    # os.makedirs(save_file_path, exist_ok=True)
-    # save_file_path = f"{save_file_path}/test_evalai.json"
-    json.dump(final_results, open("baseline_model.json", "w"))
 
-    # for i, batch in enumerate(task_dataloader_val[task_id]):
-    #     loss, score, batch_size = ForwardModelsVal(
-    #         args, task_cfg, device, task_id, batch, model, task_losses
-    #     )
-    #     tbLogger.step_val(
-    #         epochId, float(loss), float(score), task_id, batch_size, "val"
-    #     )
-    #     if default_gpu:
-    #         sys.stdout.write("%d/%d\r" % (i, len(task_dataloader_val[task_id])))
-    #         sys.stdout.flush()
-    #
-    # score = tbLogger.showLossVal(task_id, task_stop_controller=None)
+    save_dir = os.path.split(args.resume_file)[0]
+    evalai_path = f"{save_dir}/evalai_{task_cfg['TASK19']['val_split']}.json"
+    preds_path = f"{save_dir}/preds_{task_cfg['TASK19']['val_split']}.json"
+    json.dump(results, open(evalai_path, "w"))
+    json.dump(final_results, open(preds_path, "w"))
     model.train()
-    # return score
 
 
 if __name__ == "__main__":

@@ -206,51 +206,13 @@ def ForwardModelsVal(args,
         results_dict = model(batch)
         batch.update(results_dict)
 
-    # if task_cfg[task_id]["type"] == "ContrastiveProjection":
-    #     loss, batch_score = task_losses[task_id](batch_dict)
-    #
-    # if len(batch_dict) == 1:
-    #     batch_dict = batch_dict[0]
-    #
-    # # for different task, we use different output to calculate the loss.
-    # if task_cfg[task_id]["type"] == "VL-classifier":
-    #     loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
-    #     loss = loss.mean() * batch_dict["target"].size(1)
-    #     batch_scores = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"], device)
-    #     batch_score = batch_scores.sum() / float(batch_size)
-
-        # # calculate consistency scores
-        # if registry.get("revqa_eval", False):
-        #     # fill the scores for each question into the batch-dict
-        #     batch_dict["vqa_scores"] = batch_scores.sum(dim=-1).tolist()
-        #
-        #     # add vqa-scores to defaultdict(list) for each bin
-        #     for idx, qid in enumerate(batch_dict["question_id"].tolist()):
-        #         registry.revqa_bins[registry["question_rephrase_dict_val"][qid]].append(batch_dict["vqa_scores"][idx])
+    revqa_split = "val" if registry.revqa_eval_on_val else "re_total"
+    loss, batch_score = add_ce_loss(batch_dict[0], device, val_run=True, revqa_eval=revqa_eval, split=revqa_split)
 
 
-    # elif task_cfg[task_id]["type"] == "VL-classifier-GQA":
-    #     loss = task_losses[task_id](batch_dict["vil_prediction_gqa"], batch_dict["target"])
-    #     loss = loss.mean() * batch_dict["target"].size(1)
-    #     batch_score = compute_score_with_logits(
-    #         batch_dict["vil_prediction_gqa"], batch_dict["target"], device
-    #     ).sum() / float(batch_size)
-    #
-    # elif task_cfg[task_id]["type"] == "VL-classifier-only-ce":
-    #     loss, batch_score = add_ce_loss(batch_dict[0], device, val_run=True)
-
-    # if registry.use_ce_loss:
-    #     vl_loss, batch_score = add_ce_loss(batch_dict[0], device, val_run=True)
-    #     # don't care about the scl-loss
-    #     loss = vl_loss
-
-
-    # only report CE loss on validation-set
-    loss, batch_score = add_ce_loss(batch_dict[0], device, val_run=True, revqa_eval=revqa_eval)
-
-
+    # When testing move this to above loss calculation
     if registry.get("eval_only", False):
-        return batch_dict
+        return batch_dict[0]
 
     del results_dict
     del batch_dict
@@ -423,16 +385,16 @@ def add_ce_loss(batch_dict, device, val_run=False, revqa_eval=False, split="re_t
     vl_loss = vl_loss.mean() * vil_targets.size(1)
     batch_scores = compute_score_with_logits(vil_preds, vil_targets, device)
     batch_score = batch_scores.sum() / len(vil_preds)
-
+    # fill the scores for each question into the batch-dict
+    batch_dict["vqa_scores"] = batch_scores.sum(dim=-1).tolist()
 
     # calculate consistency scores during validation run!
     if revqa_eval:
-        # fill the scores for each question into the batch-dict
-        batch_dict["vqa_scores"] = batch_scores.sum(dim=-1).tolist()
-
         # add vqa-scores to defaultdict(list) for each bin
         for idx, qid in enumerate(batch_dict["question_id"].tolist()):
-            registry.revqa_bins[registry[f"question_rephrase_dict_{split}"][qid]].append(batch_dict["vqa_scores"][idx])
+            min_qid = registry[f"question_rephrase_dict_{split}"][qid]
+            vqa_score = batch_dict["vqa_scores"][idx]
+            registry.revqa_bins[min_qid].append((qid, vqa_score))
 
     return vl_loss, batch_score
 

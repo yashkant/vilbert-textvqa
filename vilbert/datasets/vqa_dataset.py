@@ -181,11 +181,14 @@ def _load_dataset(dataroot, name, clean_datasets):
         # questions, answers = d_q, d_a
 
     elif name in ["re_train", "re_val", "re_train_negs", "re_val_negs"]:
+
         split_path_dict = {
             "re_train": ["data/re-vqa/data/revqa_train_proc.json", "datasets/VQA/cache/revqa_train_target.pkl", "train"],
             "re_val": ["data/re-vqa/data/revqa_val_proc.json", "datasets/VQA/cache/revqa_val_target.pkl", "val"],
             "re_train_negs": ["data/re-vqa/data/revqa_train_proc_image_negs.json", "datasets/VQA/cache/revqa_train_target_image_negs.pkl", "train"],
             "re_val_negs": ["data/re-vqa/data/revqa_val_proc_image_negs.json", "datasets/VQA/cache/revqa_val_target_image_negs.pkl", "val"],
+            "val_aug": ["datasets/VQA/back-translate/org3_bt_v2_OpenEnded_mscoco_val2014_questions.pkl",
+                        "datasets/VQA/back-translate/org2_bt_val_target.pkl", "val"],
         }
 
         questions_path = split_path_dict[name][0]
@@ -204,6 +207,23 @@ def _load_dataset(dataroot, name, clean_datasets):
 
         if registry.debug:
             answers = answers[:1000]
+
+        # replace human rephrasings questions w/ BT rephrasings
+        if name == "re_train" and registry.use_bt_re:
+            val_questions_path, val_answers_path, val_split = split_path_dict["val_aug"][0], split_path_dict["val_aug"][
+                1], split_path_dict["val_aug"][-1]
+            val_questions_list = cPickle.load(open(val_questions_path, "rb"))
+            val_answers_list = cPickle.load(open(val_answers_path, "rb"))
+            val_questions, val_answers = filter_aug(val_questions_list, val_answers_list)
+
+            original_ids = (set(registry.question_rephrase_dict_train.values()))
+            questions, answers = [], []
+
+            for q,a in zip(val_questions, val_answers):
+                if q["rephrasing_of"] in original_ids:
+                    questions.append(q)
+                    answers.append(a)
+            rephrasings_dict(split, questions)
 
         assert len(questions) == len(answers)
         for question, answer in zip(questions, answers):

@@ -3,7 +3,8 @@ from tools.registry import registry
 import numpy as np
 
 
-def get_consistency_score():
+def get_consistency_score(results=None, bins_scores=False):
+
     # bin the vqa-scores
     revqa_bins_scores = {}
 
@@ -11,17 +12,29 @@ def get_consistency_score():
     total_vqa_scores = []
 
     for key, value in registry.revqa_bins.items():
+
+        question_ids, vqa_scores = list(zip(*value))
+
+        if results is not None:
+            answers = [results[qid]["answer"] for qid in question_ids]
+        else:
+            answers = []
+
         k_values = range(1, 1 + len(value))
         assert len(value) <= 5
         revqa_bins_scores[key] = {
             "vqa_scores": value,
+            "question_ids": question_ids,
+            "answers": answers
         }
 
         total_vqa_scores.extend(value)
 
+        assert sum(vqa_scores) <= 4.0
+
         # for subsets of size = k, check VQA accuracy
         for k_value in k_values:
-            value_subsets = list(combinations(value, k_value))
+            value_subsets = list(combinations(vqa_scores, k_value))
             value_subset_scores = []
 
             # this loop is causing problems!
@@ -38,14 +51,16 @@ def get_consistency_score():
     max_k = 4
     for k_value in range(1, max_k+1):
         scores = []
-        for key, value in revqa_bins_scores.items():
+        for key, rbs in revqa_bins_scores.items():
             # only consider questions that have all the rephrasings available
-            if max_k in value:
-                scores.append(value[k_value])
+            if max_k in rbs:
+                scores.append(rbs[k_value])
         # print(f"Consensus Score with K={k_value} is {sum(scores) / len(scores)}")
         result_dict[int(k_value)] = sum(scores) / len(scores)
         result_dict[f"len_{k_value}"] = len(scores)
 
+    if bins_scores:
+        return result_dict, revqa_bins_scores
 
     return result_dict
 

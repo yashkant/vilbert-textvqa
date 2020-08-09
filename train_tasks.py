@@ -32,11 +32,75 @@ import torch.distributed as dist
 
 from vilbert.metrics import get_consistency_score
 
+def assert_add_registry(task_cfg, args):
+    assert task_cfg["TASK19"]["num_epoch"] == args.num_train_epochs
+    assert_keys = [
+        "val_batch_size",
+        "val_workers",
+        "train_workers"
+    ]
+
+    for key in assert_keys:
+        assert key in task_cfg["TASK19"], f"Key not found: {key}"
+
+    add_keys = [
+        "val_batch_size",
+        "val_workers",
+        "train_workers",
+        "num_epoch",
+        ("revqa_eval", False),
+        ("use_ce_loss", False),
+        ("scl_coeff", -1),
+        "batch_size",
+        ("mask_image", False),
+        ("scl_formulation", "normal"),
+        ("val_drop_last", True),
+        ("squint_loss", False),
+        ("squint_layers", None),
+        ("squint_type", None),
+        ("ce_half", False),
+        ("use_rephrasings", True),
+        ("aug_filter", None),
+        ("use_old_sampler", False),
+        ("sampler_type", None),
+        ("weighted_sampling", False),
+        ("remove_ambiguous", False),
+        ("sdebug", False),
+        ("scl_mask_thresh", -1),
+        ("scl_mask_rescale_factor", -1),
+        ("scl_random_sampler", False),
+        ("alt_train", False),
+        ("alt_re", True),
+        ("ce_freq", 2),
+        ("scl_freq", 2),
+        ("use_freq", "ce"),
+        ("save_top", 3),
+        ("use_bt_re", False),
+        ("revqa_eval_on_val", False),
+    ]
+
+    for key in add_keys:
+        if isinstance(key, tuple):
+            registry[key[0]] = task_cfg["TASK19"].get(key[0], key[1])
+        else:
+            registry[key] = task_cfg["TASK19"][key]
+
+    if registry.sdebug:
+        registry.revqa_eval = False
+        task_cfg["TASK19"]["revqa_eval"] = False
+    else:
+        if not registry.revqa_eval:
+            print(f"CS scores evaluation is disabled, press c to continue")
+            # import pdb
+            # pdb.set_trace()
+    print(json.dumps(vars(registry), indent=2))
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
     datefmt="%m/%d/%Y %H:%M:%S",
     level=logging.INFO,
 )
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -222,65 +286,6 @@ def get_parser():
     return parser
 
 
-def assert_add_registry(task_cfg, args):
-    assert task_cfg["TASK19"]["num_epoch"] == args.num_train_epochs
-    assert_keys = [
-        "val_batch_size",
-        "val_workers",
-        "train_workers"
-    ]
-
-    for key in assert_keys:
-        assert key in task_cfg["TASK19"], f"Key not found: {key}"
-
-    add_keys = [
-        "val_batch_size",
-        "val_workers",
-        "train_workers",
-        "num_epoch",
-        ("revqa_eval", False),
-        ("use_ce_loss", False),
-        ("scl_coeff", -1),
-        "batch_size",
-        ("mask_image", False),
-        ("scl_formulation", "normal"),
-        ("val_drop_last", True),
-        ("squint_loss", False),
-        ("squint_layers", None),
-        ("squint_type", None),
-        ("ce_half", False),
-        ("use_rephrasings", True),
-        ("aug_filter", None),
-        ("use_old_sampler", False),
-        ("sampler_type", None),
-        ("weighted_sampling", False),
-        ("remove_ambiguous", False),
-        ("sdebug", False),
-        ("scl_mask_thresh", -1),
-        ("scl_mask_rescale_factor", -1),
-        ("scl_random_sampler", False),
-        ("alt_train", False),
-        ("alt_re", True),
-        ("ce_freq", 2),
-        ("scl_freq", 2),
-        ("use_freq", "ce"),
-        ("save_top", 3),
-    ]
-
-    for key in add_keys:
-        if isinstance(key, tuple):
-            registry[key[0]] = task_cfg["TASK19"].get(key[0], key[1])
-        else:
-            registry[key] = task_cfg["TASK19"][key]
-
-    if registry.sdebug:
-        registry.revqa_eval = False
-        task_cfg["TASK19"]["revqa_eval"] = False
-    else:
-        assert registry.revqa_eval
-    print(json.dumps(vars(registry), indent=2))
-
-
 def main():
     parser = get_parser()
     args = parser.parse_args()
@@ -399,6 +404,8 @@ def main():
             print(args, file=f)  # Python 3.x
             print("\n", file=f)
             print(config, file=f)
+            print("\n", file=f)
+            print(task_cfg)
 
     # LOAD DATASETS
     task_batch_size, task_num_iters, task_ids, task_datasets_train, task_datasets_val, task_dataloader_train, \
@@ -618,7 +625,7 @@ def main():
         model = torch.nn.DataParallel(model)
 
     if default_gpu:
-        print("***** Running trai   ning *****")
+        print("***** Running training *****")
         print("  Num Iters: ", task_num_iters)
         print("  Batch size: ", task_batch_size)
         print("  Num steps: %d" % num_train_optimization_steps)
@@ -634,7 +641,7 @@ def main():
         logger.info("Resetting Train Epochs to 0")
         start_epoch = 0
 
-    # This validation score/loss is used for model-saving.
+    # This val  idation score/loss is used for model-saving.
     best_val_score = 0
     best_val_loss = np.inf
     best_val_epoch = 0
@@ -998,7 +1005,7 @@ def evaluate(
         tbLogger,
 ):
     # reset revqa_bins for each evaluation!
-    if registry.revqa_eval:
+    if registry.revqa_eval or registry.revqa_eval_on_val:
         from easydict import EasyDict
         dd = defaultdict(list)
         super(EasyDict, registry).__setattr__("revqa_bins", dd)
@@ -1009,7 +1016,7 @@ def evaluate(
     for i, batch in enumerate(task_dataloader_val[task_id]):
         with torch.no_grad():  # turn off autograd engine
             loss, score, batch_size = ForwardModelsVal(
-                args, task_cfg, device, task_id, batch, model, task_losses
+                args, task_cfg, device, task_id, batch, model, task_losses, revqa_eval=registry.revqa_eval_on_val
             )
         tbLogger.step_val(
             epochId, float(loss), float(score), task_id, batch_size, "val"
@@ -1025,6 +1032,10 @@ def evaluate(
                 loss, score, batch_size = ForwardModelsVal(
                     args, task_cfg, device, task_id, batch, model, task_losses, revqa_eval=True
                 )
+        c_scores = get_consistency_score()
+
+    elif registry.revqa_eval_on_val:
+        logger.info("Ran re-vqa eval on validation!")
         c_scores = get_consistency_score()
 
     score, loss = tbLogger.showLossVal(task_id, task_stop_controller=None, c_scores=c_scores)
