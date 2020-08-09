@@ -62,3 +62,8 @@ TASK19:
   num_hard_negatives: 41 # == one per init sample
   neg_type_weights: [0, 0.5, 0.5]
   neg_question_thresh: 210
+  sampler_type: old
+  aug_filter:
+    max_re_per_sample: 4
+    sim_threshold: 0.95
+    sampling: top # top (selects max_re_per_sample samples from top after thresholding), bottom and random

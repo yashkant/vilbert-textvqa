@@ -26,8 +26,7 @@ def replace_str(str_value):
     else:
         return str_value
 
-def generate_html(data,
-                  output_path):
+def generate_html(data, output_path):
     """
     Generates html placing images side-by-side from the folders_list.
 
@@ -47,7 +46,7 @@ def generate_html(data,
 
     html = '<html lang="en">' + '\n <p></p> \n <p></p>'
     titles = ["Image", "Data"]
-    col_string = [f"<th>{title}</th>" for titl  e in titles]
+    col_string = [f"<th>{title}</th>" for title in titles]
     col_string = "".join(col_string)
     html += f'<table width="1500"><tr height="40">{col_string}</tr>'
 
@@ -130,11 +129,17 @@ for key in imdb_paths:
 
     assert len(pickle_data) == len(json_data["questions"])
 
+    import pdb
+    pdb.set_trace()
+
     for ans_instance, question_instance in tqdm(zip(pickle_data, json_data["questions"]), total=len(pickle_data)):
         question_instance.update(ans_instance)
         add_image_path(question_instance, image_path, image_holder)
 
     total_jdata.extend(json_data["questions"])
+
+import pdb
+pdb.set_trace()
 
 generate_html(total_jdata, "vqa_re_val.html")
 print(f"Number of Samples Dumped: {len(total_jdata)}")
