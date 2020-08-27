@@ -39,22 +39,19 @@ split_path_dict = {
 }
 questions_path, answers_path, split = split_path_dict["val_aug"][0], split_path_dict["val_aug"][1], split_path_dict["val_aug"][-1]
 
-questions_list = cPickle.load(open(questions_path, "rb"))
-answers_list = cPickle.load(open(answers_path, "rb"))
-
-import pdb
-pdb.set_trace()
-
-# filter-mech
-questions, answers = filter_aug(questions_list, answers_list)
-assert len(questions) == len(answers)
-
-logger.info(f"Train Samples after filtering: {len(questions)}")
-# this is needed for evaluation
-rephrasings_dict(split, questions)
-
-for question, answer in zip(questions, answers):
-    assert answer["question_id"] == question["question_id"]
+# questions_list = cPickle.load(open(questions_path, "rb"))
+# answers_list = cPickle.load(open(answers_path, "rb"))
+#
+# # filter-mech
+# questions, answers = filter_aug(questions_list, answers_list)
+# assert len(questions) == len(answers)
+#
+# logger.info(f"Train Samples after filtering: {len(questions)}")
+# # this is needed for evaluation
+# rephrasings_dict(split, questions)
+#
+# for question, answer in zip(questions, answers):
+#     assert answer["question_id"] == question["question_id"]
 
 
 def generate_html(data, output_path):

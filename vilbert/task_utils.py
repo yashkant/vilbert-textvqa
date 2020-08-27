@@ -51,7 +51,9 @@ LossMap = {
     "BCEWithLogitLoss": nn.BCEWithLogitsLoss(reduction="mean"),
     "CrossEntropyLoss": nn.CrossEntropyLoss(),
     # "NTXentLoss": NTXentLoss(registry.batch_size),
-    "SCLLoss": SupConLoss(temperature=0.5, formulation=registry.scl_formulation), # using the default parameter setting
+    "SCLLoss": SupConLoss(temperature=registry.temperature,
+                          formulation=registry.scl_formulation,
+                          base_temperature=registry.base_temperature), # using the default parameter setting
 }
 
 def clip_gradients(model, max_grad_l2_norm, clip_norm_mode):
@@ -175,6 +177,7 @@ def ForwardModelsVal(args,
                      model,
                      task_losses,
                      revqa_eval=False,
+                     revqa_split="re_total",
                      return_batch=False):
 
     if not isinstance(batch_dict, tuple) and not isinstance(batch_dict, list):
@@ -206,7 +209,7 @@ def ForwardModelsVal(args,
         results_dict = model(batch)
         batch.update(results_dict)
 
-    revqa_split = "val" if registry.revqa_eval_on_val else "re_total"
+    revqa_split = "val" if registry.revqa_eval_on_val else revqa_split
     loss, batch_score = add_ce_loss(batch_dict[0], device, val_run=True, revqa_eval=revqa_eval, split=revqa_split)
 
 
@@ -232,113 +235,61 @@ def ForwardModelsTrain(
     task_losses,
     train_type="scl"
 ):
+    start_time = time.time()
+
     if train_type == "ce" and registry.alt_train:
         dataloader = task_dataloader_train[task_id + "alt"]
         if task_count[task_id + "alt"] % len(dataloader) == 0:
             task_iter_train[task_id + "alt"] = iter(dataloader)
         task_count[task_id + "alt"] += 1
-        batch_dict = task_iter_train[task_id + "alt"].next()
+        batch_dicts = task_iter_train[task_id + "alt"].next()
         if not registry.alt_re:
-            batch_dict = batch_dict[:1]
+            batch_dicts = batch_dicts[:1]
     else:
         dataloader = task_dataloader_train[task_id]
         if task_count[task_id] % len(dataloader) == 0:
             task_iter_train[task_id] = iter(dataloader)
         task_count[task_id] += 1
-        batch_dict = task_iter_train[task_id].next()
+        batch_dicts = task_iter_train[task_id].next()
 
-    # # given the current task, decided whether to forward the model and forward with specific loss.
-    # # reset the task iteration when needed.
-    # if task_count[task_id] % len(dataloader) == 0:
-    #     task_iter_train[task_id] = iter(dataloader)
-
-    start_time = time.time()
-    batch_time = time.time()
-    # print(f"Build Batch Time: {batch_time-start_time}")
-
-    # import pdb
-    # pdb.set_trace()
-
-    if not isinstance(batch_dict, tuple) and not isinstance(batch_dict, list):
-        batch_dict = [batch_dict]
-    # else:
-    #     build_scl_mask(batch_dict)
-
-    # Sanity check negatives
-    # if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"] and not task_cfg["TASK19"]["debug"]:
-    #     for batch in batch_dict:
-    #         rephrasing_of = []
-    #         # iterate over question-ids
-    #         for question_id in batch["question_id"].tolist():
-    #             try:
-    #                 assert registry.question_rephrase_dict_train[question_id] not in rephrasing_of
-    #                 rephrasing_of.append(registry.question_rephrase_dict_train[question_id])
-    #             except:
-    #                 import pdb
-    #                 pdb.set_trace()
-
+    if not isinstance(batch_dicts, tuple) and not isinstance(batch_dicts, list):
+        batch_dicts = [batch_dicts]
     # send to device
-    to_device(batch_dict, device)
-    question = batch_dict[0]["question_indices"]
+    to_device(batch_dicts, device)
+    question = batch_dicts[0]["question_indices"]
     # batch["task_tokens"] = question.new().resizeA_(question.size(0), 1).fill_(int(task_id[4:]))
     batch_size = len(question)
 
     # if not registry.squint_loss:
-    for batch in batch_dict:
+    for batch in batch_dicts:
         results_dict = model(batch)
         batch.update(results_dict)
-    # else:
-    #     squint_batches = [{}, {}]
-    #     assert len(batch_dict) == 2
-    #     hbs = int(len(batch_dict[0]["input_imgs"])/2)
-    #     for key in batch_dict[0].keys():
-    #         squint_batches[0][key] = torch.cat([batch_dict[0][key][:hbs], batch_dict[1][key][:hbs]])
-    #         squint_batches[1][key] = torch.cat([batch_dict[0][key][hbs:], batch_dict[1][key][hbs:]])
-    #
-    #     for batch in squint_batches:
-    #         results_dict = model(batch)
-    #         batch.update(results_dict)
-
-    forward_time = time.time()
-    # print(f"Forward Batch Time: {forward_time-batch_time}")
 
     if registry.alt_train:
         losses = []
         # use scl only
         if train_type == "scl":
-            loss, batch_score = task_losses[task_id](batch_dict)
+            loss, batch_score = task_losses[task_id](batch_dicts)
         else:
-            loss, batch_score = add_ce_loss(batch_dict, device)
+            loss, batch_score = add_ce_loss(batch_dicts, device)
         return loss, float(batch_score), losses
 
     if task_cfg[task_id]["type"] == "ContrastiveProjection":
-        loss, batch_score = task_losses[task_id](batch_dict)
+        loss, batch_score = task_losses[task_id](batch_dicts)
 
-    if len(batch_dict) == 1:
-        batch_dict = batch_dict[0]
+    if len(batch_dicts) == 1:
+        batch_dicts = batch_dicts[0]
 
     # for different task, we use different output to calculate the loss.
     if task_cfg[task_id]["type"] == "VL-classifier":
-        # loss = task_losses[task_id](batch_dict["vil_prediction"], batch_dict["target"])
-        # loss = loss.mean() * batch_dict["target"].size(1)
-        # batch_score = compute_score_with_logits(batch_dict["vil_prediction"], batch_dict["target"]).sum() / float(
-        #     batch_size
-        # )
-        loss, batch_score = add_ce_loss(batch_dict, device)
+        loss, batch_score = add_ce_loss(batch_dicts, device)
 
     elif task_cfg[task_id]["type"] == "VL-classifier-only-ce":
-        loss, batch_score = add_ce_loss(batch_dict, device)
-
-    # elif task_cfg[task_id]["type"] == "VL-classifier-GQA":
-    #     loss = task_losses[task_id](batch_dict["vil_prediction_gqa"], batch_dict["target"])
-    #     loss = loss.mean() * batch_dict["target"].size(1)
-    #     batch_score = compute_score_with_logits(
-    #         batch_dict["vil_prediction_gqa"], batch_dict["target"]
-    #     ).sum() / float(batch_size)
+        loss, batch_score = add_ce_loss(batch_dicts, device)
 
     losses = []
     if registry.use_ce_loss:
-        vl_loss, batch_score = add_ce_loss(batch_dict, device)
+        vl_loss, batch_score = add_ce_loss(batch_dicts, device)
         losses.append(loss)
         losses.append(vl_loss)
         assert registry.scl_coeff > 0
@@ -346,17 +297,11 @@ def ForwardModelsTrain(
 
     if registry.squint_loss:
         from vilbert.losses import MSELoss
-        squint_loss = MSELoss(batch_dict)
+        squint_loss = MSELoss(batch_dicts)
         loss += squint_loss
 
-    loss_time = time.time()
-    # print(f"Loss Time: {loss_time - forward_time}")
-
-
     del results_dict
-    del batch_dict
-    # # we are storing tensors in batch-dict, refs to which cause OOM (I think)
-
+    del batch_dicts
 
     return loss, float(batch_score), losses
 
@@ -385,8 +330,10 @@ def add_ce_loss(batch_dict, device, val_run=False, revqa_eval=False, split="re_t
     vl_loss = vl_loss.mean() * vil_targets.size(1)
     batch_scores = compute_score_with_logits(vil_preds, vil_targets, device)
     batch_score = batch_scores.sum() / len(vil_preds)
-    # fill the scores for each question into the batch-dict
-    batch_dict["vqa_scores"] = batch_scores.sum(dim=-1).tolist()
+
+    if isinstance(batch_dict, dict):
+        # fill the scores for each question into the batch-dict
+        batch_dict["vqa_scores"] = batch_scores.sum(dim=-1).tolist()
 
     # calculate consistency scores during validation run!
     if revqa_eval:
@@ -394,7 +341,8 @@ def add_ce_loss(batch_dict, device, val_run=False, revqa_eval=False, split="re_t
         for idx, qid in enumerate(batch_dict["question_id"].tolist()):
             min_qid = registry[f"question_rephrase_dict_{split}"][qid]
             vqa_score = batch_dict["vqa_scores"][idx]
-            registry.revqa_bins[min_qid].append((qid, vqa_score))
+            bins_key = "revqa_bins" if split == "re_total" else "revqa_bt_bins"
+            registry[bins_key][min_qid].append((qid, vqa_score))
 
     return vl_loss, batch_score
 
@@ -506,14 +454,17 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
 
         task_datasets_val[task] = None
         if "val" in split:
+
+            features_reader = task_feature_reader1[task_cfg[task]["features_h5path1"]]
+            if task_cfg[task]["val_split"] == "test":
+                features_reader = task_feature_reader2[task_cfg[task]["features_h5path2"]]
+
             task_datasets_val[task] = DatasetMapTrain[task_name](
                 task=task_cfg[task]["name"],
                 dataroot=task_cfg[task]["dataroot"],
                 annotations_jsonpath=task_cfg[task]["val_annotations_jsonpath"],
                 split=task_cfg[task]["val_split"],
-                image_features_reader=task_feature_reader1[
-                    task_cfg[task]["features_h5path1"]
-                ],
+                image_features_reader=features_reader,
                 gt_image_features_reader=task_feature_reader2[
                     task_cfg[task]["features_h5path2"]
                 ],
@@ -540,6 +491,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
                     split=task_cfg[task]["train_split"]
                 )
             elif args.local_rank == -1:
+                logger.info("Using Random Train Sampler")
                 train_sampler = RandomSampler(task_datasets_train[task])
             else:
                 # TODO: check if this works with current data generator from disk that relies on next(file)
@@ -560,7 +512,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
                 task_dataloader_train[task + "alt"] = DataLoader(
                     task_datasets_train[task],
                     sampler=alt_sampler,
-                    batch_size=batch_size * 2,
+                    batch_size=batch_size * registry.num_rep,
                     num_workers=registry.train_workers,
                     pin_memory=True,
                     drop_last=True
@@ -618,6 +570,37 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
 
             task_dataloader_val["revqa"] = DataLoader(
                 task_datasets_val["revqa"],
+                shuffle=False,
+                sampler=None,
+                batch_size=registry.val_batch_size,
+                num_workers=registry.val_workers,
+                pin_memory=True,
+                drop_last=False
+            )
+
+            logger.info("Loding ReVQA BT Dataset!")
+            task_datasets_val["revqa_bt"] = DatasetMapTrain[task_name](
+                task=task_cfg[task]["name"],
+                dataroot=task_cfg[task]["dataroot"],
+                annotations_jsonpath=task_cfg[task]["val_annotations_jsonpath"],
+                split="re_total_bt",
+                image_features_reader=task_feature_reader1[
+                    task_cfg[task]["features_h5path1"]
+                ],
+                gt_image_features_reader=task_feature_reader2[
+                    task_cfg[task]["features_h5path2"]
+                ],
+                tokenizer=tokenizer,
+                bert_model=args.bert_model,
+                clean_datasets=args.clean_train_sets,
+                padding_index=0,
+                max_seq_length=task_cfg[task]["max_seq_length"],
+                max_region_num=task_cfg[task]["max_region_num"],
+                extra_args=task_cfg["TASK19"]
+            )
+
+            task_dataloader_val["revqa_bt"] = DataLoader(
+                task_datasets_val["revqa_bt"],
                 shuffle=False,
                 sampler=None,
                 batch_size=registry.val_batch_size,

@@ -14,7 +14,7 @@ TASK19:
   max_region_num: 101
   batch_size: 196
   val_batch_size: 196
-  train_split: re_train
+    train_split: re_train
   val_split: re_val
   lr: 0.0001
   # Change at both places num_epochs

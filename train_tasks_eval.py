@@ -10,6 +10,7 @@ import logging
 import os
 import random
 from collections import defaultdict
+from copy import deepcopy
 from io import open
 from itertools import combinations
 
@@ -51,6 +52,11 @@ def get_parser():
         type=str,
         help="Bert pre-trained model selected in the list: bert-base-uncased, "
              "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.",
+    )
+    parser.add_argument(
+        "--use_bt_re",
+        default=False,
+        type=bool,
     )
     parser.add_argument(
         "--from_pretrained",
@@ -192,6 +198,11 @@ def get_parser():
         help="whether clean train sets for multitask data.",
     )
     parser.add_argument(
+        "--val_split",
+        default=None,
+        type=str,
+    )
+    parser.add_argument(
         "--visual_target",
         default=0,
         type=int,
@@ -246,7 +257,7 @@ def assert_add_registry(task_cfg, args):
         "batch_size",
         ("mask_image", False),
         ("scl_formulation", "normal"),
-        ("val_drop_last", True),
+        ("val_drop_last", False),
         ("squint_loss", False),
         ("squint_layers", None),
         ("squint_type", None),
@@ -269,6 +280,8 @@ def assert_add_registry(task_cfg, args):
         ("save_top", 3),
         ("use_bt_re", False),
         ("revqa_eval_on_val", False),
+        ("num_rep", 2),
+
     ]
 
     for key in add_keys:
@@ -276,6 +289,13 @@ def assert_add_registry(task_cfg, args):
             registry[key[0]] = task_cfg["TASK19"].get(key[0], key[1])
         else:
             registry[key] = task_cfg["TASK19"][key]
+
+    arg_keys = [
+        "use_bt_re",
+    ]
+
+    for key in arg_keys:
+        registry[key] = getattr(args, key)
 
     print(json.dumps(vars(registry), indent=2))
 
@@ -285,6 +305,9 @@ def main():
     args = parser.parse_args()
     with open(args.task_file, "r") as f:
         task_cfg = edict(yaml.safe_load(f))
+
+    if args.val_split is not None:
+        task_cfg["TASK19"]["val_split"] = args.val_split
 
     logger.info("-" * 20 + "Config Start" + "-" * 20)
     print(json.dumps(vars(args), indent=2))
@@ -570,6 +593,15 @@ def main():
                 new_dict[attr] = checkpoint["model_state_dict"][attr]
         model.load_state_dict(new_dict)
 
+        # Add checkpoint string
+        log_keys = ["cs_rank", "vqa_rank", "vqa_acc", "cs_score", "global_step"]
+        ckpt_string = f"-------------- \n Checkpoint information: \n"
+        for key in log_keys:
+            ckpt_string += f"{key}: {checkpoint[key]} \n"
+        ckpt_string += "---------------"
+        logger.info(ckpt_string)
+
+
         if task_cfg["TASK19"].get("load_state", False):
             print("Loading Optimizer and Scheduler States")
             warmup_scheduler.load_state_dict(checkpoint["warmup_scheduler_state_dict"])
@@ -663,7 +695,6 @@ def evaluate(
 
     model.eval()
     results = {}
-    final_results = {}
 
     for batch in tqdm(task_dataloader_val[task_id]):
         with torch.no_grad():  # turn off autograd engine
@@ -686,32 +717,59 @@ def evaluate(
                         "vqa_score": np.round(batch_dict["vqa_scores"][idx], 1) if "vqa_scores" in batch_dict else None
                     }
 
-
     c_scores = None
     if registry.revqa_eval:
+        cs_results = {}
         for batch in tqdm(task_dataloader_val["revqa"], desc="Revqa Eval"):
             with torch.no_grad():  # turn off autograd engine
                 batch_dict = ForwardModelsVal(
                     args, task_cfg, device, task_id, batch, model, task_losses, revqa_eval=True
                 )
-        c_scores, revqa_bins_scores = get_consistency_score(results=results, bins_scores=True)
+
+                # build the json file here!
+                logits = torch.max(batch_dict["vil_prediction"], 1)[1].data  # argmax
+
+                for idx in range(logits.size(0)):
+                    cs_results[batch_dict["question_id"][idx].item()] = \
+                        {
+                            "question_id": batch_dict["question_id"][idx].item(),
+                            "answer": task_dataloader_val[task_id].dataset.label2ans[
+                                logits[idx].item()
+                            ],
+                            "vqa_score": np.round(batch_dict["vqa_scores"][idx], 1) if "vqa_scores" in batch_dict else None
+                        }
+        c_scores, revqa_bins_scores = get_consistency_score(results=cs_results, bins_scores=True)
 
     elif registry.revqa_eval_on_val:
         logger.info("Ran re-vqa eval on validation!")
         c_scores, revqa_bins_scores = get_consistency_score(results=results, bins_scores=True)
 
 
+    final_results = {}
     final_results["results"] = results
-    final_results["question_rephrase_dict_val"] = registry.question_rephrase_dict_val
     final_results["revqa_bins_scores"] = revqa_bins_scores
     final_results["c_scores"] = c_scores
+    for key in registry:
+        if "question_rephrase_dict" in key:
+            final_results[key] = registry[key]
 
+    evalai_results = deepcopy(list(results.values()))
+    for item in evalai_results:
+        del item["vqa_score"]
 
     save_dir = os.path.split(args.resume_file)[0]
     evalai_path = f"{save_dir}/evalai_{task_cfg['TASK19']['val_split']}.json"
-    preds_path = f"{save_dir}/preds_{task_cfg['TASK19']['val_split']}.json"
-    json.dump(results, open(evalai_path, "w"))
+    preds_path = f"{save_dir}/preds_revqa.json"
+
+    if registry.use_bt_re:
+        preds_path = f"{save_dir}/preds_revqa_bt.json"
+
+    json.dump(evalai_results, open(evalai_path, "w"))
     json.dump(final_results, open(preds_path, "w"))
+
+    print(f"Dumped: {evalai_path}")
+    print(f"Dumped: {preds_path}")
+
     model.train()
 
 

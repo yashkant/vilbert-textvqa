@@ -372,7 +372,7 @@ class tbLogger(object):
             lossInfo = lossInfo + f"\n Consistency Scores: {c_scores}"
             for (key, value) in c_scores.items():
 
-                if type(key) != int:
+                if "len" in key:
                     continue
 
                 self.linePlot(

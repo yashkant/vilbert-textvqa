@@ -227,7 +227,7 @@ class SupConLoss(torch.nn.Module):
         self.contrast_mode = contrast_mode
         self.base_temperature = base_temperature
         self.formulation = formulation
-        logger.info(f"SCL Loss Formulation: {self.formulation}")
+        logger.info(f"SCL Loss Formulation: {self.formulation} w/ BT: {base_temperature} and T: {temperature}")
 
     def set_formulation(self, formulation):
         self.formulation = formulation
@@ -255,6 +255,12 @@ class SupConLoss(torch.nn.Module):
                 ],
                 dim=1
             )
+
+            ####
+            features = torch.cat(
+                [bd["contrastive_projection_norm"].unsqueeze(dim=1) for bd in batch_dict], dim=1
+            )
+
         else:
             # joint features
             features = batch_dict[0]["contrastive_projection_norm"].unsqueeze(dim=1)
@@ -269,13 +275,10 @@ class SupConLoss(torch.nn.Module):
         # mask
         pos_mask = None
 
-        device = (torch.device('cuda')
-                  if features.is_cuda
-                  else torch.device('cpu'))
+        device = (torch.device('cuda') if features.is_cuda else torch.device('cpu'))
 
         if len(features.shape) < 3:
-            raise ValueError('`features` needs to be [bsz, n_views, ...],'
-                             'at least 3 dimensions are required')
+            raise ValueError('`features` needs to be [bsz, n_views, ...],' 'at least 3 dimensions are required')
         if len(features.shape) > 3:
             features = features.view(features.shape[0], features.shape[1], -1)
 
@@ -294,7 +297,6 @@ class SupConLoss(torch.nn.Module):
 
         # remove samples without gt
         pos_mask = pos_mask * mask_samples
-
         contrast_count = features.shape[1]
 
         contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0)
@@ -308,9 +310,7 @@ class SupConLoss(torch.nn.Module):
             raise ValueError('Unknown mode: {}'.format(self.contrast_mode))
 
         # compute logits
-        anchor_dot_contrast = torch.div(
-            torch.matmul(anchor_feature, contrast_feature.T),
-            self.temperature)
+        anchor_dot_contrast = torch.div(torch.matmul(anchor_feature, contrast_feature.T), self.temperature)
 
         # for numerical stability, doesn't affect any values ahead
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
@@ -342,13 +342,11 @@ class SupConLoss(torch.nn.Module):
             assert self.formulation == "normal"
             log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
 
-        # import pdb
-        # pdb.set_trace()
-
         # limit the positives
         # todo: try pulling closer positives w/ rephrasings?
         scl_mask_thresh = int(registry.scl_mask_thresh)
         if scl_mask_thresh > 0:
+            raise AssertionError
             secondary_mask = torch.zeros_like(pos_mask)
             half_batch_size = int(len(secondary_mask) / 2)
             secondary_mask[:half_batch_size, half_batch_size:] = torch.eye(half_batch_size)
@@ -363,10 +361,7 @@ class SupConLoss(torch.nn.Module):
         # re-scaling rephrasings
         scl_mask_rescale_factor = registry.scl_mask_rescale_factor
         if scl_mask_rescale_factor > 0:
-            secondary_mask = torch.zeros_like(pos_mask)
-            half_batch_size = int(len(secondary_mask) / 2)
-            secondary_mask[:half_batch_size, half_batch_size:] = torch.eye(half_batch_size)
-            secondary_mask[half_batch_size:, :half_batch_size] = torch.eye(half_batch_size)
+            secondary_mask = torch.eye(batch_size, device=pos_mask.device).repeat(anchor_count, contrast_count).fill_diagonal_(0)
             secondary_mask = secondary_mask * scl_mask_rescale_factor
             secondary_mask[secondary_mask == 0] = 1
             pos_mask = pos_mask * secondary_mask
@@ -374,19 +369,7 @@ class SupConLoss(torch.nn.Module):
         # compute mean of log-likelihood over positive
         mean_log_prob_pos = (pos_mask * log_prob).sum(1) / torch.max(pos_mask.sum(1), torch.ones(1).to(pos_mask.device))
 
-        # # calculating score (seems pointless)
-        # preds = torch.argmax(exp_logits, 1)
-        #
-        # if registry.use_rephrasings:
-        #     scores = (preds == labels.squeeze().repeat(2)).float()
-        # else:
-        #     scores = (preds == labels.squeeze()).float()
-        # scores = scores * pos_mask
-        # batch_score = scores.sum() / pos_mask.sum()
-
         # loss
-
-
         loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
         loss = loss.view(anchor_count, batch_size).mean()
 

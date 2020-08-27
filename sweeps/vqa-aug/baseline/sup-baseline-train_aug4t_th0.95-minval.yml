@@ -7,13 +7,13 @@ TASK19:
   task_id: 1
   dataroot: datasets/VQA/
   features_h5path1: /srv/testing/ykant3/vqa/COCO_trainval_resnext152_faster_rcnn_genome.lmdb
-  features_h5path2: ''
+  features_h5path2: /srv/testing/ykant3/vqa/COCO_test_resnext152_faster_rcnn_genome.lmdb
   train_annotations_jsonpath: ''
   val_annotations_jsonpath: ''
   max_seq_length: 23
   max_region_num: 101
-  batch_size: 208
-  val_batch_size: 208
+  batch_size: 210
+  val_batch_size: 210
   train_split: train_aug
   val_split: minval
   lr: 0.0001

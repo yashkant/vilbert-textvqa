@@ -48,13 +48,15 @@ def assert_add_registry(task_cfg, args):
         "val_workers",
         "train_workers",
         "num_epoch",
+        "val_split",
+        "train_split",
         ("revqa_eval", False),
         ("use_ce_loss", False),
         ("scl_coeff", -1),
         "batch_size",
         ("mask_image", False),
         ("scl_formulation", "normal"),
-        ("val_drop_last", True),
+        ("val_drop_last", False),
         ("squint_loss", False),
         ("squint_layers", None),
         ("squint_type", None),
@@ -76,7 +78,12 @@ def assert_add_registry(task_cfg, args):
         ("use_freq", "ce"),
         ("save_top", 3),
         ("use_bt_re", False),
+        ("use_no_re", False),
         ("revqa_eval_on_val", False),
+        ("num_rep", 2),
+        ("base_temperature", 0.07),
+        ("temperature", 0.5),   # old-defaults
+        ("bt_eval_key", "val_aug"),
     ]
 
     for key in add_keys:
@@ -405,7 +412,7 @@ def main():
             print("\n", file=f)
             print(config, file=f)
             print("\n", file=f)
-            print(task_cfg)
+            print(task_cfg, file=f)
 
     # LOAD DATASETS
     task_batch_size, task_num_iters, task_ids, task_datasets_train, task_datasets_val, task_dataloader_train, \
@@ -650,8 +657,8 @@ def main():
     import time
     eval_iter_factor = task_cfg["TASK19"].get("eval_iter_factor", 1500)
 
-    # list of (iter, vqa_score, cs_score)
-    best_checkpoints = [(-1, -1, -1)]
+    # list of (iter, vqa_score, cs_score, cs_score_bt)
+    best_checkpoints = [(-1, -1, -1, -1)]
 
     # TRAINING LOOP
     for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
@@ -881,7 +888,7 @@ def main():
                         epochId == args.num_train_epochs - 1 and step == median_num_iter - 1
                 ):
                     logger.info("Starting Validation Run....")
-                    curr_val_score, curr_val_loss, c_scores = evaluate(
+                    curr_val_score, curr_val_loss, cs_scores, cs_bt_scores = evaluate(
                         args,
                         task_dataloader_val,
                         None,
@@ -913,7 +920,7 @@ def main():
                             }
 
                         if curr_val_score >= best_val_score and task_cfg["TASK19"].get("monitor_value",
-                                                                                       "val_score") == "val_score" and c_scores is None:
+                                                                                       "val_score") == "val_score" and cs_scores is None:
                             output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
                             logger.info(f"Saving Checkpoint: {output_checkpoint}")
                             logger.info(
@@ -923,7 +930,7 @@ def main():
                             torch.save(checkpoint_dict, output_checkpoint)
 
                         elif curr_val_loss <= best_val_loss and task_cfg["TASK19"].get("monitor_value",
-                                                                                       "val_loss") == "val_loss" and c_scores is None:
+                                                                                       "val_loss") == "val_loss" and cs_scores is None:
                             output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
                             logger.info(f"Saving Checkpoint: {output_checkpoint}")
                             logger.info(
@@ -931,39 +938,56 @@ def main():
                             best_val_loss = curr_val_loss
                             torch.save(checkpoint_dict, output_checkpoint)
 
-                        elif c_scores is not None:
-                            # import pdb
-                            # pdb.set_trace()
+                        elif cs_scores is not None:
+                            try:
+                                save_thresh = registry.save_top
+                                curr_cs_score = cs_scores[-1]
+                                curr_cs_bt_score = cs_bt_scores[-1]
 
-                            save_thresh = registry.save_top
-                            curr_cs_score = c_scores[-1]
-                            top_vqa_scores = [ ckpt[1] for ckpt in sorted(best_checkpoints, key=lambda x: x[1])][-save_thresh:]
-                            top_cs_scores = [ ckpt[2] for ckpt in sorted(best_checkpoints, key=lambda x: x[2])][-save_thresh:]
-                            vqa_rank = bisect.bisect(top_vqa_scores, curr_val_score)
-                            cs_rank = bisect.bisect(top_cs_scores, curr_cs_score)
+                                top_vqa_scores = [ ckpt[1] for ckpt in sorted(best_checkpoints, key=lambda x: x[1])][-save_thresh:]
+                                top_cs_scores = [ ckpt[2] for ckpt in sorted(best_checkpoints, key=lambda x: x[2])][-save_thresh:]
+                                top_cs_bt_scores = [ckpt[3] for ckpt in sorted(best_checkpoints, key=lambda x: x[3])][-save_thresh:]
 
-                            logger.info(f"Current Val Score and Rank: {curr_val_score} / {vqa_rank} | Previous Best Val Scores: {top_vqa_scores}")
-                            logger.info(f"Current CS Score and Rank: {curr_cs_score} / {cs_rank} | Previous Best CS Scores: {top_cs_scores}")
-                            checkpoint_dict.update(
-                                {
-                                    "vqa_rank": vqa_rank,
-                                    "cs_rank": cs_rank,
-                                    "vqa_acc": curr_val_score,
-                                    "cs_score": curr_cs_score
-                                }
-                            )
+                                vqa_rank = bisect.bisect(top_vqa_scores, curr_val_score)
+                                cs_rank = bisect.bisect(top_cs_scores, curr_cs_score)
+                                cs_bt_rank = bisect.bisect(top_cs_bt_scores, curr_cs_bt_score)
 
-                            if vqa_rank != 0:
-                                logger.info(f"Saving for VQA score w/ rank: {vqa_rank}")
-                                output_checkpoint = os.path.join(savePath, f"vqa_rank_{vqa_rank}.tar")
-                                torch.save(checkpoint_dict, output_checkpoint)
 
-                            if cs_rank != 0:
-                                logger.info(f"Saving for CS score w/ rank: {cs_rank}")
-                                output_checkpoint = os.path.join(savePath, f"cs_rank_{cs_rank}.tar")
-                                torch.save(checkpoint_dict, output_checkpoint)
+                                logger.info(f"Current Val Score and Rank: {curr_val_score} / {vqa_rank} | Previous Best Val Scores: {top_vqa_scores}")
+                                logger.info(f"Current CS Score and Rank: {curr_cs_score} / {cs_rank} | Previous Best CS Scores: {top_cs_scores}")
+                                logger.info(f"Current CS BT Score and Rank: {curr_cs_bt_score} / {cs_bt_rank} | Previous Best CS Scores: {top_cs_bt_scores}")
 
-                            best_checkpoints.append((global_step, curr_val_score, curr_cs_score))
+                                logger.info(f"Top CS checkpoint: {sorted(best_checkpoints, key=lambda x: x[2])[-1]}")
+                                logger.info(f"Top CS BT checkpoint: {sorted(best_checkpoints, key=lambda x: x[3])[-1]}")
+                                logger.info(f"Checkpoint Dir: {savePath}")
+                                checkpoint_dict.update(
+                                    {
+                                        "vqa_rank": vqa_rank,
+                                        "cs_rank": cs_rank,
+                                        "vqa_acc": curr_val_score,
+                                        "cs_score": curr_cs_score
+                                    }
+                                )
+
+                                if vqa_rank != 0:
+                                    logger.info(f"Saving for VQA score w/ rank: {vqa_rank}")
+                                    output_checkpoint = os.path.join(savePath, f"vqa_rank_{vqa_rank}.tar")
+                                    torch.save(checkpoint_dict, output_checkpoint)
+
+                                if cs_rank != 0:
+                                    logger.info(f"Saving for CS score w/ rank: {cs_rank}")
+                                    output_checkpoint = os.path.join(savePath, f"cs_rank_{cs_rank}.tar")
+                                    torch.save(checkpoint_dict, output_checkpoint)
+
+                                if cs_bt_rank != 0:
+                                    logger.info(f"Saving for CS BT score w/ rank: {cs_bt_rank}")
+                                    output_checkpoint = os.path.join(savePath, f"cs_bt_rank_{cs_bt_rank}.tar")
+                                    torch.save(checkpoint_dict, output_checkpoint)
+
+                                best_checkpoints.append((global_step, curr_val_score, curr_cs_score, curr_cs_bt_score))
+                            except:
+                                import pdb
+                                pdb.set_trace()
 
             residue_time = time.time()
             # print(f"Finish time: {residue_time - finish_time}")
@@ -1008,8 +1032,13 @@ def evaluate(
     if registry.revqa_eval or registry.revqa_eval_on_val:
         from easydict import EasyDict
         dd = defaultdict(list)
+        dd_bt = defaultdict(list)
+
         super(EasyDict, registry).__setattr__("revqa_bins", dd)
         super(EasyDict, registry).__setitem__("revqa_bins", dd)
+
+        super(EasyDict, registry).__setattr__("revqa_bt_bins", dd_bt)
+        super(EasyDict, registry).__setitem__("revqa_bt_bins", dd_bt)
 
     from vilbert.task_utils import ForwardModelsVal
     model.eval()  # turn off dropout/batch-norm
@@ -1030,9 +1059,19 @@ def evaluate(
         for batch in tqdm(task_dataloader_val["revqa"], desc="Revqa Eval"):
             with torch.no_grad():  # turn off autograd engine
                 loss, score, batch_size = ForwardModelsVal(
-                    args, task_cfg, device, task_id, batch, model, task_losses, revqa_eval=True
+                    args, task_cfg, device, task_id, batch, model, task_losses, revqa_eval=True, revqa_split="re_total"
                 )
         c_scores = get_consistency_score()
+
+        for batch in tqdm(task_dataloader_val["revqa_bt"], desc="Revqa BT Eval"):
+            with torch.no_grad():  # turn off autograd engine
+                loss, score, batch_size = ForwardModelsVal(
+                    args, task_cfg, device, task_id, batch, model, task_losses, revqa_eval=True, revqa_split="re_total_bt"
+                )
+        c_scores_bt = get_consistency_score(bins_key="revqa_bt_bins")
+
+        # merge all key-values
+        c_scores.update(c_scores_bt)
 
     elif registry.revqa_eval_on_val:
         logger.info("Ran re-vqa eval on validation!")
@@ -1042,9 +1081,10 @@ def evaluate(
     model.train()
 
     # return only a list of c_scores
-    c_scores = [c_scores[key] for key in [1,2,3,4]]
+    c_scores_bt = [c_scores[key] if key in c_scores else -1 for key in ["1_bt", "2_bt", "3_bt","4_bt"]]
+    c_scores = [c_scores[str(key)] for key in [1,2,3,4]]
 
-    return score, loss, c_scores
+    return score, loss, c_scores, c_scores_bt
 
 
 if __name__ == "__main__":

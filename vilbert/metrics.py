@@ -3,7 +3,7 @@ from tools.registry import registry
 import numpy as np
 
 
-def get_consistency_score(results=None, bins_scores=False):
+def get_consistency_score(results=None, bins_scores=False, bins_key="revqa_bins"):
 
     # bin the vqa-scores
     revqa_bins_scores = {}
@@ -11,7 +11,7 @@ def get_consistency_score(results=None, bins_scores=False):
     # vqa-score of all the samples
     total_vqa_scores = []
 
-    for key, value in registry.revqa_bins.items():
+    for key, value in registry[bins_key].items():
 
         question_ids, vqa_scores = list(zip(*value))
 
@@ -30,7 +30,11 @@ def get_consistency_score(results=None, bins_scores=False):
 
         total_vqa_scores.extend(value)
 
-        assert sum(vqa_scores) <= 4.0
+        try:
+            assert sum(vqa_scores) <= len(vqa_scores)
+        except:
+            import pdb
+            pdb.set_trace()
 
         # for subsets of size = k, check VQA accuracy
         for k_value in k_values:
@@ -56,8 +60,9 @@ def get_consistency_score(results=None, bins_scores=False):
             if max_k in rbs:
                 scores.append(rbs[k_value])
         # print(f"Consensus Score with K={k_value} is {sum(scores) / len(scores)}")
-        result_dict[int(k_value)] = sum(scores) / len(scores)
-        result_dict[f"len_{k_value}"] = len(scores)
+        add_str = "_bt" if bins_key == "revqa_bt_bins" else ""
+        result_dict[str(k_value) + add_str] = sum(scores) / len(scores)
+        result_dict[f"len_{k_value}" + add_str] = len(scores)
 
     if bins_scores:
         return result_dict, revqa_bins_scores

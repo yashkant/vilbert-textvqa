@@ -63,7 +63,7 @@ TASK19:
     sim_threshold: 0.95
     sampling: top # top (selects max_re_per_sample samples from top after thresholding), bottom and random
   sampler_type: new
-  init_batch_size: 50 # 41 + 2x41
+  init_batch_size: 10 # 41 + 2x41
   neg_type_weights: [0.25, 0.25, 0.5]
   neg_question_thresh: 210
   scl_mask_thresh: -1

@@ -225,6 +225,17 @@ def _load_dataset(dataroot, name, clean_datasets):
                     answers.append(a)
             rephrasings_dict(split, questions)
 
+        if name == "re_train" and registry.use_no_re:
+            fil_questions, fil_answers = [], []
+            for q,a in zip(questions, answers):
+                ref_qid = min([q["question_id"]] + q["rephrasing_ids"])
+                if ref_qid == q["question_id"]:
+                    fil_questions.append(q)
+                    fil_answers.append(a)
+            questions, answers = fil_questions, fil_answers
+            rephrasings_dict(split, questions)
+
+
         assert len(questions) == len(answers)
         for question, answer in zip(questions, answers):
             try:
@@ -233,10 +244,12 @@ def _load_dataset(dataroot, name, clean_datasets):
                 import pdb
                 pdb.set_trace()
 
-    elif name in ["train_aug", "val_aug", "trainval_aug", "minval_aug"]:
+    elif name in ["train_aug", "val_aug", "trainval_aug", "minval_aug", "train_aug_fil"]:
         split_path_dict = {
             "train_aug": ["datasets/VQA/back-translate/org3_bt_v2_OpenEnded_mscoco_train2014_questions.pkl",
                          "datasets/VQA/back-translate/org2_bt_train_target.pkl", "train"],
+            "train_aug_fil": ["datasets/VQA/back-translate/bt_fil_dcp_sampling_{}_v2_OpenEnded_mscoco_train2014_questions.pkl",
+                         "datasets/VQA/back-translate/bt_fil_dcp_sampling_{}_train_target.pkl", "train"],
             "val_aug": ["datasets/VQA/back-translate/org3_bt_v2_OpenEnded_mscoco_val2014_questions.pkl",
                          "datasets/VQA/back-translate/org2_bt_val_target.pkl", "val"],
             "trainval_aug": ["datasets/VQA/back-translate/org3_bt_v2_OpenEnded_mscoco_trainval2014_questions.pkl",
@@ -246,8 +259,17 @@ def _load_dataset(dataroot, name, clean_datasets):
         }
         questions_path, answers_path, split = split_path_dict[name][0], split_path_dict[name][1], split_path_dict[name][-1]
 
+        if name == "train_aug_fil":
+            questions_path = questions_path.format(registry.aug_filter["sampling"])
+            answers_path = answers_path.format(registry.aug_filter["sampling"])
+
+
         if not registry.debug:
             questions_list = cPickle.load(open(questions_path, "rb"))
+            
+            if isinstance(questions_list, dict):
+                questions_list = questions_list["questions"]
+
             answers_list = cPickle.load(open(answers_path, "rb"))
         else:
             questions_path = questions_path.split(".")[0] + "_debug.pkl"
@@ -266,14 +288,26 @@ def _load_dataset(dataroot, name, clean_datasets):
         for question, answer in zip(questions, answers):
             assert answer["question_id"] == question["question_id"]
 
-    elif name == "re_total":
+    elif name in ["re_total", "re_total_bt"]:
         paths_dict = {
             "re_train": ["data/re-vqa/data/revqa_train_proc.json", "datasets/VQA/cache/revqa_train_target.pkl", "train"],
             "re_val": ["data/re-vqa/data/revqa_val_proc.json", "datasets/VQA/cache/revqa_val_target.pkl", "val"],
+            "val_aug": ["datasets/VQA/back-translate/org3_bt_v2_OpenEnded_mscoco_val2014_questions.pkl",
+                        "datasets/VQA/back-translate/org2_bt_val_target.pkl", "val"],
+            "val_aug_fil": [
+                "datasets/VQA/back-translate/bt_fil_dcp_sampling_{}_v2_OpenEnded_mscoco_train2014_questions.pkl"
+                    .format(registry.aug_filter["sampling"]),
+                "datasets/VQA/back-translate/bt_fil_dcp_sampling_{}_train_target.pkl"
+                    .format(registry.aug_filter["sampling"]),
+                "val"
+            ],
+
         }
 
         questions, answers = [], []
         for key, value in paths_dict.items():
+            if key in ["val_aug", "val_aug_fil"]:
+                continue
             _questions, _answers = json.load(open(value[0]))["questions"], cPickle.load(open(value[1], "rb"))
             questions.extend(_questions)
             answers.extend(_answers)
@@ -284,11 +318,30 @@ def _load_dataset(dataroot, name, clean_datasets):
         assert len(questions) == len(answers)
         for question, answer in zip(questions, answers):
             assert answer["question_id"] == question["question_id"]
-        #     if "rephrasing_of" not in question:
-        #         d_q.append(question)
-        #         d_a.append(answer)
-        #
-        # questions, answers = d_q, d_a
+
+        # replace human rephrasings questions w/ BT rephrasings
+        if registry.use_bt_re or name == "re_total_bt":
+            bt_eval_key = registry.bt_eval_key
+            val_questions_path, val_answers_path, val_split = paths_dict[bt_eval_key][0], paths_dict[bt_eval_key][
+                1], paths_dict[bt_eval_key][-1]
+            val_questions_list = cPickle.load(open(val_questions_path, "rb"))
+            val_answers_list = cPickle.load(open(val_answers_path, "rb"))
+            val_questions, val_answers = filter_aug(val_questions_list, val_answers_list)
+
+            original_ids = (set(registry.question_rephrase_dict_re_total.values()))
+
+            if name == "re_total_bt":
+                dump_path = "/nethome/ykant3/vilbert-multi-task/data/re-vqa/data/non_overlap_ids.npy"
+                qids = np.load(dump_path, allow_pickle=True)
+                assert len(set(qids).intersection(set(original_ids))) == 0
+                original_ids = qids
+
+            questions, answers = [], []
+            for q,a in zip(val_questions, val_answers):
+                if q["rephrasing_of"] in original_ids:
+                    questions.append(q)
+                    answers.append(a)
+            rephrasings_dict(name, questions)
 
     elif name == "trainval":
         # (YK): We use train + (val - minval) questions
@@ -369,7 +422,7 @@ def _load_dataset(dataroot, name, clean_datasets):
         questions = questions_train
         answers = answers_train
     else:
-        assert False, "data split is not recognized."
+        assert False, f"data split {name} is not recognized."
 
     if "test" in name:
         entries = []
@@ -600,6 +653,7 @@ class VQAClassificationDataset(Dataset):
             if registry.sdebug:
                 continue
 
+            # these are just raw questions!
             tokens = self._tokenizer.encode(entry["question"])
             tokens = tokens[: max_length - 2]
             tokens = self._tokenizer.add_special_tokens_single_sentence(tokens)
@@ -668,17 +722,17 @@ class VQAClassificationDataset(Dataset):
         3. Build target (vocab-dim) with VQA scores scattered at label-indices
         4. Return
         """
-        # import  time
-        # time_start = time.time()
+        import time
 
-        # if hasattr(self, "count"):
-        #     self.count += 1
-        # else:
-        #     self.count = 0
-        #
+        if hasattr(self, "count"):
+            self.count += 1
+        else:
+            self.count = 0
+
         # if self.count <= 4:
         #     import pdb
         #     pdb.set_trace()
+
         item_dict = {}
 
         start_time = time.time()
@@ -715,7 +769,7 @@ class VQAClassificationDataset(Dataset):
         features, num_boxes, boxes, _ = self._image_features_reader[image_id]
 
         features_load_time = time.time()
-
+        # print(f"Feat load time: {features_load_time - entry_load_time}")
 
         mix_num_boxes = min(int(num_boxes), self._max_region_num)
         mix_boxes_pad = np.zeros((self._max_region_num, 5))
@@ -832,6 +886,8 @@ class VQAClassificationDataset(Dataset):
         time_end = time.time()
         total_time = (time_end-start_time)
 
+        # print(f"Total Time: {total_time}")
+
         # if total_time > self.mean_read_time*3:
         #     import pdb
         #     pdb.set_trace()
@@ -842,54 +898,73 @@ class VQAClassificationDataset(Dataset):
         # don't use while evaluation loop
         if self.extra_args.get("contrastive", None) in ["simclr", "better"] \
                 and registry.use_rephrasings \
-                and self.split not in ["minval", "re_total", "re_val"]:
+                and self.split not in ["minval", "re_total", "re_val", "test", "val"]:
             common_indices = torch.zeros_like(entry['q_token'])
             common_indices_pos = torch.zeros_like(entry['q_token'])
             item_dict["common_inds"] = common_indices
 
-            item_pos_dict = deepcopy(item_dict)
+            return_list = [item_dict]
+            item_pos_dicts = [deepcopy(item_dict) for _ in range(registry.num_rep-1)]
+            # when there's no rephrasing available send the original
+            if len(entry["rephrasing_ids"]) == 0:
+                item_dict["mask"] = item_dict["mask"] * 0
+                for id in item_pos_dicts:
+                    id["mask"] = id["mask"] * 0
+                return_list.extend(item_pos_dicts)
+                return return_list
 
-            # if registry.debug:
-            #     return item_dict, item_pos_dict
+            que_ids = np.random.choice(entry["rephrasing_ids"], registry.num_rep-1)
+            pos_entries = [self.entries[self.question_map[qid]] for qid in que_ids]
 
-            try:
-                # when there's no rephrasing available send the original
-                if len(entry["rephrasing_ids"]) == 0:
-                    item_dict["mask"] = item_dict["mask"] * 0
-                    item_pos_dict["mask"] = item_pos_dict["mask"] * 0
-                    return (item_dict, item_pos_dict)
-            except:
-                import pdb
-                pdb.set_trace()
+            for id, pe in zip(item_pos_dicts, pos_entries):
+                id.update({
+                    "question_indices": pe["q_token"],
+                    "question_mask": pe["q_input_mask"],
+                    "question_id": pe["question_id"],
 
-            que_id = np.random.choice(entry["rephrasing_ids"])
-            pos_entry = self.entries[self.question_map[que_id]]
-            try:
-                assert pos_entry["image_id"] == entry["image_id"]
-                if pos_entry["answer"]["labels"] is not None:
-                    assert all(pos_entry["answer"]["labels"] == entry["answer"]["labels"])
-            except:
-                import pdb
-                pdb.set_trace()
+                })
 
-            entry_tokens = set(entry['q_token'].tolist())
-            pos_entry_tokens = set(pos_entry['q_token'].tolist())
-            common_tokens = list(pos_entry_tokens.intersection(entry_tokens) - set([0, 101, 102]))
+            return_list.extend(item_pos_dicts)
+            return return_list
 
-            for iter, tok in enumerate(common_tokens):
-                entry_idx = int(((tok == entry['q_token']) * 1).nonzero()[0][0])
-                pos_entry_idx = int(((tok == pos_entry['q_token']) * 1).nonzero()[0][0])
-                common_indices[iter] = entry_idx
-                common_indices_pos[iter] = pos_entry_idx
 
-            item_pos_dict.update({
-                "question_indices": pos_entry["q_token"],
-                "question_mask": pos_entry["q_input_mask"],
-                "question_id": pos_entry["question_id"],
-                "common_inds": common_indices_pos
-            })
 
-            return (item_dict, item_pos_dict)
+
+
+            # # when there's no rephrasing available send the original
+            # if len(entry["rephrasing_ids"]) == 0:
+            #     item_dict["mask"] = item_dict["mask"] * 0
+            #     item_pos_dict["mask"] = item_pos_dict["mask"] * 0
+            #     return (item_dict, item_pos_dict)
+            #
+            # que_id = np.random.choice(entry["rephrasing_ids"])
+            # pos_entry = self.entries[self.question_map[que_id]]
+            # try:
+            #     assert pos_entry["image_id"] == entry["image_id"]
+            #     if pos_entry["answer"]["labels"] is not None:
+            #         assert all(pos_entry["answer"]["labels"] == entry["answer"]["labels"])
+            # except:
+            #     import pdb
+            #     pdb.set_trace()
+            #
+            # # entry_tokens = set(entry['q_token'].tolist())
+            # # pos_entry_tokens = set(pos_entry['q_token'].tolist())
+            # # common_tokens = list(pos_entry_tokens.intersection(entry_tokens) - set([0, 101, 102]))
+            # #
+            # # for iter, tok in enumerate(common_tokens):
+            # #     entry_idx = int(((tok == entry['q_token']) * 1).nonzero()[0][0])
+            # #     pos_entry_idx = int(((tok == pos_entry['q_token']) * 1).nonzero()[0][0])
+            # #     common_indices[iter] = entry_idx
+            # #     common_indices_pos[iter] = pos_entry_idx
+            #
+            # item_pos_dict.update({
+            #     "question_indices": pos_entry["q_token"],
+            #     "question_mask": pos_entry["q_input_mask"],
+            #     "question_id": pos_entry["question_id"],
+            #     # "common_inds": common_indices_pos
+            # })
+            #
+            # return (item_dict, item_pos_dict)
 
         return item_dict
 

@@ -123,7 +123,10 @@ class NegativeSampler(Sampler):
             self.load_hard_negatives()
 
     def load_hard_negatives(self):
-        negs_path = "datasets/VQA/back-translate/fil_{}_question_negs.pkl".format(self.split)
+        if "fil" in registry.train_split:
+            negs_path = "datasets/VQA/back-translate/fil_dcp_sampling_{}_train_question_negs.pkl".format(registry.aug_filter["sampling"])
+        else:
+            negs_path = "datasets/VQA/back-translate/fil_{}_question_negs.pkl".format(self.split)
 
         assert os.path.exists(negs_path)
         self.negs_data = cPickle.load(open(negs_path, "rb"))
@@ -247,7 +250,7 @@ class NegativeSampler(Sampler):
         neg_question_thresh = self.task_cfg["neg_question_thresh"]
         use_gt_answer = self.task_cfg["use_gt_answer"]
         assert np.sum(neg_type_weights) == 1.0
-        assert self.batch_size % init_batch_size == 0
+        # assert self.batch_size % init_batch_size == 0
         add_positives = self.num_positives > 0
         num_passes = int((self.batch_size - init_batch_size*(self.num_positives + 1))/init_batch_size)
         assert neg_replace
