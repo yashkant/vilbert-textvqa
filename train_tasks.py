@@ -659,6 +659,7 @@ def main():
 
     # list of (iter, vqa_score, cs_score, cs_score_bt)
     best_checkpoints = [(-1, -1, -1, -1)]
+    ckpts_log_file = os.path.join(savePath, "ckpts.log")
 
     # TRAINING LOOP
     for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
@@ -985,6 +986,10 @@ def main():
                                     torch.save(checkpoint_dict, output_checkpoint)
 
                                 best_checkpoints.append((global_step, curr_val_score, curr_cs_score, curr_cs_bt_score))
+
+                                with open(ckpts_log_file, "w") as outfile:
+                                    outfile.write("\n".join([str(s) for s in best_checkpoints]))
+                                logger.info(f"Dumped File: {ckpts_log_file}")
                             except:
                                 import pdb
                                 pdb.set_trace()
@@ -1005,7 +1010,6 @@ def main():
         top_cs_ckpts = [(c[0], c[2]) for c in sorted(best_checkpoints, key=lambda x: x[2], reverse=True)[:registry.save_top]]
         print(f"Top CS checkpoints: {top_cs_ckpts}")
         print(f"Top VQA checkpoints: {top_vqa_ckpts}")
-        ckpts_log_file = os.path.join(savePath, "ckpts.log")
         with open(ckpts_log_file, "w") as outfile:
             outfile.write("\n".join([str(s) for s in best_checkpoints]))
         logger.info(f"Dumped File: {ckpts_log_file}")
