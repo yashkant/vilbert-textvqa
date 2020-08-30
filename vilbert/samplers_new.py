@@ -125,6 +125,8 @@ class NegativeSampler(Sampler):
     def load_hard_negatives(self):
         if "fil" in registry.train_split:
             negs_path = "datasets/VQA/back-translate/fil_dcp_sampling_{}_train_question_negs.pkl".format(registry.aug_filter["sampling"])
+        elif "cc" in registry.train_split:
+            negs_path = "datasets/VQA/cc-re/cc_re_train_question_negs.pkl"
         else:
             negs_path = "datasets/VQA/back-translate/fil_{}_question_negs.pkl".format(self.split)
 
@@ -276,7 +278,7 @@ class NegativeSampler(Sampler):
                  self.answer_map,
                  self.qid_ans_dict,
                  extra_args,
-                 1000 if registry.sdebug else num_batches,
+                 num_batches if num_batches < 20000 else 20000,
                  init_pass_bs]
 
         # shuffle bins

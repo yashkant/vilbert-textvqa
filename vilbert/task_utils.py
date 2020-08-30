@@ -341,7 +341,7 @@ def add_ce_loss(batch_dict, device, val_run=False, revqa_eval=False, split="re_t
         for idx, qid in enumerate(batch_dict["question_id"].tolist()):
             min_qid = registry[f"question_rephrase_dict_{split}"][qid]
             vqa_score = batch_dict["vqa_scores"][idx]
-            bins_key = "revqa_bins" if split == "re_total" else "revqa_bt_bins"
+            bins_key = "revqa_bins" if split in ["re_total", "val"] else "revqa_bt_bins"
             registry[bins_key][min_qid].append((qid, vqa_score))
 
     return vl_loss, batch_score

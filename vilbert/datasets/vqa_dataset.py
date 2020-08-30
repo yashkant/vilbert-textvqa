@@ -244,10 +244,13 @@ def _load_dataset(dataroot, name, clean_datasets):
                 import pdb
                 pdb.set_trace()
 
-    elif name in ["train_aug", "val_aug", "trainval_aug", "minval_aug", "train_aug_fil"]:
+    elif name in ["train_aug", "val_aug", "trainval_aug", "train_aug_cc" ,"minval_aug", "train_aug_fil"]:
+
         split_path_dict = {
             "train_aug": ["datasets/VQA/back-translate/org3_bt_v2_OpenEnded_mscoco_train2014_questions.pkl",
                          "datasets/VQA/back-translate/org2_bt_train_target.pkl", "train"],
+            "train_aug_cc": ["datasets/VQA/cc-re/cc_v2_OpenEnded_mscoco_train2014_questions_88.pkl",
+                         "datasets/VQA/cc-re/cc_train_target_88.pkl", "train"],
             "train_aug_fil": ["datasets/VQA/back-translate/bt_fil_dcp_sampling_{}_v2_OpenEnded_mscoco_train2014_questions.pkl",
                          "datasets/VQA/back-translate/bt_fil_dcp_sampling_{}_train_target.pkl", "train"],
             "val_aug": ["datasets/VQA/back-translate/org3_bt_v2_OpenEnded_mscoco_val2014_questions.pkl",
