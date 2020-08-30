@@ -14,7 +14,7 @@ TASK19:
   train_split: train_aug
   val_split: minval
   # Change at both places num_epochs
-  num_epoch: 20
+  num_epoch: 5
 
   # grad-clipping
   grad_clip_mode: all
@@ -68,7 +68,7 @@ TASK19:
   neg_question_thresh: 210
   scl_mask_thresh: -1
   scl_mask_rescale_factor: -1
-  scl_random_sampler: false
-  alt_train: true
+  scl_random_sampler: true
+  alt_train: false
   alt_re: false
-  ce_freq: 4
+  ce_freq: -1

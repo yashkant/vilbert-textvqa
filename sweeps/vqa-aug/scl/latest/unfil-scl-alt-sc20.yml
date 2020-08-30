@@ -14,13 +14,13 @@ TASK19:
   train_split: train_aug
   val_split: minval
   # Change at both places num_epochs
-  num_epoch: 20
+  num_epoch: 5
 
   # grad-clipping
   grad_clip_mode: all
   max_grad_norm: 0.25
   # weight-decay (doesn't apply on batch-norm and biases)
-  weight_decay: 0.0000
+  weight_decay: 0.00001
 
   # optimizer
   optim: Adam
@@ -64,7 +64,7 @@ TASK19:
     sampling: top # top (selects max_re_per_sample samples from top after thresholding), bottom and random
   sampler_type: new
   init_batch_size: 10 # 41 + 2x41
-  neg_type_weights: [0.25, 0.25, 0.5]
+  neg_type_weights: [0.0, 0.0, 1.0]
   neg_question_thresh: 210
   scl_mask_thresh: -1
   scl_mask_rescale_factor: 20
