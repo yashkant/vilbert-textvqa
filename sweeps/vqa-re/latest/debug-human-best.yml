@@ -6,7 +6,7 @@ TASK19:
   task_id: 1
   dataroot: datasets/VQA/
   features_h5path1: /srv/testing/ykant3/vqa/COCO_trainval_resnext152_faster_rcnn_genome.lmdb
-  features_h5path2: ''
+  features_h5path2: /srv/testing/ykant3/vqa/COCO_trainval_resnext152_faster_rcnn_genome.lmdb
   train_annotations_jsonpath: ''
   val_annotations_jsonpath: ''
   max_seq_length: 23
@@ -35,8 +35,8 @@ TASK19:
   model_type: m4c
   num_hidden_layers: 6
   contrast_out_dim: 128
-  batch_size: 200
-  val_batch_size: 200
+  batch_size: 20
+  val_batch_size: 20
   monitor_value: val_score
 
   # loss attributes

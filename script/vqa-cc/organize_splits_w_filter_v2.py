@@ -26,6 +26,7 @@ def cos_sim(A, B):
 
 # import pdb
 # pdb.set_trace()
+args = parse_args()
 
 device = torch.device("cuda" if torch.cuda.is_available()  else "cpu")
 torch.backends.cudnn.benchmark = True
@@ -49,8 +50,8 @@ sim_thresh = 0.8
 num_re = 4
 
 cc_rephrasings_path = [
-    "/nethome/ykant3/pythia/results/noise/results/pythia_cycle_consistent_with_failure_prediction/58383/gen_questions_train_88.npy",
-    "/nethome/ykant3/pythia/results/noise/results/pythia_cycle_consistent_with_failure_prediction/58383/gen_questions_88_eval.npy",
+    "/nethome/ykant3/pythia/results/noise-v2-fifth/results/pythia_cycle_consistent_with_failure_prediction/34035/gen_questions_train_88.npy",
+    "/nethome/ykant3/pythia/results/noise-v2-fifth/results/pythia_cycle_consistent_with_failure_prediction/34035/gen_questions_88_val_ds0.npy",
 
 ]
 
@@ -83,7 +84,6 @@ ans_split_path_dict = {
 }
 
 num_splits = 4
-args = parse_args()
 data_split = args.data_split
 
 for split in ["train", "val"]:
@@ -102,9 +102,6 @@ for split in ["train", "val"]:
     org_data_split = np.array_split(org_zip_data, num_splits)[data_split]
 
     for que, ans in tqdm(org_data_split, total=len(org_data_split)):
-
-        import pdb
-        pdb.set_trace()
 
         qid = que["question_id"]
         cc_item = cc_qdata[qid]
