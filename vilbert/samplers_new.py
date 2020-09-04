@@ -76,10 +76,10 @@ class NegativeSampler(Sampler):
         self.num_samples = num_samples
         self.batch_size = batch_size
 
-        if "train" in split:
-            self.split = "train"
-        elif "trainval" in split:
+        if "trainval" in split:
             self.split = "trainval"
+        elif "train" in split:
+            self.split = "train"
 
         if "re" in split:
             self.split = "val"
@@ -130,6 +130,7 @@ class NegativeSampler(Sampler):
         else:
             negs_path = "datasets/VQA/back-translate/fil_{}_question_negs.pkl".format(self.split)
 
+        logger.info(f"Hard negatives path: {negs_path}")
         assert os.path.exists(negs_path)
         self.negs_data = cPickle.load(open(negs_path, "rb"))
         self.negs_index_dict = {}

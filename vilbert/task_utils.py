@@ -164,6 +164,10 @@ def to_device(batch_dict, device):
 
     for batch in batch_dict:
         for key, value in batch.items():
+
+            if key in ["image_id", "question_id"]:
+                continue
+
             if isinstance(value, torch.Tensor):
                 batch[key] = value.cuda(device=device, non_blocking=True)
 
@@ -254,16 +258,69 @@ def ForwardModelsTrain(
 
     if not isinstance(batch_dicts, tuple) and not isinstance(batch_dicts, list):
         batch_dicts = [batch_dicts]
-    # send to device
-    to_device(batch_dicts, device)
-    question = batch_dicts[0]["question_indices"]
-    # batch["task_tokens"] = question.new().resizeA_(question.size(0), 1).fill_(int(task_id[4:]))
-    batch_size = len(question)
 
-    # if not registry.squint_loss:
-    for batch in batch_dicts:
-        results_dict = model(batch)
-        batch.update(results_dict)
+    def _forward(batch_dicts, model, device):
+        for batch in batch_dicts:
+            # send to gpu
+            input_keys = list(batch.keys())
+            for key in input_keys:
+                if key in ["image_id", "question_id"]:
+                    continue
+                if isinstance(batch[key], torch.Tensor):
+                    batch[key] = batch[key].cuda(device=device, non_blocking=True)
+
+            results_dict = model(batch)
+            # delete present batch-inputs (only keep results)
+            for key in input_keys:
+                if key in ["image_id", "question_id", "target"]:
+                    continue
+                else:
+                    del batch[key]
+            batch.update(results_dict)
+
+    try:
+        _forward(batch_dicts, model, device)
+    except RuntimeError as e:
+        if 'out of memory' in str(e):
+            print('| WARNING: ran out of memory, retrying batch')
+
+            import pdb
+            pdb.set_trace()
+
+            for p in model.parameters():
+                if p.grad is not None:
+                    del p.grad  # free some memory
+            torch.cuda.empty_cache()
+            _forward(batch_dicts, model, device)
+        else:
+            raise e
+
+    # # if not registry.squint_loss:
+    # for batch in batch_dicts:
+    #     # send to gpu
+    #     input_keys = list(batch.keys())
+    #     for key in input_keys:
+    #         if key in ["image_id", "question_id"]:
+    #             continue
+    #         if isinstance(batch[key], torch.Tensor):
+    #             batch[key] = batch[key].cuda(device=device, non_blocking=True)
+    #
+    #     results_dict = model(batch)
+    #
+    #     import pdb
+    #     pdb.set_trace()
+    #
+    #     # delete present batch-inputs (only keep results)
+    #     for key in input_keys:
+    #         if key in ["image_id", "question_id", "target"]:
+    #             continue
+    #         else:
+    #             del batch[key]
+    #
+    #     import pdb
+    #     pdb.set_trace()
+    #
+    #     batch.update(results_dict)
 
     if registry.alt_train:
         losses = []
@@ -272,6 +329,10 @@ def ForwardModelsTrain(
             loss, batch_score = task_losses[task_id](batch_dicts)
         else:
             loss, batch_score = add_ce_loss(batch_dicts, device)
+
+        # del results_dict
+        del batch_dicts
+
         return loss, float(batch_score), losses
 
     if task_cfg[task_id]["type"] == "ContrastiveProjection":
@@ -292,15 +353,17 @@ def ForwardModelsTrain(
         vl_loss, batch_score = add_ce_loss(batch_dicts, device)
         losses.append(loss)
         losses.append(vl_loss)
-        assert registry.scl_coeff > 0
+        assert registry.scl_coeff >= 0
         loss = loss*registry.scl_coeff + vl_loss
+    else:
+        losses.append(loss)
 
     if registry.squint_loss:
         from vilbert.losses import MSELoss
         squint_loss = MSELoss(batch_dicts)
         loss += squint_loss
 
-    del results_dict
+    # del results_dict
     del batch_dicts
 
     return loss, float(batch_score), losses

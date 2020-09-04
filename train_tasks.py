@@ -25,6 +25,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 
+from evaluator import final_evaluate
 from tools.registry import registry
 
 import vilbert.utils as utils
@@ -84,6 +85,9 @@ def assert_add_registry(task_cfg, args):
         ("base_temperature", 0.07),
         ("temperature", 0.5),   # old-defaults
         ("bt_eval_key", "val_aug"),
+        ("allowed_only", False),
+        ("two_norm", False),
+        ("freeze_textbert_and_mmt", False),
     ]
 
     for key in add_keys:
@@ -142,7 +146,7 @@ def get_parser():
     )
     parser.add_argument(
         "--num_train_epochs",
-        default=20,
+        default=5,
         type=int,
         help="Total number of training epochs to perform.",
     )
@@ -230,6 +234,11 @@ def get_parser():
         help="till which layer of textual stream of vilbert need to fixed.",
     )
     parser.add_argument(
+        "--hard_stop",
+        type=int,
+        required=True
+    )
+    parser.add_argument(
         "--vision_scratch",
         action="store_true",
         help="whether pre-trained the image or not.",
@@ -303,12 +312,13 @@ def main():
     print(json.dumps(vars(args), indent=2))
     print(json.dumps(vars(task_cfg["TASK19"]), indent=2))
     seed = task_cfg["TASK19"].get("seed", args.seed)
+
+    # Set deterministic mode on!
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    # torch.cuda.manual_seed(seed)
-    # torch.backends.cudnn.deterministic = True
-    # torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
     logger.info(f"Using seed: {seed}")
 
@@ -323,6 +333,8 @@ def main():
         get_optim_scheduler)
 
     model_type = task_cfg["TASK19"]["model_type"] if args.model_type is None else args.model_type
+
+    assert task_cfg["TASK19"]["features_h5path2"] != ""
 
     if args.baseline:
         from pytorch_transformers.modeling_bert import BertConfig
@@ -374,7 +386,7 @@ def main():
         device = torch.device(
             "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
         )
-        torch.backends.cudnn.benchmark = True
+        # torch.backends.cudnn.benchmark = True
         n_gpu = torch.cuda.device_count()
     else:
         torch.cuda.set_device(args.local_rank)
@@ -598,7 +610,14 @@ def main():
                 ][attr]
             else:
                 new_dict[attr] = checkpoint["model_state_dict"][attr]
-        model.load_state_dict(new_dict)
+
+        if registry.freeze_textbert_and_mmt:
+            model.load_state_dict(new_dict, strict=False)
+            trainable_params = [p.numel() for p in model.parameters() if p.requires_grad]
+            trainable_params = sum(trainable_params)
+            logger.info(f"Training Parameters: {trainable_params}")
+        else:
+            model.load_state_dict(new_dict)
 
         if task_cfg["TASK19"].get("load_state", False):
             print("Loading Optimizer and Scheduler States")
@@ -659,12 +678,20 @@ def main():
 
     # list of (iter, vqa_score, cs_score, cs_score_bt)
     best_checkpoints = [(-1, -1, -1, -1)]
+    cs_checkpoints = [(-1, -1, -1, -1)]
+    cs_bt_checkpoints = [(-1, -1, -1, -1)]
+
     ckpts_log_file = os.path.join(savePath, "ckpts.log")
 
     # TRAINING LOOP
     for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
         model.train()
         for step in tqdm(range(median_num_iter), desc="Iters"):
+
+            if global_step > args.hard_stop:
+                logger.info(f"Breaking w/ hard-stop at {args.hard_stop}")
+                break
+
             # logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}")
             start_time = time.time()
             iterId = startIterID + step + (epochId * median_num_iter)
@@ -860,6 +887,7 @@ def main():
 
                     del loss
                     del score
+                    del losses
 
             # gc.collect()
             finish_time = time.time()
@@ -887,7 +915,7 @@ def main():
 
                 if (iterId != 0 and iterId % eval_iter_factor == 0) or (
                         epochId == args.num_train_epochs - 1 and step == median_num_iter - 1
-                ):
+                ) or (global_step == args.hard_stop):
                     logger.info("Starting Validation Run....")
                     curr_val_score, curr_val_loss, cs_scores, cs_bt_scores = evaluate(
                         args,
@@ -956,7 +984,7 @@ def main():
 
                                 logger.info(f"Current Val Score and Rank: {curr_val_score} / {vqa_rank} | Previous Best Val Scores: {top_vqa_scores}")
                                 logger.info(f"Current CS Score and Rank: {curr_cs_score} / {cs_rank} | Previous Best CS Scores: {top_cs_scores}")
-                                logger.info(f"Current CS BT Score and Rank: {curr_cs_bt_score} / {cs_bt_rank} | Previous Best CS Scores: {top_cs_bt_scores}")
+                                logger.info(f"Current CS BT Score and Rank: {curr_cs_bt_score} / {cs_bt_rank} | Previous Best CS BT Scores: {top_cs_bt_scores}")
 
                                 logger.info(f"Top CS checkpoint: {sorted(best_checkpoints, key=lambda x: x[2])[-1]}")
                                 logger.info(f"Top CS BT checkpoint: {sorted(best_checkpoints, key=lambda x: x[3])[-1]}")
@@ -965,8 +993,10 @@ def main():
                                     {
                                         "vqa_rank": vqa_rank,
                                         "cs_rank": cs_rank,
+                                        "cs_bt_rank": cs_bt_rank,
                                         "vqa_acc": curr_val_score,
-                                        "cs_score": curr_cs_score
+                                        "cs_score": curr_cs_score,
+                                        "cs_bt_score": curr_cs_bt_score
                                     }
                                 )
 
@@ -986,9 +1016,17 @@ def main():
                                     torch.save(checkpoint_dict, output_checkpoint)
 
                                 best_checkpoints.append((global_step, curr_val_score, curr_cs_score, curr_cs_bt_score))
+                                cs_checkpoints.append(cs_scores)
+                                cs_bt_checkpoints.append(cs_bt_scores)
 
                                 with open(ckpts_log_file, "w") as outfile:
-                                    outfile.write("\n".join([str(s) for s in best_checkpoints]))
+                                    dump_str = ""
+                                    assert len(best_checkpoints) == len(cs_bt_checkpoints) == len(cs_checkpoints)
+                                    for ckpt, cs_ckpt, cs_bt_ckpt in zip(best_checkpoints,
+                                                                         cs_checkpoints,
+                                                                         cs_bt_checkpoints):
+                                        dump_str += f"Ckpt: {ckpt} | CS : {cs_ckpt}| CS-BT: {cs_bt_ckpt} \n"
+                                    outfile.write(dump_str)
                                 logger.info(f"Dumped File: {ckpts_log_file}")
                             except:
                                 import pdb
@@ -997,6 +1035,8 @@ def main():
             residue_time = time.time()
             # print(f"Finish time: {residue_time - finish_time}")
 
+        if global_step > args.hard_stop:
+            break
 
         if lr_scheduler_config == "automatic":
             lr_scheduler.step(sum(val_scores.values()))
@@ -1010,13 +1050,18 @@ def main():
         top_cs_ckpts = [(c[0], c[2]) for c in sorted(best_checkpoints, key=lambda x: x[2], reverse=True)[:registry.save_top]]
         print(f"Top CS checkpoints: {top_cs_ckpts}")
         print(f"Top VQA checkpoints: {top_vqa_ckpts}")
-        with open(ckpts_log_file, "w") as outfile:
-            outfile.write("\n".join([str(s) for s in best_checkpoints]))
-        logger.info(f"Dumped File: {ckpts_log_file}")
+        # with open(ckpts_log_file, "w") as outfile:
+        #     outfile.write("\n".join([str(s) for s in best_checkpoints]))
+        # logger.info(f"Dumped File: {ckpts_log_file}")
     else:
         print(f"Best Validation Score: {best_val_score} and Best Validation Epoch: {best_val_epoch}")
-
     tbLogger.txt_close()
+
+    # Run final-evaluation for EvalAI file.
+    for split in ["test", "val"]:
+        final_evaluate(
+            args, task_cfg, device, task_ids[0], model, task_losses, savePath, split
+        )
 
 
 def evaluate(
@@ -1059,6 +1104,8 @@ def evaluate(
             sys.stdout.flush()
 
     c_scores = None
+    c_scores_bt = None
+
     if registry.revqa_eval:
         for batch in tqdm(task_dataloader_val["revqa"], desc="Revqa Eval"):
             with torch.no_grad():  # turn off autograd engine
@@ -1085,8 +1132,9 @@ def evaluate(
     model.train()
 
     # return only a list of c_scores
-    c_scores_bt = [c_scores[key] if key in c_scores else -1 for key in ["1_bt", "2_bt", "3_bt","4_bt"]]
-    c_scores = [c_scores[str(key)] for key in [1,2,3,4]]
+    if c_scores is not None:
+        c_scores_bt = [c_scores[key] if key in c_scores else -1 for key in ["1_bt", "2_bt", "3_bt","4_bt"]]
+        c_scores = [c_scores[str(key)] for key in [1,2,3,4]]
 
     return score, loss, c_scores, c_scores_bt
 

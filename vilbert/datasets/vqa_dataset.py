@@ -53,7 +53,7 @@ def _create_entry(question, answer):
     return entry
 
 
-def filter_aug(questions_list, answers_list):
+def filter_aug(questions_list, answers_list, split=None):
     questions, answers = [], []
     max_samples = registry.aug_filter["max_re_per_sample"]
     sim_threshold = registry.aug_filter["sim_threshold"]
@@ -73,7 +73,11 @@ def filter_aug(questions_list, answers_list):
 
     for idx, (que_list, ans_list) in tqdm(enumerate(zip(questions_list, answers_list)), total=len(questions_list),
                                           desc="Filtering Data"):
+
         assert len(que_list) == len(ans_list)
+        if split is not None and "cc" in split and registry.allowed_only:
+            que_list, ans_list = zip(*[(q,a) for q,a in zip(que_list, ans_list) if q["allowed"]])
+
         # filter for sim-threshold
         if sim_threshold > 0:
             que_list, ans_list = zip(*[(q,a) for q,a in zip(que_list, ans_list) if q["sim_score"] > sim_threshold])
@@ -98,8 +102,13 @@ def filter_aug(questions_list, answers_list):
                 raise ValueError
 
         filtered_rephrasing_ids = [que["question_id"] for que in que_list]
+        min_qid = min(filtered_rephrasing_ids)
         for que in que_list:
             que["rephrasing_ids"] = sorted([x for x in filtered_rephrasing_ids if x != que["question_id"]])
+            if "rephrasing_of" not in que:
+                que["rephrasing_of"] = min_qid
+            else:
+                assert min_qid == que["rephrasing_of"]
 
         # add them to main list
         questions.extend(que_list)
@@ -281,7 +290,7 @@ def _load_dataset(dataroot, name, clean_datasets):
             answers_list = cPickle.load(open(answers_path, "rb"))
 
         # filter-mech
-        questions, answers = filter_aug(questions_list, answers_list)
+        questions, answers = filter_aug(questions_list, answers_list, name)
         assert len(questions) == len(answers)
 
         logger.info(f"Train Samples after filtering: {len(questions)}")
@@ -291,12 +300,14 @@ def _load_dataset(dataroot, name, clean_datasets):
         for question, answer in zip(questions, answers):
             assert answer["question_id"] == question["question_id"]
 
-    elif name in ["re_total", "re_total_bt"]:
+    elif name in ["re_total", "re_total_bt", "re_total_cc"]:
         paths_dict = {
             "re_train": ["data/re-vqa/data/revqa_train_proc.json", "datasets/VQA/cache/revqa_train_target.pkl", "train"],
             "re_val": ["data/re-vqa/data/revqa_val_proc.json", "datasets/VQA/cache/revqa_val_target.pkl", "val"],
             "val_aug": ["datasets/VQA/back-translate/org3_bt_v2_OpenEnded_mscoco_val2014_questions.pkl",
                         "datasets/VQA/back-translate/org2_bt_val_target.pkl", "val"],
+            "val_cc": ["datasets/VQA/cc-re/cc_v2_OpenEnded_mscoco_val2014_questions_88.pkl",
+                        "datasets/VQA/cc-re/cc_val_target_88.pkl", "val"],
             "val_aug_fil": [
                 "datasets/VQA/back-translate/bt_fil_dcp_sampling_{}_v2_OpenEnded_mscoco_train2014_questions.pkl"
                     .format(registry.aug_filter["sampling"]),
@@ -309,7 +320,7 @@ def _load_dataset(dataroot, name, clean_datasets):
 
         questions, answers = [], []
         for key, value in paths_dict.items():
-            if key in ["val_aug", "val_aug_fil"]:
+            if key in ["val_aug", "val_aug_fil", "val_cc"]:
                 continue
             _questions, _answers = json.load(open(value[0]))["questions"], cPickle.load(open(value[1], "rb"))
             questions.extend(_questions)
@@ -323,13 +334,13 @@ def _load_dataset(dataroot, name, clean_datasets):
             assert answer["question_id"] == question["question_id"]
 
         # replace human rephrasings questions w/ BT rephrasings
-        if registry.use_bt_re or name == "re_total_bt":
+        if registry.use_bt_re or name in ["re_total_bt", "re_total_cc"]:
             bt_eval_key = registry.bt_eval_key
             val_questions_path, val_answers_path, val_split = paths_dict[bt_eval_key][0], paths_dict[bt_eval_key][
                 1], paths_dict[bt_eval_key][-1]
             val_questions_list = cPickle.load(open(val_questions_path, "rb"))
             val_answers_list = cPickle.load(open(val_answers_path, "rb"))
-            val_questions, val_answers = filter_aug(val_questions_list, val_answers_list)
+            val_questions, val_answers = filter_aug(val_questions_list, val_answers_list, bt_eval_key)
 
             original_ids = (set(registry.question_rephrase_dict_re_total.values()))
 
@@ -904,7 +915,7 @@ class VQAClassificationDataset(Dataset):
                 and self.split not in ["minval", "re_total", "re_val", "test", "val"]:
             common_indices = torch.zeros_like(entry['q_token'])
             common_indices_pos = torch.zeros_like(entry['q_token'])
-            item_dict["common_inds"] = common_indices
+            # item_dict["common_inds"] = common_indices
 
             return_list = [item_dict]
             item_pos_dicts = [deepcopy(item_dict) for _ in range(registry.num_rep-1)]

@@ -197,6 +197,15 @@ class M4C(nn.Module):
         # build the models
         self.build()
 
+        if registry.freeze_textbert_and_mmt:
+            logger.info("Freezing TextBERT and MMT")
+            for name, param in self.named_parameters():
+                if "linear_classifier" in name:
+                    continue
+                else:
+                    param.requires_grad = False
+
+
     def build(self):
         # modules requiring custom learning rates (usually for finetuning)
         self.finetune_modules = []
@@ -208,6 +217,10 @@ class M4C(nn.Module):
         self._build_txt_encoding()
         self._build_mmt()
         self._build_output()
+        if registry.freeze_textbert_and_mmt:
+            logger.info("Building a linear classifier layer")
+            self.linear_classifier = LinearClassifier(3129, 3129)
+
 
     def _build_txt_encoding(self):
         # Todo: Just add a linear module to remove the TextBERT
@@ -429,14 +442,17 @@ class ContrastiveProjection(nn.Module):
         super().__init__()
         self.linear1 = nn.Linear(config.hidden_size, config.hidden_size)
         self.linear2 = nn.Linear(config.hidden_size, config.contrast_out_dim)
+        self.two_norm = registry.two_norm
+        logger.info(f"Two norm for projection is {self.two_norm}")
 
     def forward(self, batch_dict):
-        # (bs, feat_size)
-        # l2-normalization to unit-hypersphere
-        # Todo: SCL folks normalize embeddings right out of the CNN, I can normalize the image-features ?
-        batch_dict["contrastive_projection_norm"] = F.normalize(
-            self.linear2(F.relu(self.linear1(batch_dict["pooled_output"]))), dim=-1
-        )
+
+        if self.two_norm:
+            # use norm twice
+            pooled_norm = F.normalize(batch_dict["pooled_output"], dim=-1)
+            batch_dict["contrastive_projection_norm"] = F.normalize(self.linear2(F.relu(self.linear1(pooled_norm))), dim=-1)
+        else:
+            batch_dict["contrastive_projection_norm"] = F.normalize(self.linear2(F.relu(self.linear1(batch_dict["pooled_output"]))), dim=-1)
 
 
 class MMT_VQA(BertPreTrainedModel):
@@ -563,3 +579,12 @@ class SimpleClassifier(nn.Module):
 
     def forward(self, hidden_states):
         return self.logit_fc(hidden_states)
+
+
+class LinearClassifier(nn.Module):
+    def __init__(self, feat_dim, num_classes):
+        super().__init__()
+        self.fc = nn.Linear(feat_dim, num_classes)
+
+    def forward(self, features):
+        return self.fc(features)
