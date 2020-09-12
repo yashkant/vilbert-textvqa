@@ -251,6 +251,8 @@ def assert_add_registry(task_cfg, args):
         "val_workers",
         "train_workers",
         "num_epoch",
+        "val_split",
+        "train_split",
         ("revqa_eval", False),
         ("use_ce_loss", False),
         ("scl_coeff", -1),
@@ -279,9 +281,15 @@ def assert_add_registry(task_cfg, args):
         ("use_freq", "ce"),
         ("save_top", 3),
         ("use_bt_re", False),
+        ("use_no_re", False),
         ("revqa_eval_on_val", False),
         ("num_rep", 2),
-
+        ("base_temperature", 0.07),
+        ("temperature", 0.5),   # old-defaults
+        ("bt_eval_key", "val_aug"),
+        ("allowed_only", False),
+        ("two_norm", False),
+        ("freeze_textbert_and_mmt", False),
     ]
 
     for key in add_keys:
@@ -718,32 +726,32 @@ def evaluate(
                     }
 
     c_scores = None
-    if registry.revqa_eval:
-        cs_results = {}
-        for batch in tqdm(task_dataloader_val["revqa"], desc="Revqa Eval"):
-            with torch.no_grad():  # turn off autograd engine
-                batch_dict = ForwardModelsVal(
-                    args, task_cfg, device, task_id, batch, model, task_losses, revqa_eval=True
-                )
-
-                # build the json file here!
-                logits = torch.max(batch_dict["vil_prediction"], 1)[1].data  # argmax
-
-                for idx in range(logits.size(0)):
-                    cs_results[batch_dict["question_id"][idx].item()] = \
-                        {
-                            "question_id": batch_dict["question_id"][idx].item(),
-                            "answer": task_dataloader_val[task_id].dataset.label2ans[
-                                logits[idx].item()
-                            ],
-                            "vqa_score": np.round(batch_dict["vqa_scores"][idx], 1) if "vqa_scores" in batch_dict else None
-                        }
-        c_scores, revqa_bins_scores = get_consistency_score(results=cs_results, bins_scores=True)
-
-    elif registry.revqa_eval_on_val:
-        logger.info("Ran re-vqa eval on validation!")
-        c_scores, revqa_bins_scores = get_consistency_score(results=results, bins_scores=True)
-
+    revqa_bins_scores = None
+    # if registry.revqa_eval:
+    #     cs_results = {}
+    #     for batch in tqdm(task_dataloader_val["revqa"], desc="Revqa Eval"):
+    #         with torch.no_grad():  # turn off autograd engine
+    #             batch_dict = ForwardModelsVal(
+    #                 args, task_cfg, device, task_id, batch, model, task_losses, revqa_eval=True
+    #             )
+    #
+    #             # build the json file here!
+    #             logits = torch.max(batch_dict["vil_prediction"], 1)[1].data  # argmax
+    #
+    #             for idx in range(logits.size(0)):
+    #                 cs_results[batch_dict["question_id"][idx].item()] = \
+    #                     {
+    #                         "question_id": batch_dict["question_id"][idx].item(),
+    #                         "answer": task_dataloader_val[task_id].dataset.label2ans[
+    #                             logits[idx].item()
+    #                         ],
+    #                         "vqa_score": np.round(batch_dict["vqa_scores"][idx], 1) if "vqa_scores" in batch_dict else None
+    #                     }
+    #     c_scores, revqa_bins_scores = get_consistency_score(results=cs_results, bins_scores=True)
+    #
+    # elif registry.revqa_eval_on_val:
+    #     logger.info("Ran re-vqa eval on validation!")
+    #     c_scores, revqa_bins_scores = get_consistency_score(results=results, bins_scores=True)
 
     final_results = {}
     final_results["results"] = results
@@ -759,10 +767,10 @@ def evaluate(
 
     save_dir = os.path.split(args.resume_file)[0]
     evalai_path = f"{save_dir}/evalai_{task_cfg['TASK19']['val_split']}.json"
-    preds_path = f"{save_dir}/preds_revqa.json"
+    preds_path = f"{save_dir}/preds_revqa_{task_cfg['TASK19']['val_split']}.json"
 
-    if registry.use_bt_re:
-        preds_path = f"{save_dir}/preds_revqa_bt.json"
+    # if registry.use_bt_re:
+    #     preds_path = f"{save_dir}/preds_revqa_bt.json"
 
     json.dump(evalai_results, open(evalai_path, "w"))
     json.dump(final_results, open(preds_path, "w"))

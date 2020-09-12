@@ -67,7 +67,7 @@ TASK19:
   neg_type_weights: [0.25, 0.25, 0.5]
   neg_question_thresh: 210
   scl_mask_thresh: -1
-  scl_mask_rescale_factor: 1
+  scl_mask_rescale_factor: -1
   scl_random_sampler: false
   alt_train: true
   alt_re: false

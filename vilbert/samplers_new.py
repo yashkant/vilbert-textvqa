@@ -123,8 +123,12 @@ class NegativeSampler(Sampler):
             self.load_hard_negatives()
 
     def load_hard_negatives(self):
+        # import pdb
+        # pdb.set_trace()
         if "fil" in registry.train_split:
             negs_path = "datasets/VQA/back-translate/fil_dcp_sampling_{}_train_question_negs.pkl".format(registry.aug_filter["sampling"])
+        elif "cc_v2" in registry.train_split:
+            negs_path = "datasets/VQA/cc-re/cc_re_train_question_negs_v2.pkl"
         elif "cc" in registry.train_split:
             negs_path = "datasets/VQA/cc-re/cc_re_train_question_negs.pkl"
         else:

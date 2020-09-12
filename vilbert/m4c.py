@@ -300,6 +300,14 @@ class M4C(nn.Module):
         self._forward_mmt_and_text(batch_dict)
         self._forward_output(batch_dict)
 
+        if registry.freeze_textbert_and_mmt:
+            results_dict = {
+                "vil_prediction": batch_dict["lc_out"],
+                "contastive_projection_norm": None,
+                "attention_weights": None
+            }
+            return results_dict
+
         results_dict = {
             "vil_prediction": batch_dict["vil_prediction"],
             "contrastive_projection_norm": batch_dict["contrastive_projection_norm"]
@@ -329,6 +337,11 @@ class M4C(nn.Module):
             assert False
         batch_dict["vil_prediction"] = self.vil_prediction(batch_dict["pooled_output"])
         # batch_dict["vil_prediction_gqa"] = self.vil_prediction_gqa(batch_dict["pooled_output"])
+
+
+        if registry.freeze_textbert_and_mmt:
+            batch_dict["lc_out"] = self.linear_classifier(batch_dict["vil_prediction"])
+            return
 
         if (hasattr(self.mmt_config, "contrastive") and self.mmt_config.contrastive in ["simclr", "better"]):
             self.contrastive_projection(batch_dict)
@@ -374,6 +387,7 @@ class M4C(nn.Module):
                     no_wd.append(param)
                 else:
                     use_wd.append(param)
+
         # Add parameters with weight-decay
         optimizer_param_groups.append({
             "params": use_wd,
@@ -587,4 +601,4 @@ class LinearClassifier(nn.Module):
         self.fc = nn.Linear(feat_dim, num_classes)
 
     def forward(self, features):
-        return self.fc(features)
+        return self.fc(features.detach())

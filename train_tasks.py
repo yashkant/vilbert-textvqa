@@ -299,6 +299,8 @@ def get_parser():
         "--from_scratch", action="store_true", help="Initialize ViLBERT weights from scratch/ does it make"
                                                     "what about question encodings!?")
 
+    parser.add_argument("--no_eval_last", action="store_true")
+
     return parser
 
 
@@ -621,7 +623,7 @@ def main():
 
         if task_cfg["TASK19"].get("load_state", False):
             print("Loading Optimizer and Scheduler States")
-            warmup_scheduler.load_state_dict(checkpoint["warmup_scheduler_state_dict"])
+            warmup_scheduler.load_state_dict(checkpoint["warmup_scheduler_state_di  ct"])
             # lr_scheduler.load_state_dict(checkpoint['lr_scheduler_state_dict'])
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
             global_step = checkpoint["global_step"]
@@ -667,7 +669,7 @@ def main():
         logger.info("Resetting Train Epochs to 0")
         start_epoch = 0
 
-    # This val  idation score/loss is used for model-saving.
+    # This validation score/loss is used for model-saving.
     best_val_score = 0
     best_val_loss = np.inf
     best_val_epoch = 0
@@ -851,6 +853,9 @@ def main():
                             loss.backward()
 
                     else:
+                        # import pdb
+                        # pdb.set_trace()
+                        #
                         loss.backward()
 
                     back_time = time.time()
@@ -915,7 +920,7 @@ def main():
 
                 if (iterId != 0 and iterId % eval_iter_factor == 0) or (
                         epochId == args.num_train_epochs - 1 and step == median_num_iter - 1
-                ) or (global_step == args.hard_stop):
+                ) or (global_step == args.hard_stop and not args.no_eval_last):
                     logger.info("Starting Validation Run....")
                     curr_val_score, curr_val_loss, cs_scores, cs_bt_scores = evaluate(
                         args,
@@ -948,15 +953,40 @@ def main():
                                     "tb_logger": tbLogger
                             }
 
-                        if curr_val_score >= best_val_score and task_cfg["TASK19"].get("monitor_value",
-                                                                                       "val_score") == "val_score" and cs_scores is None:
-                            output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
-                            logger.info(f"Saving Checkpoint: {output_checkpoint}")
+                        if task_cfg["TASK19"].get("monitor_value","val_score") == "val_score" and cs_scores is None:
+                            save_thresh = registry.save_top
+                            top_vqa_scores = [ckpt[1] for ckpt in sorted(best_checkpoints, key=lambda x: x[1])][
+                                             -save_thresh:]
+                            vqa_rank = bisect.bisect(top_vqa_scores, curr_val_score)
+                            checkpoint_dict.update(
+                                {
+                                    "vqa_rank": vqa_rank,
+                                    "vqa_acc": curr_val_score,
+                                }
+                            )
+
+                            if vqa_rank != 0:
+                                logger.info(f"Saving for VQA score w/ rank: {vqa_rank}")
+                                output_checkpoint = os.path.join(savePath, f"vqa_rank_{vqa_rank}.tar")
+                                torch.save(checkpoint_dict, output_checkpoint)
+
                             logger.info(
-                                f"Current Validation Score: {curr_val_score} | Previous Best Validation Score: {best_val_score}")
+                                f"Current Val Score and Rank: {curr_val_score} / {vqa_rank} | Previous Best Val Scores: {top_vqa_scores}")
+
+                            best_checkpoints.append((global_step, curr_val_score, -1, -1))
+
+                            try:
+                                with open(ckpts_log_file, "w") as outfile:
+                                    dump_str = ""
+                                    for ckpt in best_checkpoints:
+                                        dump_str += f"Ckpt: {ckpt} \n"
+                                    outfile.write(dump_str)
+                                logger.info(f"Dumped File: {ckpts_log_file}")
+                            except:
+                                import pdb
+                                pdb.set_trace()
                             best_val_score = curr_val_score
                             best_val_epoch = epochId
-                            torch.save(checkpoint_dict, output_checkpoint)
 
                         elif curr_val_loss <= best_val_loss and task_cfg["TASK19"].get("monitor_value",
                                                                                        "val_loss") == "val_loss" and cs_scores is None:
@@ -1045,6 +1075,14 @@ def main():
             lr_scheduler.step()
     # Todo: Add config for final_evaluation splits [re-vqa, val, test]
 
+    tbLogger.txt_close()
+
+    # Run final-evaluation for EvalAI file.
+    for split in ["test", "val"]:
+        final_evaluate(
+            args, task_cfg, device, task_ids[0], model, task_losses, savePath, split
+        )
+
     if len(best_checkpoints) > 1:
         top_vqa_ckpts = [(c[0], c[1]) for c in sorted(best_checkpoints, key=lambda x: x[1], reverse=True)[:registry.save_top]]
         top_cs_ckpts = [(c[0], c[2]) for c in sorted(best_checkpoints, key=lambda x: x[2], reverse=True)[:registry.save_top]]
@@ -1055,13 +1093,6 @@ def main():
         # logger.info(f"Dumped File: {ckpts_log_file}")
     else:
         print(f"Best Validation Score: {best_val_score} and Best Validation Epoch: {best_val_epoch}")
-    tbLogger.txt_close()
-
-    # Run final-evaluation for EvalAI file.
-    for split in ["test", "val"]:
-        final_evaluate(
-            args, task_cfg, device, task_ids[0], model, task_losses, savePath, split
-        )
 
 
 def evaluate(

@@ -51,7 +51,7 @@ num_re = 4
 
 cc_rephrasings_path = [
     "/nethome/ykant3/pythia/results/noise-v2-fifth/results/pythia_cycle_consistent_with_failure_prediction/34035/gen_questions_train_88.npy",
-    "/nethome/ykant3/pythia/results/noise-v2-fifth/results/pythia_cycle_consistent_with_failure_prediction/34035/gen_questions_88_val_ds0.npy",
+    "/nethome/ykant3/pythia/results/noise-v2-fifth/results/pythia_cycle_consistent_with_failure_prediction/34035/gen_questions_88_val_ds.npy",
 
 ]
 
@@ -61,7 +61,6 @@ for path in cc_rephrasings_path:
     cc_qdata.update(
         np.load(path, allow_pickle=True).item()
     )
-
 
 # Dumping Paths
 que_split_path_dict = {
@@ -86,7 +85,7 @@ ans_split_path_dict = {
 num_splits = 4
 data_split = args.data_split
 
-for split in ["train", "val"]:
+for split in ["val"]:
 
     print(f"Processing {split}, data split: {data_split}/{num_splits}")
     dump_qdict = {}

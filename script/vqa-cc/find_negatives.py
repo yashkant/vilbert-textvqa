@@ -33,7 +33,7 @@ embed_path_dict = {
     "val": "../../datasets/VQA/cc-re/val_cc_embeddings_88_split_{}.npy",
 }
 
-save_path = "../../datasets/VQA/cc-re/trainval_question_negs_88.pkl"
+save_path = "../../datasets/VQA/cc-re/trainval_question_negs_88_v2.pkl"
 print("Save Path:", save_path)
 # dict of qid -> embedding vector
 data = {}

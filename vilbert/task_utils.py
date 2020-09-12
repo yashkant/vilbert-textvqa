@@ -336,7 +336,10 @@ def ForwardModelsTrain(
         return loss, float(batch_score), losses
 
     if task_cfg[task_id]["type"] == "ContrastiveProjection":
-        loss, batch_score = task_losses[task_id](batch_dicts)
+        if registry.freeze_textbert_and_mmt:
+            loss, batch_score = 0, 0
+        else:
+            loss, batch_score = task_losses[task_id](batch_dicts)
 
     if len(batch_dicts) == 1:
         batch_dicts = batch_dicts[0]

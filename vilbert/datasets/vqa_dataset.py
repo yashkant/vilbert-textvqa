@@ -253,13 +253,15 @@ def _load_dataset(dataroot, name, clean_datasets):
                 import pdb
                 pdb.set_trace()
 
-    elif name in ["train_aug", "val_aug", "trainval_aug", "train_aug_cc" ,"minval_aug", "train_aug_fil"]:
+    elif name in ["train_aug", "val_aug", "trainval_aug", "train_aug_cc", "train_aug_cc_v2" ,"minval_aug", "train_aug_fil"]:
 
         split_path_dict = {
             "train_aug": ["datasets/VQA/back-translate/org3_bt_v2_OpenEnded_mscoco_train2014_questions.pkl",
                          "datasets/VQA/back-translate/org2_bt_train_target.pkl", "train"],
             "train_aug_cc": ["datasets/VQA/cc-re/cc_v2_OpenEnded_mscoco_train2014_questions_88.pkl",
                          "datasets/VQA/cc-re/cc_train_target_88.pkl", "train"],
+            "train_aug_cc_v2": ["datasets/VQA/cc-re/cc_v2_OpenEnded_mscoco_train2014_questions_88_v2.pkl",
+                         "datasets/VQA/cc-re/cc_train_target_88_v2.pkl", "train"],
             "train_aug_fil": ["datasets/VQA/back-translate/bt_fil_dcp_sampling_{}_v2_OpenEnded_mscoco_train2014_questions.pkl",
                          "datasets/VQA/back-translate/bt_fil_dcp_sampling_{}_train_target.pkl", "train"],
             "val_aug": ["datasets/VQA/back-translate/org3_bt_v2_OpenEnded_mscoco_val2014_questions.pkl",
@@ -308,6 +310,8 @@ def _load_dataset(dataroot, name, clean_datasets):
                         "datasets/VQA/back-translate/org2_bt_val_target.pkl", "val"],
             "val_cc": ["datasets/VQA/cc-re/cc_v2_OpenEnded_mscoco_val2014_questions_88.pkl",
                         "datasets/VQA/cc-re/cc_val_target_88.pkl", "val"],
+            "val_cc_v2": ["datasets/VQA/cc-re/cc_v2_OpenEnded_mscoco_val2014_questions_88_v2.pkl",
+                        "datasets/VQA/cc-re/cc_val_target_88_v2.pkl", "val"],
             "val_aug_fil": [
                 "datasets/VQA/back-translate/bt_fil_dcp_sampling_{}_v2_OpenEnded_mscoco_train2014_questions.pkl"
                     .format(registry.aug_filter["sampling"]),
@@ -315,12 +319,11 @@ def _load_dataset(dataroot, name, clean_datasets):
                     .format(registry.aug_filter["sampling"]),
                 "val"
             ],
-
         }
 
         questions, answers = [], []
         for key, value in paths_dict.items():
-            if key in ["val_aug", "val_aug_fil", "val_cc"]:
+            if key not in ["re_train", "re_val"]:
                 continue
             _questions, _answers = json.load(open(value[0]))["questions"], cPickle.load(open(value[1], "rb"))
             questions.extend(_questions)
@@ -334,10 +337,11 @@ def _load_dataset(dataroot, name, clean_datasets):
             assert answer["question_id"] == question["question_id"]
 
         # replace human rephrasings questions w/ BT rephrasings
-        if registry.use_bt_re or name in ["re_total_bt", "re_total_cc"]:
+        if registry.use_bt_re or name in ["re_total_bt", "re_total_cc", "re_total_cc_v2"]:
             bt_eval_key = registry.bt_eval_key
             val_questions_path, val_answers_path, val_split = paths_dict[bt_eval_key][0], paths_dict[bt_eval_key][
                 1], paths_dict[bt_eval_key][-1]
+            logger.info(f"Using \n question path: {val_questions_path} \n answers path: {val_answers_path}")
             val_questions_list = cPickle.load(open(val_questions_path, "rb"))
             val_answers_list = cPickle.load(open(val_answers_path, "rb"))
             val_questions, val_answers = filter_aug(val_questions_list, val_answers_list, bt_eval_key)
