@@ -3,13 +3,11 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-import os
-import json
 import _pickle as cPickle
+import json
 import logging
-import time
+import os
 from copy import deepcopy
-from itertools import cycle
 
 import numpy as np
 import torch
@@ -17,9 +15,8 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 
 from tools.registry import registry
-from ._image_features_reader import ImageFeaturesH5Reader
-from ..spatial_utils_regat import build_graph_using_normalized_boxes, random_spatial_processor, \
-    torch_broadcast_adj_matrix
+# from ..spatial_utils_regat import build_graph_using_normalized_boxes, random_spatial_processor, \
+#     torch_broadcast_adj_matrix
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
@@ -486,8 +483,8 @@ class VQAClassificationDataset(Dataset):
         image_features_reader,
         gt_image_features_reader,
         tokenizer,
-        bert_model,
-        clean_datasets,
+        bert_model="bert-base-uncased",
+        clean_datasets=False,
         padding_index=0,
         max_seq_length=16,
         max_region_num=101,

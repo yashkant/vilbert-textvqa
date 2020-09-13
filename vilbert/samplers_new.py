@@ -65,16 +65,14 @@ class NegativeSampler(Sampler):
 
     def __init__(self,
                  data_source,
-                 batch_size,
                  task_cfg,
-                 args,
                  replacement=False,
                  num_samples=None,
                  split="train"):
         self.data_source = data_source
         self.replacement = replacement
         self.num_samples = num_samples
-        self.batch_size = batch_size
+        self.batch_size = task_cfg["batch_size"]
 
         if "trainval" in split:
             self.split = "trainval"
@@ -86,7 +84,7 @@ class NegativeSampler(Sampler):
 
         self.arg_split = split
 
-        self.task_cfg = task_cfg["TASK19"]
+        self.task_cfg = task_cfg
         self.epoch_idx = int(1e10)
         self.epochs = []
         self.num_positives = self.task_cfg.get("num_positives", -1)

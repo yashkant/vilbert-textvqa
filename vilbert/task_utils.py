@@ -1,120 +1,75 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
-
-# This source code is licensed under the MIT license found in the
-# LICENSE file in the root directory of this source tree.
-from bisect import bisect
-from collections import defaultdict
-from io import open
-import json
-import os
-import sys
-from itertools import combinations
+import logging
 import time
+from bisect import bisect
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 import torch.nn as nn
-import torch.distributed as dist
-from torch.optim import Adam
-from torch.utils.data import DataLoader, Dataset, ConcatDataset
-
-from vilbert.samplers import RandomSampler, NegativeSampler
-from torch.utils.data.distributed import DistributedSampler
-from pytorch_transformers.tokenization_bert import BertTokenizer
-from pytorch_transformers.tokenization_roberta import RobertaTokenizer
-from vilbert.datasets import DatasetMapTrain, DatasetMapEval
-from vilbert.datasets._image_features_reader import ImageFeaturesH5Reader
-import pdb
-from vilbert.batch_utils import build_scl_mask
-from torch.optim.lr_scheduler import (
-    LambdaLR,
-    ReduceLROnPlateau,
-    CosineAnnealingLR,
-    CosineAnnealingWarmRestarts,
-)
 from pytorch_transformers.optimization import (
-    AdamW,
     WarmupConstantSchedule,
     WarmupLinearSchedule,
 )
+from pytorch_transformers.tokenization_bert import BertTokenizer
+from torch.optim import Adam
+from torch.optim.lr_scheduler import (
+    LambdaLR,
+)
+from torch.utils.data import DataLoader
 
-from vilbert.losses import NTXentLoss, SCLLoss, SupConLoss
-from vilbert.optimization import RAdam
 from tools.registry import registry
-from vilbert.utils import debug_sampler
+from vilbert.datasets import DatasetMapTrain, VQAClassificationDataset
+from vilbert.datasets._image_features_reader import ImageFeaturesH5Reader
+from vilbert.losses import SupConLoss
 
-import logging
 logger = logging.getLogger(__name__)
 
 LossMap = {
     "BCEWithLogitLoss": nn.BCEWithLogitsLoss(reduction="mean"),
     "CrossEntropyLoss": nn.CrossEntropyLoss(),
-    # "NTXentLoss": NTXentLoss(registry.batch_size),
     "SCLLoss": SupConLoss(temperature=registry.temperature,
                           formulation=registry.scl_formulation,
                           base_temperature=registry.base_temperature), # using the default parameter setting
 }
 
-def clip_gradients(model, max_grad_l2_norm, clip_norm_mode):
-    # TODO: Fix question model retrieval
-    # Todo: Add tensorboard logger
 
+def clip_gradients(model, max_grad_l2_norm, clip_norm_mode):
     if max_grad_l2_norm is not None:
         if clip_norm_mode == "all":
             norm = nn.utils.clip_grad_norm_(model.parameters(), max_grad_l2_norm)
-            # import pdb
-            # pdb.set_trace()
-            # print("Grad norm:", norm)
-            # writer.add_scalars({"grad_norm": norm}, i_iter)
-
         elif clip_norm_mode == "question":
             question_embedding = model.module.question_embedding_module
             norm = nn.utils.clip_grad_norm(
                 question_embedding.parameters(), max_grad_l2_norm
             )
-
-            # writer.add_scalars({"question_grad_norm": norm}, i_iter)
         else:
-            raise NotImplementedError(
-                "Clip norm mode %s not implemented" % clip_norm_mode
-            )
+            raise NotImplementedError("Clip norm mode %s not implemented" % clip_norm_mode)
 
 
-def get_optim_scheduler(args,
-                        config,
+def get_optim_scheduler(config,
                         optimizer_grouped_parameters,
                         num_train_optimization_steps,
                         base_lr,
-                        median_num_iter,
                         no_warmup=False
                         ):
-    optim_config = config["TASK19"]["optim"] if args.optim is None else args.optim
-    scheduler_config = config["TASK19"]["lr_scheduler"] if args.lr_scheduler is None else args.lr_scheduler
-    # moved to model-file
-    # weight_decay = config["TASK19"].get("weight_decay", 0.0)
+    optim_config = config["optim"]
+    scheduler_config = config["lr_scheduler"]
 
-    if optim_config == "AdamW":
-        optimizer = AdamW(optimizer_grouped_parameters, lr=base_lr, correct_bias=False)
-    elif optim_config == "RAdam":
-        optimizer = RAdam(optimizer_grouped_parameters, lr=base_lr)
-    elif optim_config == "Adam":
+    if optim_config == "Adam":
         optimizer = Adam(optimizer_grouped_parameters, lr=base_lr)
     else:
         raise ValueError
 
-    warmpu_steps = args.warmup_proportion * num_train_optimization_steps
-    lr_reduce_list = np.array(config["TASK19"].get("lr_decay_steps", [-1]))
+    warmpu_steps = config["warmup_proportion"] * num_train_optimization_steps
 
     if not no_warmup:
         if scheduler_config == "warmup_linear":
             warmup_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=warmpu_steps,
                                                     t_total=num_train_optimization_steps)
         elif scheduler_config == "pythia_warmup_decay":
-            warmup_iters = config["TASK19"].get("warmup_iters", 1000)
-            lr_decay_iters = config["TASK19"].get("lr_decay_iters", [14000, 19000])
-            warmup_factor = config["TASK19"].get("warmup_factor", 0.1)
-            # total_iters = int(np.ceil(34602/config["TASK19"]["batch_size"])*num_train_optimization_steps)
+            warmup_iters = config.get("warmup_iters", 1000)
+            lr_decay_iters = config.get("lr_decay_iters", [14000, 19000])
+            warmup_factor = config.get("warmup_factor", 0.1)
+            # total_iters = int(np.ceil(34602/config["batch_size"])*num_train_optimization_steps)
 
             def pythia_lr_update(_iter):
                 if _iter <= warmup_iters:
@@ -122,7 +77,7 @@ def get_optim_scheduler(args,
                     return warmup_factor * (1.0 - alpha) + alpha
                 else:
                     idx = bisect(lr_decay_iters, _iter)
-                    return pow(config["TASK19"].get("lr_decay", 0.2), idx)
+                    return pow(config.get("lr_decay", 0.2), idx)
 
             warmup_scheduler = LambdaLR(optimizer, lr_lambda=pythia_lr_update)
             warmpu_steps = -1
@@ -133,29 +88,7 @@ def get_optim_scheduler(args,
         warmup_scheduler = None
         logger.info(f"Not using Warmup Scheduler")
 
-    if scheduler_config == "automatic":
-        lr_scheduler = ReduceLROnPlateau(
-            optimizer, mode="max", factor=0.2, patience=1, cooldown=1, threshold=0.001
-        )
-    elif scheduler_config == "cosine":
-        lr_scheduler = CosineAnnealingLR(
-            optimizer, T_max=median_num_iter * args.num_train_epochs
-        )
-    elif scheduler_config == "cosine_warm":
-        lr_scheduler = CosineAnnealingWarmRestarts(
-            optimizer, T_0=median_num_iter * args.num_train_epochs
-        )
-    elif scheduler_config == "mannul":
-        def lr_lambda_fun(epoch):
-            return pow(config["TASK19"].get("lr_decay", 0.2), np.sum(lr_reduce_list <= epoch))
-
-        lr_scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda_fun)
-    else:
-        logger.info(f"Didn't recognize lr_scheduler: {scheduler_config}")
-        lr_scheduler = None
-
-    logger.info(f"LR Scheduler: {str(lr_scheduler)}")
-    return optimizer, warmup_scheduler, lr_scheduler, scheduler_config, warmpu_steps
+    return optimizer, warmup_scheduler, None, scheduler_config, warmpu_steps
 
 def to_device(batch_dict, device):
 
@@ -186,22 +119,7 @@ def ForwardModelsVal(args,
 
     if not isinstance(batch_dict, tuple) and not isinstance(batch_dict, list):
         batch_dict = [batch_dict]
-    # else:
-    #     build_scl_mask(batch_dict)
 
-    # Sanity check negatives w/ negative sampler
-    # if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"] and not task_cfg["TASK19"]["debug"]\
-    #         and task_cfg["TASK19"].get("val_neg_sampler", True):
-    #     for batch in batch_dict:
-    #         rephrasing_of = []
-    #         # iterate over question-ids
-    #         for question_id in batch["question_id"].tolist():
-    #             try:
-    #                 assert registry.question_rephrase_dict_val[question_id] not in rephrasing_of
-    #                 rephrasing_of.append(registry.question_rephrase_dict_val[question_id])
-    #             except:
-    #                 import pdb
-    #                 pdb.set_trace()
 
     # send to device
     to_device(batch_dict, device)
@@ -228,105 +146,50 @@ def ForwardModelsVal(args,
 
 
 def ForwardModelsTrain(
-    args,
     task_cfg,
     device,
-    task_id,
-    task_count,
-    task_iter_train,
-    task_dataloader_train,
+    dataloaders,
     model,
-    task_losses,
     train_type="scl"
 ):
-    start_time = time.time()
-
     if train_type == "ce" and registry.alt_train:
-        dataloader = task_dataloader_train[task_id + "alt"]
-        if task_count[task_id + "alt"] % len(dataloader) == 0:
-            task_iter_train[task_id + "alt"] = iter(dataloader)
-        task_count[task_id + "alt"] += 1
-        batch_dicts = task_iter_train[task_id + "alt"].next()
+        batch_dicts = next(dataloaders["train_alt_iter"], None)
+        if batch_dicts is None:
+            dataloaders["train_alt_iter"] = iter(dataloaders["train_alt"])
+            batch_dicts = next(dataloaders["train_alt_iter"], None)
+            assert batch_dicts is not None
         if not registry.alt_re:
             batch_dicts = batch_dicts[:1]
     else:
-        dataloader = task_dataloader_train[task_id]
-        if task_count[task_id] % len(dataloader) == 0:
-            task_iter_train[task_id] = iter(dataloader)
-        task_count[task_id] += 1
-        batch_dicts = task_iter_train[task_id].next()
+        batch_dicts = next(dataloaders["train_iter"], None)
+        if batch_dicts is None:
+            dataloaders["train_iter"] = iter(dataloaders["train"])
+            batch_dicts = next(dataloaders["train_iter"], None)
+            assert batch_dicts is not None
 
-    if not isinstance(batch_dicts, tuple) and not isinstance(batch_dicts, list):
-        batch_dicts = [batch_dicts]
+    for batch in batch_dicts:
+        # send to gpu
+        input_keys = list(batch.keys())
+        for key in input_keys:
+            if key in ["image_id", "question_id"]:
+                continue
+            if isinstance(batch[key], torch.Tensor):
+                batch[key] = batch[key].cuda(device=device, non_blocking=True)
 
-    def _forward(batch_dicts, model, device):
-        for batch in batch_dicts:
-            # send to gpu
-            input_keys = list(batch.keys())
-            for key in input_keys:
-                if key in ["image_id", "question_id"]:
-                    continue
-                if isinstance(batch[key], torch.Tensor):
-                    batch[key] = batch[key].cuda(device=device, non_blocking=True)
-
-            results_dict = model(batch)
-            # delete present batch-inputs (only keep results)
-            for key in input_keys:
-                if key in ["image_id", "question_id", "target"]:
-                    continue
-                else:
-                    del batch[key]
-            batch.update(results_dict)
-
-    try:
-        _forward(batch_dicts, model, device)
-    except RuntimeError as e:
-        if 'out of memory' in str(e):
-            print('| WARNING: ran out of memory, retrying batch')
-
-            import pdb
-            pdb.set_trace()
-
-            for p in model.parameters():
-                if p.grad is not None:
-                    del p.grad  # free some memory
-            torch.cuda.empty_cache()
-            _forward(batch_dicts, model, device)
-        else:
-            raise e
-
-    # # if not registry.squint_loss:
-    # for batch in batch_dicts:
-    #     # send to gpu
-    #     input_keys = list(batch.keys())
-    #     for key in input_keys:
-    #         if key in ["image_id", "question_id"]:
-    #             continue
-    #         if isinstance(batch[key], torch.Tensor):
-    #             batch[key] = batch[key].cuda(device=device, non_blocking=True)
-    #
-    #     results_dict = model(batch)
-    #
-    #     import pdb
-    #     pdb.set_trace()
-    #
-    #     # delete present batch-inputs (only keep results)
-    #     for key in input_keys:
-    #         if key in ["image_id", "question_id", "target"]:
-    #             continue
-    #         else:
-    #             del batch[key]
-    #
-    #     import pdb
-    #     pdb.set_trace()
-    #
-    #     batch.update(results_dict)
+        results_dict = model(batch)
+        # delete present batch-inputs (only keep results)
+        for key in input_keys:
+            if key in ["image_id", "question_id", "target"]:
+                continue
+            else:
+                del batch[key]
+        batch.update(results_dict)
 
     if registry.alt_train:
         losses = []
         # use scl only
         if train_type == "scl":
-            loss, batch_score = task_losses[task_id](batch_dicts)
+            loss, batch_score = LossMap["SCLLoss"](batch_dicts)
         else:
             loss, batch_score = add_ce_loss(batch_dicts, device)
 
@@ -339,7 +202,7 @@ def ForwardModelsTrain(
         if registry.freeze_textbert_and_mmt:
             loss, batch_score = 0, 0
         else:
-            loss, batch_score = task_losses[task_id](batch_dicts)
+            loss, batch_score = LossMap["SCLLoss"](batch_dicts)
 
     if len(batch_dicts) == 1:
         batch_dicts = batch_dicts[0]
@@ -412,7 +275,7 @@ def add_ce_loss(batch_dict, device, val_run=False, revqa_eval=False, split="re_t
 
     return vl_loss, batch_score
 
-def LoadLosses(args, task_cfg, task_ids):
+def LoadLosses(task_cfg, task_ids):
 
     losses = {}
     task_types = []
@@ -427,266 +290,67 @@ def LoadLosses(args, task_cfg, task_ids):
 
 
 def LoadDatasets(args, task_cfg, ids, split="trainval"):
-
-    if registry.sampler_type is not None and registry.sampler_type == "linear":
-        logger.info("Using pseudo-linear new sampler")
-        from vilbert.samplers_lin import RandomSampler, NegativeSampler
-    elif registry.sampler_type is not None and registry.sampler_type == "old":
-        logger.info("Using old sampler")
-        from vilbert.old_samplers import RandomSampler, NegativeSampler
-    elif registry.sampler_type is not None and registry.sampler_type == "new":
-        logger.info("Using new sampler")
-        from vilbert.samplers_new import RandomSampler, NegativeSampler
-    else:
-        from vilbert.samplers_new import RandomSampler
-
-
-
-    if "roberta" in args.bert_model:
-        tokenizer = RobertaTokenizer.from_pretrained(
-            args.bert_model, do_lower_case=args.do_lower_case
-        )
-    else:
-        tokenizer = BertTokenizer.from_pretrained(
-            args.bert_model, do_lower_case=args.do_lower_case
-        )
+    from vilbert.samplers_new import RandomSampler, NegativeSampler
+    tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
 
     task_feature_reader1 = {}
     task_feature_reader2 = {}
-    for i, task_id in enumerate(ids):
-        task = "TASK" + task_id
-        if task_cfg[task]["features_h5path1"] not in task_feature_reader1:
-            task_feature_reader1[task_cfg[task]["features_h5path1"]] = None
-        if task_cfg[task]["features_h5path2"] not in task_feature_reader2:
-            task_feature_reader2[task_cfg[task]["features_h5path2"]] = None
+    task_feature_reader1[task_cfg["features_h5path1"]] = ImageFeaturesH5Reader(task_cfg["features_h5path1"])
+    task_feature_reader2[task_cfg["features_h5path2"]] = ImageFeaturesH5Reader(task_cfg["features_h5path2"])
 
-    # initilzie the feature reader
-    for features_h5path in task_feature_reader1.keys():
-        if features_h5path != "":
-            task_feature_reader1[features_h5path] = ImageFeaturesH5Reader(
-                features_h5path, args.in_memory
-            )
-    for features_h5path in task_feature_reader2.keys():
-        if features_h5path != "":
-            task_feature_reader2[features_h5path] = ImageFeaturesH5Reader(
-                features_h5path, args.in_memory
-            )
+    dataloaders = {}
+    splits = [
+        ("train", "train", [("random", "_alt"), ("negative", "")]),
+        # ("val", "val", [("none", "")]),
+        # ("val", "revqa", [("none", "")]),
+        # ("val", "revqa_bt", [("none", "")])
+    ]
 
-    task_datasets_train = {}
-    task_datasets_val = {}
-    task_dataloader_train = {}
-    task_dataloader_val = {}
-    task_ids = []
-    task_batch_size = {}
-    task_num_iters = {}
+    for split, key, samplers in splits:
+        dataset = VQAClassificationDataset(
+                    task=task_cfg["name"],
+                    dataroot=task_cfg["dataroot"],
+                    annotations_jsonpath=task_cfg[f"{split}_annotations_jsonpath"],
+                    split=task_cfg[f"{split}_split"],
+                    image_features_reader=task_feature_reader1[
+                        task_cfg["features_h5path1"]
+                    ],
+                    gt_image_features_reader=task_feature_reader2[
+                        task_cfg["features_h5path2"]
+                    ],
+                    tokenizer=tokenizer,
+                    padding_index=0,
+                    max_seq_length=task_cfg["max_seq_length"],
+                    max_region_num=task_cfg["max_region_num"],
+                    extra_args=task_cfg
+                )
 
-    for i, task_id in enumerate(ids):
-        task = "TASK" + task_id
-        task_name = task_cfg[task]["name"]
-        task_ids.append(task)
-        batch_size = task_cfg[task]["batch_size"] // args.gradient_accumulation_steps
-
-        assert args.local_rank == -1
-        # if args.local_rank != -1:
-        #     batch_size = int(batch_size / dist.get_world_size())
-        #     num_workers = int(num_workers / dist.get_world_size())
-
-        logger.info(
-            "Loading %s Dataset with batch size %d"
-            % (task_cfg[task]["name"], batch_size)
-        )
-
-        task_datasets_train[task] = None
-        if "train" in split:
-            task_datasets_train[task] = DatasetMapTrain[task_name](
-                task=task_cfg[task]["name"],
-                dataroot=task_cfg[task]["dataroot"],
-                annotations_jsonpath=task_cfg[task]["train_annotations_jsonpath"],
-                split=task_cfg[task]["train_split"],
-                image_features_reader=task_feature_reader1[
-                    task_cfg[task]["features_h5path1"]
-                ],
-                gt_image_features_reader=task_feature_reader2[
-                    task_cfg[task]["features_h5path2"]
-                ],
-                tokenizer=tokenizer,
-                bert_model=args.bert_model,
-                clean_datasets=args.clean_train_sets,
-                padding_index=0,
-                max_seq_length=task_cfg[task]["max_seq_length"],
-                max_region_num=task_cfg[task]["max_region_num"],
-                extra_args=task_cfg["TASK19"]
-            )
-
-        task_datasets_val[task] = None
-        if "val" in split:
-
-            features_reader = task_feature_reader1[task_cfg[task]["features_h5path1"]]
-            if task_cfg[task]["val_split"] == "test":
-                features_reader = task_feature_reader2[task_cfg[task]["features_h5path2"]]
-
-            task_datasets_val[task] = DatasetMapTrain[task_name](
-                task=task_cfg[task]["name"],
-                dataroot=task_cfg[task]["dataroot"],
-                annotations_jsonpath=task_cfg[task]["val_annotations_jsonpath"],
-                split=task_cfg[task]["val_split"],
-                image_features_reader=features_reader,
-                gt_image_features_reader=task_feature_reader2[
-                    task_cfg[task]["features_h5path2"]
-                ],
-                tokenizer=tokenizer,
-                bert_model=args.bert_model,
-                clean_datasets=args.clean_train_sets,
-                padding_index=0,
-                max_seq_length=task_cfg[task]["max_seq_length"],
-                max_region_num=task_cfg[task]["max_region_num"],
-                extra_args=task_cfg["TASK19"]
-            )
-
-        task_num_iters[task] = 0
-        task_batch_size[task] = 0
-        if "train" in split:
-            if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"] \
-                    and not registry.scl_random_sampler:
-                logger.info("Using Negative Train Sampler")
-                train_sampler = NegativeSampler(
-                    task_datasets_train[task],
-                    batch_size,
+        for sampler_name, tag in samplers:
+            sampler = None
+            if sampler_name == "random":
+                sampler = RandomSampler(dataset)
+            elif sampler_name == "negative":
+                sampler = NegativeSampler(
+                    dataset,
                     task_cfg,
-                    args,
-                    split=task_cfg[task]["train_split"]
-                )
-            elif args.local_rank == -1:
-                logger.info("Using Random Train Sampler")
-                train_sampler = RandomSampler(task_datasets_train[task])
-            else:
-                # TODO: check if this works with current data generator from disk that relies on next(file)
-                # (it doesn't return item back by index)
-                train_sampler = DistributedSampler(task_datasets_train[task])
-
-            task_dataloader_train[task] = DataLoader(
-                task_datasets_train[task],
-                sampler=train_sampler,
-                batch_size=batch_size,
-                num_workers=registry.train_workers,
-                pin_memory=True,
-                drop_last=True
-            )
-
-            if registry.alt_train:
-                alt_sampler = RandomSampler(task_datasets_train[task])
-                task_dataloader_train[task + "alt"] = DataLoader(
-                    task_datasets_train[task],
-                    sampler=alt_sampler,
-                    batch_size=batch_size * registry.num_rep,
-                    num_workers=registry.train_workers,
-                    pin_memory=True,
-                    drop_last=True
+                    split=split
                 )
 
-            task_num_iters[task] = len(task_dataloader_train[task])
-            task_batch_size[task] = batch_size
-
-        if "val" in split:
-            if task_cfg["TASK19"].get("contrastive", None) in ["simclr", "better"] and task_cfg["TASK19"].get("val_neg_sampler", True):
-                logger.info("Using Negative Validation Sampler")
-                val_sampler = NegativeSampler(
-                    task_datasets_val[task],
-                    batch_size,
-                    task_cfg,
-                    args,
-                    split=task_cfg[task]["val_split"]
-                )
-            else:
-                logger.info("Using Simple Validation Sampler")
-                val_sampler=None
-
-            task_dataloader_val[task] = DataLoader(
-                task_datasets_val[task],
-                shuffle=False,
-                sampler=val_sampler,
-                batch_size=registry.val_batch_size,
-                num_workers=registry.val_workers,
+            dataloaders[f"{key}" + tag] = DataLoader(
+                dataset,
+                sampler=sampler,
+                batch_size=task_cfg["batch_size"],
+                num_workers=registry.workers,
                 pin_memory=True,
-                drop_last=registry.val_drop_last
+                drop_last=True if split == "train" else False
             )
 
-        # load the ReVQA val-split!
-        if registry.revqa_eval:
-            logger.info("Loding ReVQA Dataset!")
-            task_datasets_val["revqa"] = DatasetMapTrain[task_name](
-                task=task_cfg[task]["name"],
-                dataroot=task_cfg[task]["dataroot"],
-                annotations_jsonpath=task_cfg[task]["val_annotations_jsonpath"],
-                split="re_total",
-                image_features_reader=task_feature_reader1[
-                    task_cfg[task]["features_h5path1"]
-                ],
-                gt_image_features_reader=task_feature_reader2[
-                    task_cfg[task]["features_h5path2"]
-                ],
-                tokenizer=tokenizer,
-                bert_model=args.bert_model,
-                clean_datasets=args.clean_train_sets,
-                padding_index=0,
-                max_seq_length=task_cfg[task]["max_seq_length"],
-                max_region_num=task_cfg[task]["max_region_num"],
-                extra_args=task_cfg["TASK19"]
-            )
+    # add iterators
+    keys = list(dataloaders.keys())
+    for key in keys:
+        dataloaders[f"{key}_iter"] = iter(dataloaders[key])
 
-            task_dataloader_val["revqa"] = DataLoader(
-                task_datasets_val["revqa"],
-                shuffle=False,
-                sampler=None,
-                batch_size=registry.val_batch_size,
-                num_workers=registry.val_workers,
-                pin_memory=True,
-                drop_last=False
-            )
-
-            logger.info("Loding ReVQA BT Dataset!")
-            task_datasets_val["revqa_bt"] = DatasetMapTrain[task_name](
-                task=task_cfg[task]["name"],
-                dataroot=task_cfg[task]["dataroot"],
-                annotations_jsonpath=task_cfg[task]["val_annotations_jsonpath"],
-                split="re_total_bt",
-                image_features_reader=task_feature_reader1[
-                    task_cfg[task]["features_h5path1"]
-                ],
-                gt_image_features_reader=task_feature_reader2[
-                    task_cfg[task]["features_h5path2"]
-                ],
-                tokenizer=tokenizer,
-                bert_model=args.bert_model,
-                clean_datasets=args.clean_train_sets,
-                padding_index=0,
-                max_seq_length=task_cfg[task]["max_seq_length"],
-                max_region_num=task_cfg[task]["max_region_num"],
-                extra_args=task_cfg["TASK19"]
-            )
-
-            task_dataloader_val["revqa_bt"] = DataLoader(
-                task_datasets_val["revqa_bt"],
-                shuffle=False,
-                sampler=None,
-                batch_size=registry.val_batch_size,
-                num_workers=registry.val_workers,
-                pin_memory=True,
-                drop_last=False
-            )
-
-    # debug_sampler(train_sampler)
-    # debug_sampler(val_sampler)
-
-    return (
-        task_batch_size,
-        task_num_iters,
-        task_ids,
-        task_datasets_train,
-        task_datasets_val,
-        task_dataloader_train,
-        task_dataloader_val,
-    )
+    return dataloaders
 
 
 def compute_score_with_logits(logits, labels, device):
