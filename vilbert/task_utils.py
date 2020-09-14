@@ -356,8 +356,8 @@ def ForwardModelsTrain(
         vl_loss, batch_score = add_ce_loss(batch_dicts, device)
         losses.append(loss)
         losses.append(vl_loss)
-        assert registry.scl_coeff >= 0
-        loss = loss*registry.scl_coeff + vl_loss
+        assert 1 > registry.scl_coeff >= 0
+        loss = loss * registry.scl_coeff + vl_loss * (1 - registry.scl_coeff)
     else:
         losses.append(loss)
 
