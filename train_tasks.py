@@ -158,75 +158,19 @@ def main():
             print("\n", file=f)
             print(task_cfg, file=f)
 
-    # LOAD DATASETS
+    # # LOAD DATASETS
     dataloaders = LoadDatasets(args, task_cfg, args.tasks.split("-"))
-
-    logdir = os.path.join(savePath, "logs")
-    # tbLogger = utils.tbLogger(
-    #     logdir,
-    #     savePath,
-    #     task_names,
-    #     task_ids,
-    #     task_num_iters,
-    #     1,
-    # )
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
-    # task_ave_iter = {}
-    # # task_stop_controller = {}
-    # for task_id, num_iter in task_num_iters.items():
-    #     task_ave_iter[task_id] = int(
-    #         task_cfg[task]["num_epoch"]
-    #         * num_iter
-    #         * 1.0
-    #         / task_cfg['num_epoch']
-    #     )
-    #
-    # task_ave_iter_list = sorted(task_ave_iter.values())
-    # median_num_iter = task_ave_iter_list[-1]
-
-
-    # num_train_optimization_steps = (
-    #         len(task_dataloader_train) * task_cfg['num_epoch'] // 1
-    # )
-
     num_train_optimization_steps = 1000 * task_cfg['num_epoch']
 
-    logger.info("Not Using Pre-trained weights")
-    transfer_keys = ["num_hidden_layers"]
+    mmt_config = BertConfig.from_dict(task_cfg["MMT"])
+    # text_bert_config = "config/m4c_textbert_vqa.json"
+    # text_bert_config = BertConfig.from_json_file(text_bert_config)
+    text_bert_config = BertConfig.from_dict(task_cfg["TextBERT"])
 
-    # Common keys
-    transfer_keys.extend(["aux_spatial_fusion",
-                          "use_aux_heads",
-                          "contrastive",
-                          "weight_decay",
-                          "freeze_mmt_and_textbert",
-                          "lr_scale_text_bert",
-                          "contrast_out_dim",
-                          "lr_scale_mmt",
-                          "output_attentions",
-                          ])
-
-    # Load config-file M4C
-    with open(args.config_file, "r") as file:
-        config_dict = json.load(file)
-
-    # Adding blank keys that could be dynamically replaced later
-    config_dict["layer_type_list"] = None
-    config_dict["mix_list"] = None
-    # Always use beam-size 1 for training
-    config_dict["beam_size"] = 1
-
-    # Replace keys
-    for key in transfer_keys:
-        if key in task_cfg:
-            config_dict[key] = task_cfg[key]
-            logger.info(f"Transferring keys:  {key}, {config_dict[key]}")
-    mmt_config = BertConfig.from_dict(config_dict)
-    text_bert_config = "config/m4c_textbert_vqa.json"
-    text_bert_config = BertConfig.from_json_file(text_bert_config)
     model = M4C(mmt_config, text_bert_config)
 
 
@@ -235,19 +179,7 @@ def main():
     # LOAD LOSSES
     from vilbert.task_utils import LossMap
     task_loss = LossMap[task_cfg["loss"]]
-    # task_losses = LoadLosses(task_cfg, args.tasks.split("-"))
-
-    # Turned of weight-decay and fine-tune stuff in ViLBERT!
-    if "m4c" not in model_type:
-        optimizer_grouped_parameters = []
-        for key, value in dict(model.named_parameters()).items():
-            if value.requires_grad:
-                lr = base_lr
-                optimizer_grouped_parameters += [
-                    {"params": [value], "lr": lr, "weight_decay": 0.0}
-                ]
-    else:
-        optimizer_grouped_parameters = model.get_optimizer_parameters(base_lr)
+    optimizer_grouped_parameters = model.get_optimizer_parameters(base_lr)
 
     if default_gpu:
         print(len(list(model.named_parameters())), len(optimizer_grouped_parameters))
@@ -255,7 +187,6 @@ def main():
     optimizer, warmup_scheduler, lr_scheduler, lr_scheduler_config, warmpu_steps = get_optim_scheduler(
         task_cfg, optimizer_grouped_parameters, num_train_optimization_steps, base_lr)
 
-    startIterID = 0
     global_step = 0
     start_epoch = 0
 
@@ -268,19 +199,6 @@ def main():
 
     if n_gpu > 1:
         model = torch.nn.DataParallel(model)
-
-    # if default_gpu:
-    #     print("***** Running training *****")
-    #     print("  Num Iters: ", task_num_iters)
-    #     print("  Batch size: ", task_batch_size)
-    #     print("  Num steps: %d" % num_train_optimization_steps)
-
-    # task_iter_train = {name: None for name in task_ids}
-    # task_count = {name: 0 for name in task_ids}
-    #
-    # if registry.alt_train:
-    #     task_iter_train[task_ids[0] + "alt"] = None
-    #     task_count[task_ids[0] + "alt"] = 0
 
     best_val_score = 0
     best_val_loss = np.inf

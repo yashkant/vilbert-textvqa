@@ -182,7 +182,6 @@ def run_model(batch, model, device):
 
 
 def ForwardModelsTrain(
-    task_cfg,
     device,
     dataloaders,
     model,
@@ -200,21 +199,15 @@ def ForwardModelsTrain(
         results_dict = run_model(batch, model, device)
         batch.update(results_dict)
 
-    if registry.alt_train:
-        losses = []
-        # use scl only
-        if train_type == "scl":
-            loss, batch_score = LossMap["SCLLoss"](batch_dicts)
-        else:
-            loss, batch_score = add_ce_loss(batch_dicts, device)
+    if train_type == "scl":
+        loss, batch_score = LossMap["SCLLoss"](batch_dicts)
+    else:
+        loss, batch_score = add_ce_loss(batch_dicts, device)
 
-        # del results_dict
-        del batch_dicts
-
-        return loss, float(batch_score), losses
+    del batch_dicts
+    return loss, float(batch_score)
 
 
-# todo: replace this in vl-classifier if-else
 def add_ce_loss(batch_dict, device, val_run=False, revqa_eval=False, split="re_total"):
     if len(batch_dict) == 2 and not val_run:
         # train time
@@ -253,6 +246,7 @@ def add_ce_loss(batch_dict, device, val_run=False, revqa_eval=False, split="re_t
             registry[bins_key][min_qid].append((qid, vqa_score))
 
     return vl_loss, batch_score
+
 
 def LoadLosses(task_cfg, task_ids):
 

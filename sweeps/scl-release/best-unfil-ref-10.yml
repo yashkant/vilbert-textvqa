@@ -19,7 +19,6 @@ num_epoch: 5
 grad_clip_mode: all
 max_grad_norm: 0.25
 # weight-decay (doesn't apply on batch-norm and biases)
-weight_decay: 0.00001
 
 # optimizer
 optim: Adam
@@ -33,8 +32,6 @@ lr_decay: 0.2
 debug: false
 # model attributes
 model_type: m4c
-num_hidden_layers: 6
-contrast_out_dim: 128
 batch_size: 210
 val_batch_size: 210
 monitor_value: val_score
@@ -100,4 +97,31 @@ temperature: 0.5
 bt_eval_key: "val_aug"
 allowed_only: False
 two_norm: False
-freeze_textbert_and_mmt: False
+freeze_textbert_and_mmt: false
+
+
+MMT:
+  obj_drop: 0.1
+  ocr_drop: 0.1
+  hidden_size: 768
+  num_hidden_layers: 6
+  num_spatial_relations: 12
+  obj_feature_size: 2048
+  finetune_ocr_obj: false
+  normalize: true
+  lr_scale_mmt: 1.0
+  max_obj_num: 101
+  max_seq_length: 23
+  fusion_method: "mul"
+  beam_size: 1
+  weight_decay: 0.00001
+  contrast_out_dim: 128
+  contrastive: better
+  freeze_textbert_and_mmt: false
+
+
+TextBERT:
+  lr_scale_text_bert: 0.1
+  num_hidden_layers: 3
+  text_bert_init_from_bert_base: true
+  vocab_size: 30522
