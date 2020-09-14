@@ -262,8 +262,8 @@ def LoadLosses(task_cfg, task_ids):
     return losses
 
 
-def LoadDatasets(args, task_cfg, ids, split="trainval"):
-    from vilbert.samplers_new import RandomSampler, NegativeSampler
+def LoadDatasets(task_cfg):
+    from vilbert.samplers_new import RandomSampler, ContrastiveSampler
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
 
     task_feature_reader1 = {}
@@ -303,7 +303,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
             if sampler_name == "random":
                 sampler = RandomSampler(dataset)
             elif sampler_name == "negative":
-                sampler = NegativeSampler(
+                sampler = ContrastiveSampler(
                     dataset,
                     task_cfg,
                     split=split

@@ -61,7 +61,7 @@ class RandomSampler(Sampler):
         return len(self.data_source)
 
 
-class NegativeSampler(Sampler):
+class ContrastiveSampler(Sampler):
 
     def __init__(self,
                  data_source,
@@ -93,7 +93,7 @@ class NegativeSampler(Sampler):
         self.bin_ans_threshold = self.task_cfg.get("bin_ans_threshold", None)
         self.freq_ans_threshold = self.task_cfg.get("freq_ans_threshold", None)
         self.iter_count = 0
-        self.better_counter = 0  # increases with every build-call
+        # self.better_counter = 0  # increases with every build-call
         self.processing_threads = 16
 
         logger.info(f"Use GT answers is: {self.task_cfg.get('use_gt_answer', False)}")
@@ -248,16 +248,12 @@ class NegativeSampler(Sampler):
 
     def build_hard_batches(self):
         self.build_maps()
-        self.re_bins = NegativeSampler.shuffle(self.re_bins, 0, len(self.re_bins))
+        self.re_bins = ContrastiveSampler.shuffle(self.re_bins, 0, len(self.re_bins))
         neg_replace = self.task_cfg["neg_replace"]
         init_batch_size = self.task_cfg["init_batch_size"]
         neg_type_weights = self.task_cfg["neg_type_weights"]
-        neg_question_thresh = self.task_cfg["neg_question_thresh"]
-        use_gt_answer = self.task_cfg["use_gt_answer"]
         assert np.sum(neg_type_weights) == 1.0
         # assert self.batch_size % init_batch_size == 0
-        add_positives = self.num_positives > 0
-        num_passes = int((self.batch_size - init_batch_size*(self.num_positives + 1))/init_batch_size)
         assert neg_replace
         init_pass_bs = init_batch_size + self.num_positives*init_batch_size
         # assert init_pass_bs > (self.batch_size - init_pass_bs)
@@ -285,21 +281,21 @@ class NegativeSampler(Sampler):
                  init_pass_bs]
 
         # shuffle bins
-        self.re_bins = NegativeSampler.shuffle(self.re_bins, 0, len(self.re_bins))
+        self.re_bins = ContrastiveSampler.shuffle(self.re_bins, 0, len(self.re_bins))
 
         # intial-pass
-        batches, batches_bins = NegativeSampler.get_batches(_args)
+        batches, batches_bins = ContrastiveSampler.get_batches(_args)
 
         # replace w/ original batch-size
         _args[-1] = self.batch_size
         _args += list([neg_type_weights, self.entries, self.negs_data, self.negs_index_dict])
 
         # shuffle bins
-        self.re_bins = NegativeSampler.shuffle(self.re_bins, 0, len(self.re_bins))
-        batches, batches_bins = NegativeSampler.add_hard_negatives(batches, batches_bins, _args, question_rephrase_dict)
+        self.re_bins = ContrastiveSampler.shuffle(self.re_bins, 0, len(self.re_bins))
+        batches, batches_bins = ContrastiveSampler.add_hard_negatives(batches, batches_bins, _args, question_rephrase_dict)
 
-        if registry.sdebug:
-            self.debug(batches)
+        # if registry.sdebug:
+        #     self.debug(batches)
 
         num_epochs = int(len(batches)/self.num_batches)
         epochs = []
@@ -333,38 +329,12 @@ class NegativeSampler(Sampler):
         np.random.shuffle(array[start_idx:end_idx])
         for i, item in enumerate(array[start_idx:end_idx]):
             item[1]["bin_idx"] = i + start_idx
-        NegativeSampler.assert_bins(array)
+        ContrastiveSampler.assert_bins(array)
         return array
 
     def assert_bin_inds(self):
         for i, item in enumerate(self.re_bins):
             assert item[1]["bin_idx"] == i
-
-    def build_batches(self):
-        """ Frequency Counter for negs: ({1: 152627, 4: 35500, 5: 4})"""
-        self.build_maps()
-        num_batches = int(len(self.data_source) / self.batch_size)
-        num_threads = 32
-        extra_args = edict()
-        extra_args.update({
-            "batch_size": self.batch_size,
-            "num_positives": self.num_positives,
-            "bin_ans_threshold": self.bin_ans_threshold
-        })
-
-        _args = (self.entry_map,
-                 self.re_bins,
-                 self.answer_map,
-                 self.qid_ans_dict,
-                 extra_args,
-                 num_batches,
-                 self.batch_size)
-
-        self.re_bins = NegativeSampler.shuffle(self.re_bins, 0, len(self.re_bins))
-
-        batches, _ = NegativeSampler.get_batches(_args)
-        epoch_indices = list(itertools.chain.from_iterable(batches))
-        return epoch_indices
 
     @staticmethod
     def get_batches(
@@ -401,7 +371,7 @@ class NegativeSampler(Sampler):
                 if add_positives:
                     # only add the needed amount
                     num_pos = min(num_positives, batch_size - len(batch_inds))
-                    NegativeSampler.add_positives(
+                    ContrastiveSampler.add_positives(
                         re_bins,
                         entry_map,
                         qid_ans_dict,
@@ -456,7 +426,7 @@ class NegativeSampler(Sampler):
                     negs_idx = negs_index_dict[question_id]
                     negatives_list = negs_data["same_image_questions_neg"][negs_idx]
                     # add better negatives
-                    neg_entry_idx, passed, bin_idx = NegativeSampler.get_hard_negative(negatives_list, batch_bins, entry_map, question_rephrase_dict)
+                    neg_entry_idx, passed, bin_idx = ContrastiveSampler.get_hard_negative(negatives_list, batch_bins, entry_map, question_rephrase_dict)
                     if not passed:
                         batch_inds.append(neg_entry_idx)
                         batch_bins.append(bin_idx)
@@ -473,7 +443,7 @@ class NegativeSampler(Sampler):
                         negatives_list = negs_data["question_negs"][negs_idx]
 
                     # add better negatives
-                    neg_entry_idx, passed, bin_idx = NegativeSampler.get_hard_negative(negatives_list, batch_bins, entry_map, question_rephrase_dict)
+                    neg_entry_idx, passed, bin_idx = ContrastiveSampler.get_hard_negative(negatives_list, batch_bins, entry_map, question_rephrase_dict)
                     if not passed:
                         batch_inds.append(neg_entry_idx)
                         batch_bins.append(bin_idx)
@@ -569,58 +539,16 @@ class NegativeSampler(Sampler):
             if qid == start_qid:
                 break
 
-    @staticmethod
-    def check_iterator(bin):
-        if bin["iter_idx"] >= len(bin["entry_inds"]) - 1:
-            bin["iter_idx"] = 0
-        else:
-            bin["iter_idx"] += 1
-
-
     def __iter__(self):
-        base_path = "datasets/VQA/cache/samplers/"
-        assert os.path.exists(base_path)
-        cache_name = f"latest_cache_{self.task_cfg['contrastive']}_iter_{self.iter_count}_" \
-                     f"split_{self.split}_bt{self.bin_ans_threshold}_ft{self.freq_ans_threshold}_" \
-                     f"pos_{self.num_positives}_batch_size_{self.batch_size}.npy"
-
-        if registry.aug_filter is not None:
-            aug_filter_str = f"_aug_fil_max_samples_{registry.aug_filter['max_re_per_sample']}" \
-                             f"_sim_thresh_{registry.aug_filter['sim_threshold']}" \
-                             f"_sampling_{registry.aug_filter['sampling']}.npy"
-            cache_name = cache_name.split(".")[0] + aug_filter_str
-
-        cache_name = os.path.join(base_path, cache_name)
-
         if self.task_cfg["contrastive"] == "better":
             # if epochs are exhausted, replenish
             if self.epoch_idx >= len(self.epochs):
-                cache_name = cache_name.split(".npy")[0] + f"better_cnt_{self.better_counter}_negw_{self.task_cfg['neg_type_weights']}" \
-                                                           f"init_bs_{self.task_cfg['init_batch_size']}.npy"
-                logger.info(f"Sampler Cache Path: {cache_name}")
-                if os.path.exists(cache_name)  and False:
-                    self.epochs = list(np.load(cache_name, allow_pickle=True))
-                    self.epoch_idx = 0
-                else:
-                    self.build_hard_batches()
-                    self.better_counter += 1
-                    np.save(cache_name, self.epochs)
+                self.build_hard_batches()
 
             epoch_indices = self.epochs[self.epoch_idx]
             self.epoch_idx += 1
-
-        elif self.task_cfg["contrastive"] == "simclr":
-            logger.info(f"Sampler Cache Path: {cache_name}")
-            if os.path.exists(cache_name) and False:
-                logger.info("Using cache")
-                epoch_indices = list(np.load(cache_name, allow_pickle=True))
-            else:
-                logger.info("Not using cache, and dumping it!")
-                epoch_indices = self.build_batches()
-                np.save(cache_name, epoch_indices)
         else:
             raise ValueError
-        registry.sampler_cache_name = cache_name
 
         logger.info(f"No. of Unique Samples: {len(set(epoch_indices))} / {len(epoch_indices)}")
         self.iter_count += 1
@@ -628,19 +556,3 @@ class NegativeSampler(Sampler):
 
     def __len__(self):
         return len(self.data_source)
-
-    def debug(self, batches):
-        ans_freq_counters = []
-
-        import pdb
-        pdb.set_trace()
-
-        for batch in batches:
-            batch_answers = [self.entries[idx]["answer"]["labels"][:1] for idx in batch]
-            batch_answers = list(itertools.chain.from_iterable(batch_answers))
-            counter = Counter(batch_answers)
-            ans_freq_counters.append(counter)
-
-        import pdb
-        pdb.set_trace()
-

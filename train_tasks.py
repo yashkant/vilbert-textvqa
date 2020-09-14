@@ -159,7 +159,7 @@ def main():
             print(task_cfg, file=f)
 
     # # LOAD DATASETS
-    dataloaders = LoadDatasets(args, task_cfg, args.tasks.split("-"))
+    dataloaders = LoadDatasets(task_cfg)
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
@@ -234,8 +234,7 @@ def main():
                 and iterId % registry.scl_freq == 1:
                 train_type = "ce"
 
-            loss, score, losses = ForwardModelsTrain(
-                task_cfg,
+            loss, score = ForwardModelsTrain(
                 device,
                 dataloaders,
                 model,
@@ -258,7 +257,6 @@ def main():
 
             del loss
             del score
-            del losses
 
             if (
                     step % (20 * 1) == 0
