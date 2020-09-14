@@ -1,11 +1,13 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
+import functools
 import logging
 import math
 
 import torch
 import torch.nn.functional as F
 from pytorch_transformers.modeling_bert import (
-    BertLayerNorm, BertEmbeddings, BertPreTrainedModel, BertSelfOutput, BertIntermediate, BertOutput
+    BertLayerNorm, BertEmbeddings, BertPreTrainedModel, BertSelfOutput, BertIntermediate, BertOutput,
+    BertConfig
 )
 from torch import nn
 
@@ -190,57 +192,75 @@ class M4C(nn.Module):
 
     def __init__(self, mmt_config, text_bert_config):
         super().__init__()
+        # self.mmt_config = BertConfig(**self.config.mmt)
         self.mmt_config = mmt_config
         self.text_bert_config = text_bert_config
 
-        # if self.mmt_config.finetune_ocr_obj:
-        #     logger.info("Finetuning object and ocr FRCN layer")
-        #     self.frcn_encoder_type = "finetune_faster_rcnn_fpn_fc7"
-        # else:
-        #     logger.info("Not finetuning object and ocr FRCN layer")
-        #     self.frcn_encoder_type = "default"
+        if self.mmt_config.finetune_ocr_obj:
+            logger.info("Finetuning object and ocr FRCN layer")
+            self.frcn_encoder_type = "finetune_faster_rcnn_fpn_fc7"
+        else:
+            logger.info("Not finetuning object and ocr FRCN layer")
+            self.frcn_encoder_type = "default"
 
-        # self.normalize = self.mmt_config.normalize
-        # if not self.mmt_config.normalize:
-        #     logger.info("Not normalizing OCR and Object features")
+        self.normalize = self.mmt_config.normalize
+        if not self.mmt_config.normalize:
+            logger.info("Not normalizing OCR and Object features")
 
-        # self.fusion_method = self.mmt_config.fusion_method
-        # logger.info(f"Fusion Method is : {self.fusion_method}")
+        self.fusion_method = self.mmt_config.fusion_method
+        logger.info(f"Fusion Method is : {self.fusion_method}")
 
         # weight-decay
         self.weight_decay = mmt_config.weight_decay if hasattr(mmt_config, "weight_decay") else 0.0
 
-        # self.freeze_mmt_and_textbert = mmt_config.freeze_mmt_and_textbert if hasattr(mmt_config, "freeze_mmt_and_textbert") else False
-        # if self.freeze_mmt_and_textbert:
-        #     logger.info(f"Freezing MMT and TextBERT")
+        self.freeze_mmt_and_textbert = mmt_config.freeze_mmt_and_textbert if hasattr(mmt_config, "freeze_mmt_and_textbert") else False
+        if self.freeze_mmt_and_textbert:
+            logger.info(f"Freezing MMT and TextBERT")
 
         # build the models
         self.build()
 
-        # if registry.freeze_textbert_and_mmt:
-        #     logger.info("Freezing TextBERT and MMT")
-        #     for name, param in self.named_parameters():
-        #         if "linear_classifier" in name:
-        #             continue
-        #         else:
-        #             param.requires_grad = False
+        if registry.freeze_textbert_and_mmt:
+            logger.info("Freezing TextBERT and MMT")
+            for name, param in self.named_parameters():
+                if "linear_classifier" in name:
+                    continue
+                else:
+                    param.requires_grad = False
 
 
     def build(self):
         # modules requiring custom learning rates (usually for finetuning)
         self.finetune_modules = []
 
+        # import pdb
+        # pdb.set_trace()
+
         # split model building into several components
         self._build_txt_encoding()
         self._build_mmt()
         self._build_output()
-        # if registry.freeze_textbert_and_mmt:
-        #     logger.info("Building a linear classifier layer")
-        #     self.linear_classifier = LinearClassifier(3129, 3129)
+        if registry.freeze_textbert_and_mmt:
+            logger.info("Building a linear classifier layer")
+            self.linear_classifier = LinearClassifier(3129, 3129)
 
 
     def _build_txt_encoding(self):
+        # Todo: Just add a linear module to remove the TextBERT
+        # from sentence_transformers import SentenceTransformer
+        # Todo: Modify SentenceTransformer such that we can use three layers from it.
+        #  the idea is — it will have better sensitivity to rephrasings.
+        # model_type = 'bert-base-uncased'
+        # if registry.use_sent_bert:
+        #     model_type = ""
+
+        # if self.text_bert_config == None:
+        #     self.text_bert = nn.Identity()
+        #     logger.log("Not using TextBERT")
+        #     return
+
         TEXT_BERT_HIDDEN_SIZE = 768
+        # self.text_bert_config = BertConfig(**self.config.text_bert)
         if self.text_bert_config.text_bert_init_from_bert_base:
             self.text_bert = TextBert.from_pretrained(
                 'bert-base-uncased', config=self.text_bert_config
@@ -284,6 +304,9 @@ class M4C(nn.Module):
         self.vil_prediction = SimpleClassifier(
             self.mmt_config.hidden_size, self.mmt_config.hidden_size * 2, 3129, 0.5
         )
+        self.vil_prediction_gqa = SimpleClassifier(
+            self.mmt_config.hidden_size, self.mmt_config.hidden_size * 2, 1533, 0.5
+        )
         self.dropout = nn.Dropout(self.mmt_config.hidden_dropout_prob)
 
         if hasattr(self.mmt_config, "contrastive") and self.mmt_config.contrastive in ["simclr", "better", "finetune"]:
@@ -300,13 +323,13 @@ class M4C(nn.Module):
         self._forward_mmt_and_text(batch_dict)
         self._forward_output(batch_dict)
 
-        # if registry.freeze_textbert_and_mmt:
-        #     results_dict = {
-        #         "vil_prediction": batch_dict["lc_out"],
-        #         "contastive_projection_norm": None,
-        #         "attention_weights": None
-        #     }
-        #     return results_dict
+        if registry.freeze_textbert_and_mmt:
+            results_dict = {
+                "vil_prediction": batch_dict["lc_out"],
+                "contastive_projection_norm": None,
+                "attention_weights": None
+            }
+            return results_dict
 
         results_dict = {
             "vil_prediction": batch_dict["vil_prediction"],
@@ -317,9 +340,9 @@ class M4C(nn.Module):
         return results_dict
 
     def _forward_mmt_and_text(self, batch_dict):
-        # if self.freeze_mmt_and_textbert:
-        #     self.text_bert.eval()
-        #     self.mmt.eval()
+        if self.freeze_mmt_and_textbert:
+            self.text_bert.eval()
+            self.mmt.eval()
 
         # first forward the text BERT layers
         text_bert_out = self.text_bert(batch_dict)
@@ -329,14 +352,19 @@ class M4C(nn.Module):
         batch_dict.update(mmt_results)
 
     def _forward_output(self, batch_dict):
-        batch_dict["pooled_output"] = self.dropout(batch_dict["pooled_text_output"] * batch_dict["pooled_image_output"])
+        if self.fusion_method == "sum":
+            batch_dict["pooled_output"] = self.dropout(batch_dict["pooled_text_output"] + batch_dict["pooled_image_output"])
+        elif self.fusion_method == "mul":
+            batch_dict["pooled_output"] = self.dropout(batch_dict["pooled_text_output"] * batch_dict["pooled_image_output"])
+        else:
+            assert False
         batch_dict["vil_prediction"] = self.vil_prediction(batch_dict["pooled_output"])
         # batch_dict["vil_prediction_gqa"] = self.vil_prediction_gqa(batch_dict["pooled_output"])
 
 
-        # if registry.freeze_textbert_and_mmt:
-        #     batch_dict["lc_out"] = self.linear_classifier(batch_dict["vil_prediction"])
-        #     return
+        if registry.freeze_textbert_and_mmt:
+            batch_dict["lc_out"] = self.linear_classifier(batch_dict["vil_prediction"])
+            return
 
         if (hasattr(self.mmt_config, "contrastive") and self.mmt_config.contrastive in ["simclr", "better"]):
             self.contrastive_projection(batch_dict)
@@ -402,6 +430,7 @@ class TextBert(BertPreTrainedModel):
         super().__init__(config)
         self.embeddings = BertEmbeddings(config)
         self.encoder = BertEncoder(config)
+        # self.apply(self.init_weights)  # old versions of pytorch_transformers
         self.init_weights()
 
     def forward(self, batch_dict):
@@ -467,14 +496,19 @@ class MMT_VQA(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.image_embeddings = BertImageEmbeddings(config)
+        # self.text_embeddings = BertEmbeddings(config)
+        # Add this when TextBERT is identity function,
         self.encoder = BertEncoder(config)
         self.text_pooler = BertTextPooler(config)
         self.image_pooler = BertImagePooler(config)
+
+        # self.apply(self.init_weights)  # old versions of pytorch_transformers
         self.init_weights()
 
     def forward(self, batch_dict):
 
         text_embeddings = batch_dict["text_bert_emb"]
+        # text_embeddings = self.text_embeddings(batch_dict["question_indices"])
         image_embeddings = self.image_embeddings(
             batch_dict["input_imgs"],
             batch_dict["image_loc"]
@@ -536,6 +570,40 @@ class BertImagePooler(nn.Module):
         return pooled_output
 
 
+def _get_mask(nums, max_num):
+    # non_pad_mask: b x lq, torch.float32, 0. on PAD
+    batch_size = nums.size(0)
+    arange = torch.arange(0, max_num).unsqueeze(0).expand(batch_size, -1)
+    non_pad_mask = arange.to(nums.device).lt(nums.unsqueeze(-1))
+    non_pad_mask = non_pad_mask.type(torch.float32)
+    return non_pad_mask
+
+
+@functools.lru_cache(maxsize=32)
+def _get_causal_mask(seq_length, device):
+    # generate a lower triangular mask
+    mask = torch.zeros(seq_length, seq_length, device=device)
+    for i in range(seq_length):
+        for j in range(i + 1):
+            mask[i, j] = 1.
+    return mask
+
+
+def _batch_gather(x, inds):
+    assert x.dim() == 3
+    batch_size = x.size(0)
+    length = x.size(1)
+    dim = x.size(2)
+    x_flat = x.view(batch_size * length, dim)
+
+    batch_offsets = torch.arange(batch_size, device=inds.device) * length
+    batch_offsets = batch_offsets.unsqueeze(-1)
+    assert batch_offsets.dim() == inds.dim()
+    inds_flat = batch_offsets + inds
+    results = F.embedding(inds_flat, x_flat)
+    return results
+
+
 class SimpleClassifier(nn.Module):
     def __init__(self, in_dim, hid_dim, out_dim, dropout):
         super().__init__()
@@ -548,3 +616,12 @@ class SimpleClassifier(nn.Module):
 
     def forward(self, hidden_states):
         return self.logit_fc(hidden_states)
+
+
+class LinearClassifier(nn.Module):
+    def __init__(self, feat_dim, num_classes):
+        super().__init__()
+        self.fc = nn.Linear(feat_dim, num_classes)
+
+    def forward(self, features):
+        return self.fc(features.detach())
