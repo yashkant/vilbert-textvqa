@@ -90,6 +90,7 @@ def get_optim_scheduler(config,
 
     return optimizer, warmup_scheduler, None, scheduler_config, warmpu_steps
 
+
 def to_device(batch_dict, device):
 
     if device.type == "cpu":
@@ -103,7 +104,6 @@ def to_device(batch_dict, device):
 
             if isinstance(value, torch.Tensor):
                 batch[key] = value.cuda(device=device, non_blocking=True)
-
 
 
 def ForwardModelsVal(args,
@@ -145,6 +145,42 @@ def ForwardModelsVal(args,
     return float(loss), float(batch_score), batch_size
 
 
+def get_batch(dataloaders, dkey):
+    ikey = dkey + "_iter"
+    load_epoch = ikey not in dataloaders
+
+    if not load_epoch:
+        batch_dicts = next(dataloaders[ikey], None)
+        if batch_dicts is None:
+            load_epoch = True
+
+    if load_epoch:
+        dataloaders[ikey] = iter(dataloaders[dkey])
+        batch_dicts = next(dataloaders[ikey], None)
+        assert batch_dicts is not None
+
+    return batch_dicts
+
+
+def run_model(batch, model, device):
+    # send to gpu
+    input_keys = list(batch.keys())
+    for key in input_keys:
+        if key in ["image_id", "question_id"]:
+            continue
+        if isinstance(batch[key], torch.Tensor):
+            batch[key] = batch[key].cuda(device=device, non_blocking=True)
+
+    results_dict = model(batch)
+    # delete batch-inputs (only keep results)
+    for key in input_keys:
+        if key in ["image_id", "question_id", "target"]:
+            continue
+        else:
+            del batch[key]
+    return results_dict
+
+
 def ForwardModelsTrain(
     task_cfg,
     device,
@@ -152,37 +188,16 @@ def ForwardModelsTrain(
     model,
     train_type="scl"
 ):
+
     if train_type == "ce" and registry.alt_train:
-        batch_dicts = next(dataloaders["train_alt_iter"], None)
-        if batch_dicts is None:
-            dataloaders["train_alt_iter"] = iter(dataloaders["train_alt"])
-            batch_dicts = next(dataloaders["train_alt_iter"], None)
-            assert batch_dicts is not None
-        if not registry.alt_re:
-            batch_dicts = batch_dicts[:1]
+        batch_dicts = get_batch(dataloaders, "train_alt")
+        # throw away rephrasings batch
+        batch_dicts = batch_dicts[:1]
     else:
-        batch_dicts = next(dataloaders["train_iter"], None)
-        if batch_dicts is None:
-            dataloaders["train_iter"] = iter(dataloaders["train"])
-            batch_dicts = next(dataloaders["train_iter"], None)
-            assert batch_dicts is not None
+        batch_dicts = get_batch(dataloaders, "train")
 
     for batch in batch_dicts:
-        # send to gpu
-        input_keys = list(batch.keys())
-        for key in input_keys:
-            if key in ["image_id", "question_id"]:
-                continue
-            if isinstance(batch[key], torch.Tensor):
-                batch[key] = batch[key].cuda(device=device, non_blocking=True)
-
-        results_dict = model(batch)
-        # delete present batch-inputs (only keep results)
-        for key in input_keys:
-            if key in ["image_id", "question_id", "target"]:
-                continue
-            else:
-                del batch[key]
+        results_dict = run_model(batch, model, device)
         batch.update(results_dict)
 
     if registry.alt_train:
@@ -197,42 +212,6 @@ def ForwardModelsTrain(
         del batch_dicts
 
         return loss, float(batch_score), losses
-
-    if task_cfg[task_id]["type"] == "ContrastiveProjection":
-        if registry.freeze_textbert_and_mmt:
-            loss, batch_score = 0, 0
-        else:
-            loss, batch_score = LossMap["SCLLoss"](batch_dicts)
-
-    if len(batch_dicts) == 1:
-        batch_dicts = batch_dicts[0]
-
-    # for different task, we use different output to calculate the loss.
-    if task_cfg[task_id]["type"] == "VL-classifier":
-        loss, batch_score = add_ce_loss(batch_dicts, device)
-
-    elif task_cfg[task_id]["type"] == "VL-classifier-only-ce":
-        loss, batch_score = add_ce_loss(batch_dicts, device)
-
-    losses = []
-    if registry.use_ce_loss:
-        vl_loss, batch_score = add_ce_loss(batch_dicts, device)
-        losses.append(loss)
-        losses.append(vl_loss)
-        assert registry.scl_coeff >= 0
-        loss = loss*registry.scl_coeff + vl_loss
-    else:
-        losses.append(loss)
-
-    if registry.squint_loss:
-        from vilbert.losses import MSELoss
-        squint_loss = MSELoss(batch_dicts)
-        loss += squint_loss
-
-    # del results_dict
-    del batch_dicts
-
-    return loss, float(batch_score), losses
 
 
 # todo: replace this in vl-classifier if-else
@@ -300,7 +279,7 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
 
     dataloaders = {}
     splits = [
-        ("train", "train", [("random", "_alt"), ("negative", "")]),
+        ("train", "train", [("negative", ""), ("random", "_alt")]),
         # ("val", "val", [("none", "")]),
         # ("val", "revqa", [("none", "")]),
         # ("val", "revqa_bt", [("none", "")])
@@ -339,16 +318,16 @@ def LoadDatasets(args, task_cfg, ids, split="trainval"):
             dataloaders[f"{key}" + tag] = DataLoader(
                 dataset,
                 sampler=sampler,
-                batch_size=task_cfg["batch_size"],
+                batch_size=task_cfg["batch_size"] if not "alt" in tag else task_cfg["batch_size"]*2,
                 num_workers=registry.workers,
                 pin_memory=True,
                 drop_last=True if split == "train" else False
             )
 
     # add iterators
-    keys = list(dataloaders.keys())
-    for key in keys:
-        dataloaders[f"{key}_iter"] = iter(dataloaders[key])
+    # keys = list(dataloaders.keys())
+    # for key in keys:
+    #     dataloaders[f"{key}_iter"] = iter(dataloaders[key])
 
     return dataloaders
 
