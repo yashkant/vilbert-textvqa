@@ -113,22 +113,7 @@ def main():
         get_optim_scheduler)
 
     from vilbert.m4c import BertConfig, M4C
-    model_type = task_cfg["model_type"]
-
-    # task_names = []
-    # task_lr = []
-    # for i, task_id in enumerate(args.tasks.split("-")):
-    #     task = "TASK" + task_id
-    #     name = task_cfg[task]["name"]
-    #     task_names.append(name)
-    #     task_lr.append(task_cfg[task]["lr"])
-
     base_lr = task_cfg["lr"]
-    # loss_scale = {}
-    # for i, task_id in enumerate(args.tasks.split("-")):
-    #     task = "TASK" + task_id
-    #     loss_scale[task] = task_lr[i] / base_lr
-
     timeStamp = (args.config_file.split("/")[1].split(".")[0] + f"-{args.tag}")
     savePath = os.path.join(args.output_dir, timeStamp)
 
@@ -147,15 +132,11 @@ def main():
     if not os.path.exists(savePath):
         os.makedirs(savePath)
 
-    config = BertConfig.from_json_file(args.config_file)
-    if default_gpu:
-        # save all the hidden parameters.
-        with open(os.path.join(savePath, "command.txt"), "w") as f:
-            print(args, file=f)  # Python 3.x
-            print("\n", file=f)
-            print(config, file=f)
-            print("\n", file=f)
-            print(task_cfg, file=f)
+    # save all the hidden parameters.
+    with open(os.path.join(savePath, "command.txt"), "w") as f:
+        print(args, file=f)  # Python 3.x
+        print("\n", file=f)
+        print(task_cfg, file=f)
 
     # # LOAD DATASETS
     dataloaders = LoadDatasets(task_cfg)
@@ -164,14 +145,9 @@ def main():
         os.makedirs(args.output_dir)
 
     num_train_optimization_steps = 1000 * task_cfg['num_epoch']
-
     mmt_config = BertConfig.from_dict(task_cfg["MMT"])
-    # text_bert_config = "config/m4c_textbert_vqa.json"
-    # text_bert_config = BertConfig.from_json_file(text_bert_config)
     text_bert_config = BertConfig.from_dict(task_cfg["TextBERT"])
-
     model = M4C(mmt_config, text_bert_config)
-
 
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Training Parameters: {trainable_params}")
@@ -262,11 +238,8 @@ def main():
                     and step != 0
                     and default_gpu
             ):
-                # tbLogger.showLossTrain()
                 logger.info(f"Score: {sum(score_hist)/len(score_hist)}, Loss: {sum(loss_hist)/len(loss_hist)}")
-                logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}, "
-                            f"Grad Diff: {sum(grad_diff) / len(grad_diff) if len(grad_diff) > 0 else None}")
-                grad_dots, grad_diff = [], []
+                logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}")
                 loss_hist, score_hist = [], []
 
             # if (iterId != 0 and iterId % eval_iter_factor == 0) or (
