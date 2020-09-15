@@ -10,28 +10,31 @@ train_annotations_jsonpath: ''
 val_annotations_jsonpath: ''
 max_seq_length: 23
 max_region_num: 101
-train_split: train_aug
-val_split: minval
+train_split: re_train
+val_split: re_val
 # Change at both places num_epochs
-num_epoch: 5
+num_epoch: 5num_rephrasings
 
 # grad-clipping
 grad_clip_mode: all
 max_grad_norm: 0.25
 # weight-decay (doesn't apply on batch-norm and biases)
+weight_decay: 0.00001
 
 # optimizer
 optim: Adam
 lr_scheduler: pythia_warmup_decay
 warmup_proportion: 0.1
-warmup_iters: 4266 # 2 epochs
+warmup_iters: 1364 # 2 epochs
 lr: 0.0002
 warmpu_factors: 0.1
-lr_decay_iters: [10665, 14931] # 5, 7 epochs
+lr_decay_iters: [4774, 9548] # 7, 14  epochs
 lr_decay: 0.2
 debug: false
 # model attributes
 model_type: m4c
+num_hidden_layers: 6
+contrast_out_dim: 128
 batch_size: 210
 val_batch_size: 210
 monitor_value: val_score
@@ -57,7 +60,7 @@ val_workers: 16
 train_workers: 16
 scl_coeff: 1.0
 aug_filter:
-  max_re_per_sample: 4
+  num_rephrasings: 4
   sim_threshold: 0.95
   sampling: top # top (selects max_re_per_sample samples from top after thresholding), bottom and random
 sampler_type: new
@@ -97,31 +100,4 @@ temperature: 0.5
 bt_eval_key: "val_aug"
 allowed_only: False
 two_norm: False
-freeze_textbert_and_mmt: false
-
-
-MMT:
-  obj_drop: 0.1
-  ocr_drop: 0.1
-  hidden_size: 768
-  num_hidden_layers: 6
-  num_spatial_relations: 12
-  obj_feature_size: 2048
-  finetune_ocr_obj: false
-  normalize: true
-  lr_scale_mmt: 1.0
-  max_obj_num: 101
-  max_seq_length: 23
-  fusion_method: "mul"
-  beam_size: 1
-  weight_decay: 0.00001
-  contrast_out_dim: 128
-  contrastive: better
-  freeze_textbert_and_mmt: false
-
-
-TextBERT:
-  lr_scale_text_bert: 0.1
-  num_hidden_layers: 3
-  text_bert_init_from_bert_base: true
-  vocab_size: 30522
+freeze_textbert_and_mmt: False

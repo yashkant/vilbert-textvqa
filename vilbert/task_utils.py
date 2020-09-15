@@ -17,7 +17,7 @@ from torch.optim.lr_scheduler import (
 from torch.utils.data import DataLoader
 
 from tools.registry import registry
-from vilbert.datasets import DatasetMapTrain, VQAClassificationDataset
+from vilbert.datasets.vqa_dataset import  VQAClassificationDataset
 from vilbert.datasets._image_features_reader import ImageFeaturesH5Reader
 from vilbert.losses import SupConLoss
 
@@ -28,7 +28,7 @@ LossMap = {
     "CrossEntropyLoss": nn.CrossEntropyLoss(),
     "SCLLoss": SupConLoss(temperature=registry.temperature,
                           formulation=registry.scl_formulation,
-                          base_temperature=registry.base_temperature), # using the default parameter setting
+                          base_temperature=registry.base_temperature),  # using the default parameter setting
 }
 
 
@@ -69,6 +69,7 @@ def get_optim_scheduler(config,
             warmup_iters = config.get("warmup_iters", 1000)
             lr_decay_iters = config.get("lr_decay_iters", [14000, 19000])
             warmup_factor = config.get("warmup_factor", 0.1)
+
             # total_iters = int(np.ceil(34602/config["batch_size"])*num_train_optimization_steps)
 
             def pythia_lr_update(_iter):
@@ -92,7 +93,6 @@ def get_optim_scheduler(config,
 
 
 def to_device(batch_dict, device):
-
     if device.type == "cpu":
         return
 
@@ -116,10 +116,8 @@ def ForwardModelsVal(args,
                      revqa_eval=False,
                      revqa_split="re_total",
                      return_batch=False):
-
     if not isinstance(batch_dict, tuple) and not isinstance(batch_dict, list):
         batch_dict = [batch_dict]
-
 
     # send to device
     to_device(batch_dict, device)
@@ -133,7 +131,6 @@ def ForwardModelsVal(args,
 
     revqa_split = "val" if registry.revqa_eval_on_val else revqa_split
     loss, batch_score = add_ce_loss(batch_dict[0], device, val_run=True, revqa_eval=revqa_eval, split=revqa_split)
-
 
     # When testing move this to above loss calculation
     if registry.get("eval_only", False):
@@ -182,11 +179,13 @@ def run_model(batch, model, device):
 
 
 def ForwardModelsTrain(
-    device,
-    dataloaders,
-    model,
-    train_type="scl"
+        device,
+        dataloaders,
+        model,
+        train_type="scl"
 ):
+    if registry.debug:
+        train_type = "ce"
 
     if train_type == "ce" and registry.alt_train:
         batch_dicts = get_batch(dataloaders, "train_alt")
@@ -226,7 +225,6 @@ def add_ce_loss(batch_dict, device, val_run=False, revqa_eval=False, split="re_t
         vil_preds = batch_dict["vil_prediction"]
         vil_targets = batch_dict["target"]
 
-
     vl_loss = LossMap["BCEWithLogitLoss"](vil_preds, vil_targets)
     vl_loss = vl_loss.mean() * vil_targets.size(1)
     batch_scores = compute_score_with_logits(vil_preds, vil_targets, device)
@@ -249,7 +247,6 @@ def add_ce_loss(batch_dict, device, val_run=False, revqa_eval=False, split="re_t
 
 
 def LoadLosses(task_cfg, task_ids):
-
     losses = {}
     task_types = []
     for i, task_id in enumerate(task_ids):
@@ -273,30 +270,29 @@ def LoadDatasets(task_cfg):
 
     dataloaders = {}
     splits = [
-        ("train", "train", [("negative", ""), ("random", "_alt")]),
+        ("train", "train", [("random", "_alt")]) \
+            if registry.debug else ("train", "train", [("negative", ""), ("random", "_alt")]),
+        # ("train", "train", [("negative", ""), ("random", "_alt")]),
         # ("val", "val", [("none", "")]),
         # ("val", "revqa", [("none", "")]),
         # ("val", "revqa_bt", [("none", "")])
     ]
 
+    # import pdb
+    # pdb.set_trace()
+
     for split, key, samplers in splits:
         dataset = VQAClassificationDataset(
-                    task=task_cfg["name"],
-                    dataroot=task_cfg["dataroot"],
-                    annotations_jsonpath=task_cfg[f"{split}_annotations_jsonpath"],
-                    split=task_cfg[f"{split}_split"],
-                    image_features_reader=task_feature_reader1[
-                        task_cfg["features_h5path1"]
-                    ],
-                    gt_image_features_reader=task_feature_reader2[
-                        task_cfg["features_h5path2"]
-                    ],
-                    tokenizer=tokenizer,
-                    padding_index=0,
-                    max_seq_length=task_cfg["max_seq_length"],
-                    max_region_num=task_cfg["max_region_num"],
-                    extra_args=task_cfg
-                )
+            dataroot=task_cfg["dataroot"],
+            split=task_cfg[f"{split}_split"],
+            image_features_reader=task_feature_reader1[
+                task_cfg["features_h5path1"]
+            ],
+            tokenizer=tokenizer,
+            max_seq_length=task_cfg["max_seq_length"],
+            max_region_num=task_cfg["max_region_num"],
+            extra_args=task_cfg
+        )
 
         for sampler_name, tag in samplers:
             sampler = None
@@ -312,7 +308,7 @@ def LoadDatasets(task_cfg):
             dataloaders[f"{key}" + tag] = DataLoader(
                 dataset,
                 sampler=sampler,
-                batch_size=task_cfg["batch_size"] if not "alt" in tag else task_cfg["batch_size"]*2,
+                batch_size=task_cfg["batch_size"] if not "alt" in tag else task_cfg["batch_size"] * 2,
                 num_workers=registry.workers,
                 pin_memory=True,
                 drop_last=True if split == "train" else False
@@ -336,5 +332,3 @@ def compute_score_with_logits(logits, labels, device):
     one_hots.scatter_(1, logits.view(-1, 1), 1)
     scores = one_hots * labels
     return scores
-
-

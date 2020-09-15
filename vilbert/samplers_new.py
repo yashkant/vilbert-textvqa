@@ -66,24 +66,18 @@ class ContrastiveSampler(Sampler):
     def __init__(self,
                  data_source,
                  task_cfg,
-                 replacement=False,
-                 num_samples=None,
                  split="train"):
         self.data_source = data_source
-        self.replacement = replacement
-        self.num_samples = num_samples
         self.batch_size = task_cfg["batch_size"]
 
         if "trainval" in split:
             self.split = "trainval"
         elif "train" in split:
             self.split = "train"
-
-        if "re" in split:
-            self.split = "val"
+        else:
+            raise ValueError
 
         self.arg_split = split
-
         self.task_cfg = task_cfg
         self.epoch_idx = int(1e10)
         self.epochs = []
@@ -93,32 +87,12 @@ class ContrastiveSampler(Sampler):
         self.bin_ans_threshold = self.task_cfg.get("bin_ans_threshold", None)
         self.freq_ans_threshold = self.task_cfg.get("freq_ans_threshold", None)
         self.iter_count = 0
-        # self.better_counter = 0  # increases with every build-call
-        self.processing_threads = 16
-
         logger.info(f"Use GT answers is: {self.task_cfg.get('use_gt_answer', False)}")
-
-        if self.num_samples is not None and replacement is False:
-            raise ValueError("With replacement=False, num_samples should not be specified, "
-                             "since a random permute will be performed.")
-
-        if self.num_samples is None:
-            self.num_samples = len(self.data_source)
-
-        if not isinstance(self.num_samples, int) or self.num_samples <= 0:
-            raise ValueError("num_samples should be a positive integeral "
-                             "value, but got num_samples={}".format(self.num_samples))
-        if not isinstance(self.replacement, bool):
-            raise ValueError("replacement should be a boolean value, but got "
-                             "replacement={}".format(self.replacement))
-
         self.entries = data_source.entries
         # map from question-id -> entry-idx
         self.question_map = data_source.question_map
-
-        if self.task_cfg["contrastive"] == "better":
-            logger.info("Loading Hard Negatives")
-            self.load_hard_negatives()
+        logger.info("Loading Hard Negatives")
+        self.load_hard_negatives()
 
     def load_hard_negatives(self):
         # import pdb
@@ -152,7 +126,6 @@ class ContrastiveSampler(Sampler):
                 else:
                     self.answer_map[ans_label] = [(entry_map_key, freq)]
 
-    # todo: move to dataset.py
     def read_annotations(self):
         ann_path = [
             "/nethome/ykant3/vilbert-multi-task/datasets/VQA/v2_mscoco_train2014_annotations.json",
@@ -160,7 +133,6 @@ class ContrastiveSampler(Sampler):
         ]
         ann_data = json.load(open(ann_path[0]))["annotations"] + json.load(open(ann_path[1]))["annotations"]
         self.qid_ans_dict = {}
-
         for ann in ann_data:
             ans_counter = Counter()
             for ans in ann["answers"]:
@@ -175,12 +147,10 @@ class ContrastiveSampler(Sampler):
         """
         1. Builds Map from min(repharsed_ids) = info
         2. Builds re_bins = items of above dict sorted by ids
-
         """
 
         self.entry_map = {}
         self.answer_map = {}
-
         for entry in tqdm(self.entries, desc="Building question and answer maps", total=len(self.entries)):
             question_ids = list(set(deepcopy(entry["rephrasing_ids"]) + [entry["question_id"]]))
             question_ids.sort()
@@ -188,38 +158,31 @@ class ContrastiveSampler(Sampler):
             # skip creating bins for rephrasings
             if entry_map_key in self.entry_map:
                 continue
-            try:
-                self.entry_map[entry_map_key] = {
-                    "question_ids": question_ids,
-                    "iter_idx": 0,
-                    "entry_inds": [self.question_map[x] if not registry.debug else 0 for x in question_ids],
-                }
-
-                self.add_to_answer_map(entry_map_key)
-            except:
-                import pdb
-                pdb.set_trace()
+            self.entry_map[entry_map_key] = {
+                "question_ids": question_ids,
+                "iter_idx": 0,
+                "entry_inds": [self.question_map[x] if not registry.debug else 0 for x in question_ids],
+            }
+            self.add_to_answer_map(entry_map_key)
 
         # post-process: remove duplicates, build sampling weights
         for key in tqdm(self.answer_map.keys(), desc="Post-processing", total=len(self.answer_map)):
             self.answer_map[key] = list(set(self.answer_map[key]))
             ans_labels, freqs = list(zip(*self.answer_map[key]))
             self.answer_map[key] = (cycle(ans_labels), len(ans_labels))
-            # not using weights
-            # self.answer_map[key][1] = np.array(self.answer_map[key][1])/sum(self.answer_map[key][1])
 
         self.re_bins = sorted(self.entry_map.items(), key=lambda x: x[0])
         for idx, bin in enumerate(self.re_bins):
             bin[1]["bin_idx"] = idx
             bin[1]["iter_idx"] = cycle(list(range(len(bin[1]["question_ids"]))))
 
-    def get_entry_answers(self, entry):
-        entry_answers = entry["answer"]["labels"]
-        if entry_answers is None:
-            entry_answers = []
-        else:
-            entry_answers = entry_answers.tolist()
-        return entry_answers
+    # def get_entry_answers(self, entry):
+    #     entry_answers = entry["answer"]["labels"]
+    #     if entry_answers is None:
+    #         entry_answers = []
+    #     else:
+    #         entry_answers = entry_answers.tolist()
+    #     return entry_answers
 
     @staticmethod
     def get_hard_negative(negative_list, batch_bins, entry_map, question_rephrase_dict):
@@ -283,7 +246,7 @@ class ContrastiveSampler(Sampler):
         # shuffle bins
         self.re_bins = ContrastiveSampler.shuffle(self.re_bins, 0, len(self.re_bins))
 
-        # intial-pass
+        # add references and positives
         batches, batches_bins = ContrastiveSampler.get_batches(_args)
 
         # replace w/ original batch-size
@@ -292,10 +255,8 @@ class ContrastiveSampler(Sampler):
 
         # shuffle bins
         self.re_bins = ContrastiveSampler.shuffle(self.re_bins, 0, len(self.re_bins))
+        # add hard-negatives
         batches, batches_bins = ContrastiveSampler.add_hard_negatives(batches, batches_bins, _args, question_rephrase_dict)
-
-        # if registry.sdebug:
-        #     self.debug(batches)
 
         num_epochs = int(len(batches)/self.num_batches)
         epochs = []
@@ -313,17 +274,6 @@ class ContrastiveSampler(Sampler):
         self.epoch_idx = 0
         self.epochs = epochs
 
-    def check_gt_condition(self, entry_idx, batch_answers):
-        entry_answers = self.get_entry_answers(self.entries[entry_idx])
-        return len(set(batch_answers).intersection(set(entry_answers))) > 0
-
-    def shuffle(self, array, start_idx, end_idx):
-        np.random.shuffle(array[start_idx:end_idx])
-        for i, item in enumerate(array[start_idx:end_idx]):
-            item[1]["bin_idx"] = i + start_idx
-        self.assert_bin_inds()
-        return array
-
     @staticmethod
     def shuffle(array, start_idx, end_idx):
         np.random.shuffle(array[start_idx:end_idx])
@@ -331,10 +281,6 @@ class ContrastiveSampler(Sampler):
             item[1]["bin_idx"] = i + start_idx
         ContrastiveSampler.assert_bins(array)
         return array
-
-    def assert_bin_inds(self):
-        for i, item in enumerate(self.re_bins):
-            assert item[1]["bin_idx"] == i
 
     @staticmethod
     def get_batches(
@@ -540,16 +486,12 @@ class ContrastiveSampler(Sampler):
                 break
 
     def __iter__(self):
-        if self.task_cfg["contrastive"] == "better":
-            # if epochs are exhausted, replenish
-            if self.epoch_idx >= len(self.epochs):
-                self.build_hard_batches()
+        # if epochs are exhausted, replenish
+        if self.epoch_idx >= len(self.epochs):
+            self.build_hard_batches()
 
-            epoch_indices = self.epochs[self.epoch_idx]
-            self.epoch_idx += 1
-        else:
-            raise ValueError
-
+        epoch_indices = self.epochs[self.epoch_idx]
+        self.epoch_idx += 1
         logger.info(f"No. of Unique Samples: {len(set(epoch_indices))} / {len(epoch_indices)}")
         self.iter_count += 1
         return iter(epoch_indices)

@@ -1,33 +1,15 @@
-import argparse
-import bisect
 import json
 import logging
 import os
-import random
 from collections import defaultdict
 from copy import deepcopy
 from io import open
-from itertools import combinations
 
 import numpy as np
-import pprint
-from tensorboardX import SummaryWriter
-from torch.optim import Adam
-from tqdm import tqdm
-import yaml
-from easydict import EasyDict as edict
-
-import pdb
-import sys
 import torch
-import torch.nn.functional as F
-import torch.nn as nn
+from tqdm import tqdm
 
 from tools.registry import registry
-
-import vilbert.utils as utils
-import torch.distributed as dist
-
 from vilbert.metrics import get_consistency_score
 
 logging.basicConfig(

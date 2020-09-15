@@ -19,7 +19,6 @@ import yaml
 from easydict import EasyDict as edict
 from tqdm import tqdm
 
-import vilbert.utils as utils
 from evaluator import final_evaluate
 from tools.registry import registry
 from vilbert.metrics import get_consistency_score
