@@ -673,7 +673,7 @@ def main():
     best_val_score = 0
     best_val_loss = np.inf
     best_val_epoch = 0
-    # grad_dots = []
+    grad_dots = []
     grad_diff = []
     import time
     eval_iter_factor = task_cfg["TASK19"].get("eval_iter_factor", 1500)
@@ -741,12 +741,12 @@ def main():
                         l2_grad = [k.grad.clone().view(-1) for k in model.parameters()]
                         l2_grad = torch.cat(l2_grad)
                         l_dot = torch.dot(l1_grad, l2_grad)
-                        # grad_dots.append(float(l_dot))
+                        grad_dots.append((global_step, float(l_dot)))
                         l2_grad_mag = torch.dot(l2_grad, l2_grad)
                         l1_grad_mag = torch.dot(l1_grad, l1_grad)
 
                         # l1: SCL and l2: CE
-                        if l_dot < 0 and task_cfg["TASK19"].get("pcgrad_adjust", True):
+                        if l_dot < 0 and task_cfg["TASK19"].get("pcgrad_adjust", False):
                             l1_proj = (l_dot/l2_grad_mag) * l2_grad
                             l2_proj = (l_dot/l1_grad_mag) * l1_grad
 
@@ -910,7 +910,7 @@ def main():
                 logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}, "
                             # f"Grad Dot: {sum(grad_dots) / len(grad_dots) if len(grad_dots) > 0 else None}, '"
                             f"Grad Diff: {sum(grad_diff) / len(grad_diff) if len(grad_diff) > 0 else None}")
-                grad_dots, grad_diff = [], []
+                grad_diff = []
 
             # decided whether to evaluate on each tasks.
             for task_id in task_ids:
@@ -1076,6 +1076,10 @@ def main():
     # Todo: Add config for final_evaluation splits [re-vqa, val, test]
 
     tbLogger.txt_close()
+
+    np.save("grad_dots.npy", grad_dots)
+    import pdb
+    pdb.set_trace()
 
     # Run final-evaluation for EvalAI file.
     for split in ["test", "val"]:
