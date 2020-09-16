@@ -62,7 +62,9 @@ class RandomSampler(Sampler):
 
 
 class ContrastiveSampler(Sampler):
-
+    """
+    Sample Contrastive Batches for Scaled Supervised Contrastive Loss.
+    """
     def __init__(self,
                  data_source,
                  task_cfg,
@@ -95,18 +97,8 @@ class ContrastiveSampler(Sampler):
         self.load_hard_negatives()
 
     def load_hard_negatives(self):
-        # import pdb
-        # pdb.set_trace()
-        if "fil" in registry.train_split:
-            negs_path = "datasets/VQA/back-translate/fil_dcp_sampling_{}_train_question_negs.pkl".format(registry.aug_filter["sampling"])
-        elif "cc_v2" in registry.train_split:
-            negs_path = "datasets/VQA/cc-re/cc_re_train_question_negs_v2.pkl"
-        elif "cc" in registry.train_split:
-            negs_path = "datasets/VQA/cc-re/cc_re_train_question_negs.pkl"
-        else:
-            negs_path = "datasets/VQA/back-translate/fil_{}_question_negs.pkl".format(self.split)
-
-        logger.info(f"Hard negatives path: {negs_path}")
+        negs_path = "datasets/VQA/back-translate/fil_{}_question_negs.pkl".format(self.split)
+        logger.info(f"Negatives path: {negs_path}")
         assert os.path.exists(negs_path)
         self.negs_data = cPickle.load(open(negs_path, "rb"))
         self.negs_index_dict = {}
@@ -128,8 +120,8 @@ class ContrastiveSampler(Sampler):
 
     def read_annotations(self):
         ann_path = [
-            "/nethome/ykant3/vilbert-multi-task/datasets/VQA/v2_mscoco_train2014_annotations.json",
-            "/nethome/ykant3/vilbert-multi-task/datasets/VQA/v2_mscoco_val2014_annotations.json",
+            "data-release/splits/v2_mscoco_train2014_annotations.json",
+            "data-release/splits/v2_mscoco_val2014_annotations.json",
         ]
         ann_data = json.load(open(ann_path[0]))["annotations"] + json.load(open(ann_path[1]))["annotations"]
         self.qid_ans_dict = {}
@@ -212,14 +204,10 @@ class ContrastiveSampler(Sampler):
     def build_hard_batches(self):
         self.build_maps()
         self.re_bins = ContrastiveSampler.shuffle(self.re_bins, 0, len(self.re_bins))
-        neg_replace = self.task_cfg["neg_replace"]
         init_batch_size = self.task_cfg["init_batch_size"]
         neg_type_weights = self.task_cfg["neg_type_weights"]
         assert np.sum(neg_type_weights) == 1.0
-        # assert self.batch_size % init_batch_size == 0
-        assert neg_replace
         init_pass_bs = init_batch_size + self.num_positives*init_batch_size
-        # assert init_pass_bs > (self.batch_size - init_pass_bs)
         num_batches = int(len(self.entries)/init_batch_size)
         question_rephrase_dict = getattr(registry, f"question_rephrase_dict_{self.split}")
 

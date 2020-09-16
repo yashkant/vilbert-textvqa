@@ -54,3 +54,4 @@ save
 jlogs/
 wandb
 dtrain.py
+data-release

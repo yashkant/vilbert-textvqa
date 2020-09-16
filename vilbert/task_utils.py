@@ -1,34 +1,31 @@
 import logging
 import time
 from bisect import bisect
+from collections import defaultdict
 
-import numpy as np
 import torch
 import torch.nn as nn
-from pytorch_transformers.optimization import (
-    WarmupConstantSchedule,
-    WarmupLinearSchedule,
-)
 from pytorch_transformers.tokenization_bert import BertTokenizer
 from torch.optim import Adam
 from torch.optim.lr_scheduler import (
     LambdaLR,
 )
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from tools.registry import registry
-from vilbert.datasets.vqa_dataset import  VQAClassificationDataset
+from vilbert.datasets.vqa_dataset import VQAClassificationDataset
 from vilbert.datasets._image_features_reader import ImageFeaturesH5Reader
-from vilbert.losses import SupConLoss
+from vilbert.losses import ScaledSupConLoss
+from vilbert.metrics import get_consistency_score
 
 logger = logging.getLogger(__name__)
 
 LossMap = {
     "BCEWithLogitLoss": nn.BCEWithLogitsLoss(reduction="mean"),
-    "CrossEntropyLoss": nn.CrossEntropyLoss(),
-    "SCLLoss": SupConLoss(temperature=registry.temperature,
-                          formulation=registry.scl_formulation,
-                          base_temperature=registry.base_temperature),  # using the default parameter setting
+    "SCLLoss": ScaledSupConLoss(temperature=registry.temperature,
+                                formulation=registry.scl_formulation,
+                                base_temperature=registry.base_temperature),  # using the default parameter setting
 }
 
 
@@ -45,94 +42,56 @@ def clip_gradients(model, max_grad_l2_norm, clip_norm_mode):
             raise NotImplementedError("Clip norm mode %s not implemented" % clip_norm_mode)
 
 
-def get_optim_scheduler(config,
+def get_optim_scheduler(task_cfg,
                         optimizer_grouped_parameters,
-                        num_train_optimization_steps,
                         base_lr,
-                        no_warmup=False
                         ):
-    optim_config = config["optim"]
-    scheduler_config = config["lr_scheduler"]
+    optimizer = Adam(optimizer_grouped_parameters, lr=base_lr)
+    warmup_iters = task_cfg["warmup_iters"]
+    warmup_factor = task_cfg["warmup_factor"]
+    lr_decay_iters = task_cfg["lr_decay_iters"]
+    lr_decay = task_cfg["lr_decay"]
 
-    if optim_config == "Adam":
-        optimizer = Adam(optimizer_grouped_parameters, lr=base_lr)
-    else:
-        raise ValueError
-
-    warmpu_steps = config["warmup_proportion"] * num_train_optimization_steps
-
-    if not no_warmup:
-        if scheduler_config == "warmup_linear":
-            warmup_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=warmpu_steps,
-                                                    t_total=num_train_optimization_steps)
-        elif scheduler_config == "pythia_warmup_decay":
-            warmup_iters = config.get("warmup_iters", 1000)
-            lr_decay_iters = config.get("lr_decay_iters", [14000, 19000])
-            warmup_factor = config.get("warmup_factor", 0.1)
-
-            # total_iters = int(np.ceil(34602/config["batch_size"])*num_train_optimization_steps)
-
-            def pythia_lr_update(_iter):
-                if _iter <= warmup_iters:
-                    alpha = float(_iter) / float(warmup_iters)
-                    return warmup_factor * (1.0 - alpha) + alpha
-                else:
-                    idx = bisect(lr_decay_iters, _iter)
-                    return pow(config.get("lr_decay", 0.2), idx)
-
-            warmup_scheduler = LambdaLR(optimizer, lr_lambda=pythia_lr_update)
-            warmpu_steps = -1
+    def lr_update(_iter):
+        if _iter <= warmup_iters:
+            alpha = float(_iter) / float(warmup_iters)
+            return warmup_factor * (1.0 - alpha) + alpha
         else:
-            warmup_scheduler = WarmupConstantSchedule(optimizer, warmup_steps=warmpu_steps)
-        logger.info(f"Warmup Scheduler: {str(warmup_scheduler)}")
-    else:
-        warmup_scheduler = None
-        logger.info(f"Not using Warmup Scheduler")
+            idx = bisect(lr_decay_iters, _iter)
+            return pow(lr_decay, idx)
 
-    return optimizer, warmup_scheduler, None, scheduler_config, warmpu_steps
+    warmup_scheduler = LambdaLR(optimizer, lr_lambda=lr_update)
+    return optimizer, warmup_scheduler
 
 
 def to_device(batch_dict, device):
     if device.type == "cpu":
         return
-
     for batch in batch_dict:
         for key, value in batch.items():
-
             if key in ["image_id", "question_id"]:
                 continue
-
             if isinstance(value, torch.Tensor):
                 batch[key] = value.cuda(device=device, non_blocking=True)
 
 
-def ForwardModelsVal(args,
-                     task_cfg,
-                     device,
-                     task_id,
-                     batch_dict,
-                     model,
-                     task_losses,
-                     revqa_eval=False,
-                     revqa_split="re_total",
-                     return_batch=False):
+def forward_eval(device,
+                 batch_dict,
+                 model,
+                 revqa_eval=False,
+                 revqa_split="revqa",
+                 return_batch=False):
     if not isinstance(batch_dict, tuple) and not isinstance(batch_dict, list):
         batch_dict = [batch_dict]
 
-    # send to device
-    to_device(batch_dict, device)
-
+    batch_size = len(batch_dict[0]["question_id"])
     for batch in batch_dict:
-        question = batch["question_indices"]
-        # batch["task_tokens"] = question.new().resize_(question.size(0), 1).fill_(int(task_id[4:]))
-        batch_size = len(question)
-        results_dict = model(batch)
+        results_dict = run_model(batch, model, device)
         batch.update(results_dict)
 
-    revqa_split = "val" if registry.revqa_eval_on_val else revqa_split
     loss, batch_score = add_ce_loss(batch_dict[0], device, val_run=True, revqa_eval=revqa_eval, split=revqa_split)
 
-    # When testing move this to above loss calculation
+    # testing
     if registry.get("eval_only", False):
         return batch_dict[0]
 
@@ -178,21 +137,16 @@ def run_model(batch, model, device):
     return results_dict
 
 
-def ForwardModelsTrain(
-        device,
-        dataloaders,
-        model,
-        train_type="scl"
-):
+def forward_train(device, dataloaders, model, train_type):
     if registry.debug:
         train_type = "ce"
 
-    if train_type == "ce" and registry.alt_train:
-        batch_dicts = get_batch(dataloaders, "train_alt")
+    if train_type == "ce":
+        batch_dicts = get_batch(dataloaders, "train_ce")
         # throw away rephrasings batch
         batch_dicts = batch_dicts[:1]
     else:
-        batch_dicts = get_batch(dataloaders, "train")
+        batch_dicts = get_batch(dataloaders, "train_scl")
 
     for batch in batch_dicts:
         results_dict = run_model(batch, model, device)
@@ -207,17 +161,11 @@ def ForwardModelsTrain(
     return loss, float(batch_score)
 
 
-def add_ce_loss(batch_dict, device, val_run=False, revqa_eval=False, split="re_total"):
+def add_ce_loss(batch_dict, device, val_run=False, revqa_eval=False, split="revqa"):
     if len(batch_dict) == 2 and not val_run:
         # train time
-        if not registry.ce_half:
-            vil_preds = torch.cat([batch_dict[0]["vil_prediction"], batch_dict[1]["vil_prediction"]], dim=0)
-            vil_targets = torch.cat([batch_dict[0]["target"], batch_dict[1]["target"]], dim=0)
-        else:
-            # randomly pick the half batch from SCL
-            idx = np.random.randint(2)
-            vil_preds = batch_dict[idx]["vil_prediction"]
-            vil_targets = batch_dict[idx]["target"]
+        vil_preds = torch.cat([batch_dict[0]["vil_prediction"], batch_dict[1]["vil_prediction"]], dim=0)
+        vil_targets = torch.cat([batch_dict[0]["target"], batch_dict[1]["target"]], dim=0)
     else:
         if len(batch_dict) == 1:
             batch_dict = batch_dict[0]
@@ -240,84 +188,68 @@ def add_ce_loss(batch_dict, device, val_run=False, revqa_eval=False, split="re_t
         for idx, qid in enumerate(batch_dict["question_id"].tolist()):
             min_qid = registry[f"question_rephrase_dict_{split}"][qid]
             vqa_score = batch_dict["vqa_scores"][idx]
-            bins_key = "revqa_bins" if split in ["re_total", "val"] else "revqa_bt_bins"
+            bins_key = "revqa_bins" if split in ["revqa", "val"] else "revqa_bt_bins"
             registry[bins_key][min_qid].append((qid, vqa_score))
 
     return vl_loss, batch_score
 
 
-def LoadLosses(task_cfg, task_ids):
-    losses = {}
-    task_types = []
-    for i, task_id in enumerate(task_ids):
-        task = "TASK" + task_id
-        model_type = task_cfg[task]["type"]
-        if model_type not in task_types:
-            task_types.append(model_type)
-        losses[task] = LossMap[task_cfg[task]["loss"]]
-
-    return losses
-
-
-def LoadDatasets(task_cfg):
-    from vilbert.samplers_new import RandomSampler, ContrastiveSampler
+def load_dataset(task_cfg):
+    from vilbert.samplers import RandomSampler, ContrastiveSampler
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
 
-    task_feature_reader1 = {}
-    task_feature_reader2 = {}
-    task_feature_reader1[task_cfg["features_h5path1"]] = ImageFeaturesH5Reader(task_cfg["features_h5path1"])
-    task_feature_reader2[task_cfg["features_h5path2"]] = ImageFeaturesH5Reader(task_cfg["features_h5path2"])
+    # image-features
+    trainval_features = ImageFeaturesH5Reader(task_cfg["trainval_features_path"])
+    test_features = ImageFeaturesH5Reader(task_cfg["test_features_path"])
 
     dataloaders = {}
-    splits = [
-        ("train", "train", [("random", "_alt")]) \
-            if registry.debug else ("train", "train", [("negative", ""), ("random", "_alt")]),
-        # ("train", "train", [("negative", ""), ("random", "_alt")]),
-        # ("val", "val", [("none", "")]),
-        # ("val", "revqa", [("none", "")]),
-        # ("val", "revqa_bt", [("none", "")])
-    ]
 
-    # import pdb
-    # pdb.set_trace()
+    # one train split and multiple evaluation splits
+    # load_splits = [task_cfg["train_split"]] + task_cfg["val_split"]
+    load_splits = ["minval", "revqa_bt", "revqa", "val", "test", "train"]
 
-    for split, key, samplers in splits:
+    for split in load_splits:
         dataset = VQAClassificationDataset(
-            dataroot=task_cfg["dataroot"],
-            split=task_cfg[f"{split}_split"],
-            image_features_reader=task_feature_reader1[
-                task_cfg["features_h5path1"]
-            ],
+            split=split,
+            image_features_reader=trainval_features if "test" not in split else test_features,
             tokenizer=tokenizer,
-            max_seq_length=task_cfg["max_seq_length"],
-            max_region_num=task_cfg["max_region_num"],
             extra_args=task_cfg
         )
+        # specify the type of samplers
+        if "train" in split:
+            if registry.alt_train:
+                samplers = ["scl", "ce"]
+            else:
+                samplers = ["ce"]
+        else:
+            samplers = ["none"]
 
-        for sampler_name, tag in samplers:
-            sampler = None
-            if sampler_name == "random":
+        # build loaders for each sampler type
+        for _sampler in samplers:
+            sampler_tag = f"_{_sampler}" if _sampler != "none" else ""
+            batch_size = task_cfg["batch_size"] if _sampler == "scl" else task_cfg["batch_size"] * 2
+
+            # build the sampler
+            if _sampler == "ce":
                 sampler = RandomSampler(dataset)
-            elif sampler_name == "negative":
+            elif _sampler == "scl":
                 sampler = ContrastiveSampler(
                     dataset,
                     task_cfg,
                     split=split
                 )
+            else:
+                sampler = None
 
-            dataloaders[f"{key}" + tag] = DataLoader(
+            split_tag = "train" if "train" in split else split
+            dataloaders[f"{split_tag}" + sampler_tag] = DataLoader(
                 dataset,
                 sampler=sampler,
-                batch_size=task_cfg["batch_size"] if not "alt" in tag else task_cfg["batch_size"] * 2,
+                batch_size= batch_size,
                 num_workers=registry.workers,
                 pin_memory=True,
                 drop_last=True if split == "train" else False
             )
-
-    # add iterators
-    # keys = list(dataloaders.keys())
-    # for key in keys:
-    #     dataloaders[f"{key}_iter"] = iter(dataloaders[key])
 
     return dataloaders
 

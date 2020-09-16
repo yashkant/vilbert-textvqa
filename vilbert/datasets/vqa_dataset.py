@@ -52,7 +52,7 @@ def filter_aug(questions_list, answers_list):
         assert len(que_list) == len(ans_list)
         # filter for sim-threshold
         if sim_threshold > 0:
-            que_list, ans_list = zip(*[(q,a) for q,a in zip(que_list, ans_list) if q["sim_score"] > sim_threshold])
+            que_list, ans_list = zip(*[(q, a) for q, a in zip(que_list, ans_list) if q["sim_score"] > sim_threshold])
 
         # filter for max-samples
         if max_samples > 0:
@@ -85,7 +85,6 @@ def rephrasings_dict(split, questions):
         else:
             question_rephrase_dict[question["question_id"]] = question["question_id"]
 
-
     # used in evaluation, hack to set attribute
     from easydict import EasyDict
     super(EasyDict, registry).__setattr__(f"question_rephrase_dict_{split}", question_rephrase_dict)
@@ -95,22 +94,20 @@ def rephrasings_dict(split, questions):
 
 def load_qa(name, sort=True, use_filter=False, set_dict=False):
     split_path_dict = {
-        "train_aug": ["datasets/VQA/back-translate/org3_bt_v2_OpenEnded_mscoco_train2014_questions.pkl",
-                      "datasets/VQA/back-translate/org2_bt_train_target.pkl", "train"],
-        "train": ["datasets/VQA/v2_OpenEnded_mscoco_train2014_questions.json",
-                      "datasets/VQA/cache/train_target.pkl", "train"],
-        "val": ["datasets/VQA/v2_OpenEnded_mscoco_val2014_questions.json",
-                      "datasets/VQA/cache/val_target.pkl", "val"],
-        "test": ["datasets/VQA/v2_OpenEnded_mscoco_test2015_questions.json",
-                      "", "test"],
-        "val_aug": ["datasets/VQA/back-translate/org3_bt_v2_OpenEnded_mscoco_val2014_questions.pkl",
-                    "datasets/VQA/back-translate/org2_bt_val_target.pkl", "val"],
-        "trainval_aug": ["datasets/VQA/back-translate/org3_bt_v2_OpenEnded_mscoco_trainval2014_questions.pkl",
-                         "datasets/VQA/back-translate/org2_bt_trainval_target.pkl", "trainval"],
-        "minval_aug": ["datasets/VQA/back-translate/org3_bt_v2_OpenEnded_mscoco_minval2014_questions.pkl",
-                       "datasets/VQA/back-translate/org2_bt_minval_target.pkl", "minval"],
-        "re_total": ["data/re-vqa/data/revqa_total_proc.json", "datasets/VQA/cache/revqa_total_target.pkl", "re_total"],
-
+        "train_aug": ["data-release/splits/questions_train_aug.pkl",
+                      "data-release/splits/ans_train_aug.pkl", "train"],
+        "train": ["data-release/splits/v2_OpenEnded_mscoco_train2014_questions.json",
+                  "data-release/splits/train_target.pkl", "train"],
+        "val": ["data-release/splits/v2_OpenEnded_mscoco_val2014_questions.json",
+                "data-release/splits/val_target.pkl", "val"],
+        "val_aug": ["data-release/splits/questions_val_aug.pkl",
+                    "data-release/splits/ans_val_aug.pkl", "val"],
+        "test": ["data-release/splits/v2_OpenEnded_mscoco_test2015_questions.json",
+                 "", "test"],
+        "trainval_aug": ["data-release/splits/questions_trainval_aug.pkl",
+                         "data-release/splits/ans_trainval_aug.pkl", "trainval"],
+        "revqa": ["data-release/splits/revqa_total_proc.pkl",
+                  "data-release/splits/revqa_total_proc_target.pkl", "revqa"],
 
     }
     questions_path, answers_path, split = split_path_dict[name]
@@ -134,30 +131,29 @@ def load_qa(name, sort=True, use_filter=False, set_dict=False):
     if set_dict:
         rephrasings_dict(split, questions)
 
+    assert len(questions) == len(answers)
+    logger.info(f"Samples after filtering: {len(questions)}")
     return questions, answers
 
 
-def load_entries(dataroot, name):
+def load_entries(name):
     """Load questions and answers.
     """
-
-    import pdb
-    pdb.set_trace()
 
     if name == "train" or name == "val":
         questions, answers = load_qa(name)
         if registry.debug:
             questions, answers = questions[:40000], answers[:40000]
 
-    elif name in ["train_aug", "val_aug", "trainval_aug", "minval_aug", "re_total"]:
+    elif name in ["train_aug", "val_aug", "trainval_aug"]:
         questions, answers = load_qa(name, sort=False, use_filter=True, set_dict=True)
-        assert len(questions) == len(answers)
-        logger.info(f"Samples after filtering: {len(questions)}")
 
-    # replace human rephrasings questions w/ BT rephrasings
-    elif name == "re_total_bt":
-        val_questions, val_answers = load_qa(name, sort=False, use_filter=True)
-        dump_path = "/nethome/ykant3/vilbert-multi-task/data/re-vqa/data/non_overlap_ids.npy"
+    elif name == "revqa":
+        questions, answers = load_qa(name, sort=False, use_filter=False, set_dict=True)
+
+    elif name == "revqa_bt":
+        val_questions, val_answers = load_qa("val_aug", sort=False, use_filter=True)
+        dump_path = "data-release/splits/non_overlap_ids.npy"
         non_overlap_ids = np.load(dump_path, allow_pickle=True)
         questions, answers = [], []
         for q, a in zip(val_questions, val_answers):
@@ -178,6 +174,8 @@ def load_entries(dataroot, name):
 
     elif name == "test":
         questions = load_qa(name)
+        if registry.debug:
+            questions = questions[:40000]
 
     else:
         assert False, f"data split {name} is not recognized."
@@ -200,46 +198,41 @@ def load_entries(dataroot, name):
 
 class VQAClassificationDataset(Dataset):
     def __init__(
-        self,
-        dataroot,
-        split,
-        image_features_reader,
-        tokenizer,
-        padding_index=0,
-        max_seq_length=16,
-        max_region_num=101,
-        extra_args=None,
+            self,
+            split,
+            image_features_reader,
+            tokenizer,
+            padding_index=0,
+            extra_args=None,
     ):
         """
         Builds self.entries by reading questions and answers and caches them.
         """
         super().__init__()
         self.split = split
-        ans2label_path = os.path.join(dataroot, "cache", "trainval_ans2label.pkl")
-        label2ans_path = os.path.join(dataroot, "cache", "trainval_label2ans.pkl")
+        ans2label_path = os.path.join(extra_args["dataroot"], "cache", "trainval_ans2label.pkl")
+        label2ans_path = os.path.join(extra_args["dataroot"], "cache", "trainval_label2ans.pkl")
         self.ans2label = cPickle.load(open(ans2label_path, "rb"))
         self.label2ans = cPickle.load(open(label2ans_path, "rb"))
         # attach to registry
         registry.ans2label = self.ans2label
         registry.label2ans = self.label2ans
         self.num_labels = len(self.ans2label)
-        self._max_region_num = max_region_num
-        self._max_seq_length = max_seq_length
+        self._max_region_num = extra_args["max_region_num"]
+        self._max_seq_length = extra_args["max_seq_length"]
         self._image_features_reader = image_features_reader
         self._tokenizer = tokenizer
         self._padding_index = padding_index
         self.debug = registry.debug
         registry.debug = self.debug
         self.extra_args = extra_args
-        self.mask_image = registry.mask_image
 
-        self.entries = load_entries(dataroot, split)
+        self.entries = load_entries(split)
         # convert questions to tokens, create masks, segment_ids
-        self.tokenize(max_seq_length)
+        self.tokenize(self._max_seq_length)
         self.tensorize()
         self.mean_read_time = 0.0
         self.num_samples = 0
-
 
     def tokenize(self, max_length=16):
         """Tokenizes the questions."""
@@ -322,10 +315,6 @@ class VQAClassificationDataset(Dataset):
             if labels is not None:
                 target.scatter_(0, labels, scores)
 
-        # remove all the images via masking!
-        if self.mask_image:
-            image_mask = torch.zeros_like(image_mask)
-
         item_dict.update({
             "input_imgs": features,
             "image_mask": image_mask,
@@ -343,9 +332,9 @@ class VQAClassificationDataset(Dataset):
 
         # don't use while evaluation loop
         if self.extra_args.get("contrastive", None) in ["better"] \
-                and self.split not in ["minval", "re_total", "re_val", "test", "val"]:
+                and self.split not in ["minval", "revqa", "test", "val"]:
             return_list = [item_dict]
-            item_pos_dicts = [deepcopy(item_dict) for _ in range(registry.num_rep-1)]
+            item_pos_dicts = [deepcopy(item_dict) for _ in range(registry.num_rep - 1)]
             # when there's no rephrasing available send the original
             if len(entry["rephrasing_ids"]) == 0:
                 item_dict["mask"] = item_dict["mask"] * 0
@@ -354,7 +343,7 @@ class VQAClassificationDataset(Dataset):
                 return_list.extend(item_pos_dicts)
                 return return_list
 
-            que_ids = np.random.choice(entry["rephrasing_ids"], registry.num_rep-1)
+            que_ids = np.random.choice(entry["rephrasing_ids"], registry.num_rep - 1)
             pos_entries = [self.entries[self.question_map[qid]] for qid in que_ids]
 
             for id, pe in zip(item_pos_dicts, pos_entries):

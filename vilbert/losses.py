@@ -6,13 +6,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class SupConLoss(torch.nn.Module):
-    """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
+class ScaledSupConLoss(torch.nn.Module):
+    """Scaled Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
     It also supports the unsupervised contrastive loss in SimCLR"""
 
     def __init__(self, temperature=0.07, contrast_mode='all',
                  base_temperature=0.07, formulation="normal"):
-        super(SupConLoss, self).__init__()
+        super(ScaledSupConLoss, self).__init__()
         self.temperature = temperature
         self.contrast_mode = contrast_mode
         self.base_temperature = base_temperature
@@ -36,15 +36,8 @@ class SupConLoss(torch.nn.Module):
             A loss scalar.
         """
 
-        if registry.use_rephrasings:
-            ####
-            features = torch.cat(
-                [bd["contrastive_projection_norm"].unsqueeze(dim=1) for bd in batch_dict], dim=1
-            )
-
-        else:
-            # joint features
-            features = batch_dict[0]["contrastive_projection_norm"].unsqueeze(dim=1)
+        # join features
+        features = torch.cat([bd["contrastive_projection_norm"].unsqueeze(dim=1) for bd in batch_dict], dim=1)
 
         # targets for the batch is the one with highest score
         labels = batch_dict[0]["target"].argmax(dim=-1).view(-1, 1)

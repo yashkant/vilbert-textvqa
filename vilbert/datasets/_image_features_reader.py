@@ -1,17 +1,9 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
-
-# This source code is licensed under the MIT license found in the
-# LICENSE file in the root directory of this source tree.
-
-from typing import List
-import csv
-import h5py
-import numpy as np
 import copy
 import pickle
+from typing import List
+
 import lmdb  # install lmdb by "pip install lmdb"
-import base64
-import pdb
+import numpy as np
 
 
 class ImageFeaturesH5Reader(object):
@@ -27,8 +19,6 @@ class ImageFeaturesH5Reader(object):
        |--- "features" [shape: (num_images, num_proposals, feature_size)]
        +--- .attrs ("split", "train")
     ```
-    # TODO (kd): Add support to read boxes, classes and scores.
-
     Parameters
     ----------
     features_h5path : str

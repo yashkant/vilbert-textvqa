@@ -1,4 +1,3 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
 import functools
 import logging
 import math
@@ -246,19 +245,6 @@ class M4C(nn.Module):
 
 
     def _build_txt_encoding(self):
-        # Todo: Just add a linear module to remove the TextBERT
-        # from sentence_transformers import SentenceTransformer
-        # Todo: Modify SentenceTransformer such that we can use three layers from it.
-        #  the idea is — it will have better sensitivity to rephrasings.
-        # model_type = 'bert-base-uncased'
-        # if registry.use_sent_bert:
-        #     model_type = ""
-
-        # if self.text_bert_config == None:
-        #     self.text_bert = nn.Identity()
-        #     logger.log("Not using TextBERT")
-        #     return
-
         TEXT_BERT_HIDDEN_SIZE = 768
         # self.text_bert_config = BertConfig(**self.config.text_bert)
         if self.text_bert_config.text_bert_init_from_bert_base:
@@ -335,7 +321,7 @@ class M4C(nn.Module):
             "vil_prediction": batch_dict["vil_prediction"],
             "contrastive_projection_norm": batch_dict["contrastive_projection_norm"]
             if (hasattr(self.mmt_config, "contrastive") and self.mmt_config.contrastive in ["simclr", "better"]) else None,
-            "attention_weights": batch_dict["attention_weights"] if registry.squint_loss else None
+            # "attention_weights": batch_dict["attention_weights"] if registry.squint_loss else None
         }
         return results_dict
 
@@ -535,7 +521,7 @@ class MMT_VQA(BertPreTrainedModel):
         results = {
             'pooled_text_output': pooled_text_output,
             'pooled_image_output': pooled_image_output,
-            "attention_weights": encoder_outputs[1] if registry.squint_loss else None
+            # "attention_weights": encoder_outputs[1] if registry.squint_loss else None
         }
         return results
 
