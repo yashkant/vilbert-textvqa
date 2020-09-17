@@ -156,18 +156,19 @@ def main():
     loss_hist, score_hist = [], []
     global_step = 0
     start_epoch = 0
-    num_iters = len(dataloaders["train_scl"])
 
     # train loop
+    num_iters = len(dataloaders["train_ce"])
     for epochId in tqdm(range(start_epoch, task_cfg['num_epoch']), desc="Epoch"):
         model.train()
+        break
         for step in tqdm(range(num_iters), desc="Iters"):
 
             if global_step > args.hard_stop:
                 logger.info(f"Breaking w/ hard-stop at {args.hard_stop}")
                 break
 
-            iterId = step + (epochId * 1000)
+            iterId = step + (epochId * num_iters)
 
             # set run-type ("scl" vs "ce")
             if registry.alt_train and iterId % registry.ce_freq == 1:
@@ -204,10 +205,7 @@ def main():
                 logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}")
                 loss_hist, score_hist = [], []
 
-            import pdb
-            pdb.set_trace()
-
-            if True or (iterId != 0 and iterId % eval_iter_factor == 0) or (global_step == args.hard_stop):
+            if (iterId != 0 and iterId % eval_iter_factor == 0) or (global_step == args.hard_stop):
                 logger.info("Starting Validation Run....")
                 curr_val_score, curr_val_loss, cs_scores, cs_bt_scores = run_evaluation(dataloaders, device, model)
 
@@ -216,16 +214,18 @@ def main():
                 )
 
                 # checkpoint based on best vqa-score
-                if task_cfg["monitor_value"] == "vqa_score" and (best_vqa < curr_val_score):
-                    output_checkpoint = os.path.join(save_path, f"vqa_best.tar")
-                    torch.save(checkpoint_dict, output_checkpoint)
-                    best_vqa = curr_val_score
+                if task_cfg["monitor_value"] == "vqa_score":
+                    if best_vqa < curr_val_score:
+                        output_checkpoint = os.path.join(save_path, f"vqa_best.tar")
+                        torch.save(checkpoint_dict, output_checkpoint)
+                        best_vqa = curr_val_score
 
                 # checkpoint based on best cs-score on back-translation rephrasings
-                elif task_cfg["monitor_value"] == "cs_score" and (best_cs < cs_bt_scores[-1]):
-                    output_checkpoint = os.path.join(save_path, f"cs_best.tar")
-                    torch.save(checkpoint_dict, output_checkpoint)
-                    best_cs = cs_bt_scores[-1]
+                elif task_cfg["monitor_value"] == "cs_score":
+                    if best_cs < cs_bt_scores[-1]:
+                        output_checkpoint = os.path.join(save_path, f"cs_best.tar")
+                        torch.save(checkpoint_dict, output_checkpoint)
+                        best_cs = cs_bt_scores[-1]
                 else:
                     raise ValueError
 
@@ -261,9 +261,7 @@ def evaluate_rephrasings(dataloaders, model, device):
     reset_evaluation_bins()
     for batch in tqdm(dataloaders["revqa"], desc="Evaluate (Human Rephrasings)"):
         with torch.no_grad():  # turn off autograd engine
-            forward_eval(
-                device, batch, model, revqa_eval=True, revqa_split="revqa"
-            )
+            forward_eval(device, batch, model, revqa_eval=True, revqa_split="revqa")
 
     # collect consensus results
     human_cs_scores = get_consistency_score(bins_key="revqa_bins")
@@ -271,9 +269,7 @@ def evaluate_rephrasings(dataloaders, model, device):
 
     for batch in tqdm(dataloaders["revqa_bt"], desc="Evaluate (Back Translated Rephrasings)"):
         with torch.no_grad():  # turn off autograd engine
-            forward_eval(
-                device, batch, model, revqa_eval=True, revqa_split="revqa_bt"
-            )
+            forward_eval(device, batch, model, revqa_eval=True, revqa_split="revqa_bt")
 
     # collect consensus results
     bt_cs_scores = get_consistency_score(bins_key="revqa_bt_bins")
@@ -290,9 +286,6 @@ def run_evaluation(
         device,
         model,
 ):
-    import pdb
-    pdb.set_trace()
-
     from vilbert.task_utils import forward_eval
     model.eval()  # turn off dropout/batch-norm
 
@@ -304,6 +297,8 @@ def run_evaluation(
             val_scores.append(score * batch_size)
             val_losses.append(loss * batch_size)
             batch_sizes.append(batch_size)
+        if i == 2:
+            break
 
     # run consensus evaluation on human and back-translated rephrasings
     if registry.revqa_eval:

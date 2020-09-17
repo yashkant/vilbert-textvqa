@@ -52,3 +52,13 @@ python train.py \
 --task_file configs/baseline/concat-trainval.yml  \
 --tag concat-trainval \      # output folder
 ```
+
+## Result Files
+We also share the result files generated from above runs which could be submitted to the EvalAI challenge server to obtain the following results:
+  
+  Method  |  val   |  test-dev   |  test-std  |
+ ------- | ------ | ------ | ------ |
+Baseline (train)  | 66.31 | - | - |
+ConCAT (train)  | **53.99** | - | - |
+ConCAT (trainval)  | - | 69.51 | 69.22 |
+Baseline (trainval)  | - | **69.80** | **70.00** |

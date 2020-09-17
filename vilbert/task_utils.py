@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 
 LossMap = {
     "BCEWithLogitLoss": nn.BCEWithLogitsLoss(reduction="mean"),
-    "SCLLoss": ScaledSupConLoss(temperature=registry.temperature,
-                                formulation=registry.scl_formulation,
-                                base_temperature=registry.base_temperature),  # using the default parameter setting
+    "SCLLoss": ScaledSupConLoss(temperature=registry.get("temperature", 0.5),
+                                formulation=registry.get("scl_formulation", "normal"),
+                                base_temperature=registry.get("base_temperature", 0.07)),  # using the default parameter setting
 }
 
 
@@ -206,12 +206,12 @@ def load_dataset(task_cfg):
 
     # one train split and multiple evaluation splits
     # load_splits = [task_cfg["train_split"]] + task_cfg["val_split"]
-    load_splits = ["minval", "revqa_bt", "revqa", "val", "test", "train"]
+    load_splits = ["test", "val", "revqa_bt", "revqa", "train"]
 
     for split in load_splits:
         dataset = VQAClassificationDataset(
             split=split,
-            image_features_reader=trainval_features if "test" not in split else test_features,
+            image_features_reader   =trainval_features if "test" not in split else test_features,
             tokenizer=tokenizer,
             extra_args=task_cfg
         )
@@ -227,9 +227,13 @@ def load_dataset(task_cfg):
         # build loaders for each sampler type
         for _sampler in samplers:
             sampler_tag = f"_{_sampler}" if _sampler != "none" else ""
-            batch_size = task_cfg["batch_size"] if _sampler == "scl" else task_cfg["batch_size"] * 2
 
-            # build the sampler
+            if _sampler == "ce" and registry.alt_train:
+                batch_size = task_cfg["batch_size"] * 2
+            else:
+                batch_size = task_cfg["batch_size"]
+
+                # build the sampler
             if _sampler == "ce":
                 sampler = RandomSampler(dataset)
             elif _sampler == "scl":
@@ -248,7 +252,7 @@ def load_dataset(task_cfg):
                 batch_size= batch_size,
                 num_workers=registry.workers,
                 pin_memory=True,
-                drop_last=True if split == "train" else False
+                drop_last=True if split_tag == "train" else False
             )
 
     return dataloaders

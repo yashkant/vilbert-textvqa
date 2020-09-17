@@ -57,11 +57,13 @@ def final_evaluate(
     save_path,
     val_split
 ):
-    resume_file = save_path + "/cs_best.tar"
+    if registry["monitor_value"] == "cs_score":
+        resume_file = save_path + "/cs_best.tar"
+    else:
+        resume_file = save_path + "/vqa_best.tar"
 
     if not os.path.exists(resume_file):
-        import pdb
-        pdb.set_trace()
+        raise ValueError("Couldn't find the checkpoint")
 
     # set model for evaluation
     model = set_model(model, resume_file)
@@ -71,9 +73,6 @@ def final_evaluate(
 
     model.eval()
     results = {}
-
-    import pdb
-    pdb.set_trace()
 
     for batch in tqdm(dataloaders["val"]):
         with torch.no_grad():  # turn off autograd engine

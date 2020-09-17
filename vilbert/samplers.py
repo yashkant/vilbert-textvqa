@@ -153,7 +153,7 @@ class ContrastiveSampler(Sampler):
             self.entry_map[entry_map_key] = {
                 "question_ids": question_ids,
                 "iter_idx": 0,
-                "entry_inds": [self.question_map[x] if not registry.debug else 0 for x in question_ids],
+                "entry_inds": [self.question_map[x] for x in question_ids],
             }
             self.add_to_answer_map(entry_map_key)
 

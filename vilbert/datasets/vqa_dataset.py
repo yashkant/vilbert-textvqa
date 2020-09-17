@@ -210,10 +210,8 @@ class VQAClassificationDataset(Dataset):
         """
         super().__init__()
         self.split = split
-        ans2label_path = os.path.join(extra_args["dataroot"], "cache", "trainval_ans2label.pkl")
-        label2ans_path = os.path.join(extra_args["dataroot"], "cache", "trainval_label2ans.pkl")
-        self.ans2label = cPickle.load(open(ans2label_path, "rb"))
-        self.label2ans = cPickle.load(open(label2ans_path, "rb"))
+        self.ans2label = cPickle.load(open("data-release/splits/trainval_ans2label.pkl", "rb"))
+        self.label2ans = cPickle.load(open("data-release/splits/trainval_label2ans.pkl", "rb"))
         # attach to registry
         registry.ans2label = self.ans2label
         registry.label2ans = self.label2ans
@@ -223,8 +221,6 @@ class VQAClassificationDataset(Dataset):
         self._image_features_reader = image_features_reader
         self._tokenizer = tokenizer
         self._padding_index = padding_index
-        self.debug = registry.debug
-        registry.debug = self.debug
         self.extra_args = extra_args
 
         self.entries = load_entries(split)
