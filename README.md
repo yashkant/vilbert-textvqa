@@ -7,7 +7,7 @@ Create a fresh conda environment and install all dependencies.
 ```text
 conda create -n vqa-cc python=3.6
 conda activate vqa-cc
-cd vilbert-textvqa
+cd code
 pip install -r requirements.txt
 ```
 
@@ -22,7 +22,7 @@ Install apex from :https://github.com/NVIDIA/apex
 Check `README.md` under `data-release` for more details.  
 
 ## Training
-We provide details on running both the baseline and ConCAT experiments.
+We provide commands to run both the baseline and ConCAT experiments.
 
 #### Baseline
 
@@ -54,7 +54,7 @@ python train.py \
 ```
 
 ## Result Files
-We also share the result files generated from above runs which could be submitted to the EvalAI challenge server to obtain the following results:
+We share result files from above runs which could be submitted to the EvalAI challenge server to obtain the results in the paper:
   
   Method  |  val   |  test-dev   |  test-std  |
  ------- | ------ | ------ | ------ |
@@ -62,3 +62,5 @@ Baseline (train)  | 66.31 | - | - |
 ConCAT (train)  | **53.99** | - | - |
 ConCAT (trainval)  | - | 69.51 | 69.22 |
 Baseline (trainval)  | - | **69.80** | **70.00** |
+
+These files are placed under `results/<experiment-name>`. 

@@ -1,5 +1,5 @@
 # Data Setup
-We use a publicly available detection model to extract image features.
+We use a publicly available detection model `vqa-maskrcnn-benchmark` to extract image features.
 
 ## Extracting features
 
@@ -12,15 +12,13 @@ wget https://dl.fbaipublicfiles.com/vilbert-multi-task/detectron_config.yaml
 ```
 
 
-Extract features for images
-
-Run from root directory
+To extract features for images, run from root directory:
 
 ```text
-python script/extract_features.py --model_file data/detectron_model.pth --config_file data/detectron_config.yaml --image_dir <path_to_directory_with_images> --output_folder <path_to_output_extracted_features>
+python data-release/extract_features.py --model_file data/detectron_model.pth --config_file data/detectron_config.yaml --image_dir <path_to_directory_with_images> --output_folder <path_to_output_extracted_features>
 ```
 
-Extract features for images with GT bbox
+#### Extract features for images with Ground Truth bboxes
 
 Generate a `.npy` file with the following format for all the images and their bboxes
 
@@ -43,13 +41,13 @@ Generate a `.npy` file with the following format for all the images and their bb
 Run from root directory
 
 ```text
-python script/extract_features.py --model_file data/detectron_model.pth --config_file data/detectron_config.yaml --imdb_gt_file <path_to_imdb_npy_file_generated_above> --output_folder <path_to_output_extracted_features>
+python data-release/extract_features.py --model_file data/detectron_model.pth --config_file data/detectron_config.yaml --imdb_gt_file <path_to_imdb_npy_file_generated_above> --output_folder <path_to_output_extracted_features>
 ```
 
 Convert the extracted images to an LMDB file
 
 ```text
-python script/convert_to_lmdb.py --features_dir <path_to_extracted_features> --lmdb_file <path_to_output_lmdb_file>
+python data-release/convert_to_lmdb.py --features_dir <path_to_extracted_features> --lmdb_file <path_to_output_lmdb_file>
 ```
 
 ## VQA and VQA-Rephrasings Dataset
