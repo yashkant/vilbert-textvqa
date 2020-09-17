@@ -3,7 +3,7 @@ We use a publicly available detection model `vqa-maskrcnn-benchmark` to extract 
 
 ## Extracting features
 
-Install [`vqa-maskrcnn-benchmark`](https://gitlab.com/vedanuj/vqa-maskrcnn-benchmark) repository and download the model and config. 
+Install `vqa-maskrcnn-benchmark`([link](https://gitlab.com/vedanuj/vqa-maskrcnn-benchmark)) repository and download the model and config. 
 
 ```text
 cd data
