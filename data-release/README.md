@@ -54,9 +54,9 @@ python data-release/convert_to_lmdb.py --features_dir <path_to_extracted_feature
 Download and place the dataset splits and negatives files following the below commands:
 ```
 cd data-release
-wget https://aaai20.s3.amazonaws.com/negative-files.zip
+wget https://paper2924.s3.amazonaws.com/negative-files.zip
 unzip negatives-files.zip
-wget https://aaai20.s3.amazonaws.com/splits.zip
+wget https://paper2924.s3.amazonaws.com/splits.zip
 unzip splits.zip
 ``` 
 
