@@ -6,7 +6,7 @@ We use a publicly available detection model `vqa-maskrcnn-benchmark` to extract 
 Install `vqa-maskrcnn-benchmark`([link](https://gitlab.com/vedanuj/vqa-maskrcnn-benchmark)) repository and download the model and config. 
 
 ```text
-cd data
+cd data-release
 wget https://dl.fbaipublicfiles.com/vilbert-multi-task/detectron_model.pth
 wget https://dl.fbaipublicfiles.com/vilbert-multi-task/detectron_config.yaml
 ```
