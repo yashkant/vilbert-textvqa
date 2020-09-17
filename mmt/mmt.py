@@ -184,9 +184,9 @@ class BertLayer(nn.Module):
         return outputs
 
 
-class M4C(nn.Module):
+class MMT(nn.Module):
     """
-    M4C has two transfomers MMT and TextBert.
+    MMT has two transfomers MMT and TextBert.
     """
 
     def __init__(self, mmt_config, text_bert_config):
@@ -299,7 +299,7 @@ class M4C(nn.Module):
             self.contrastive_projection = ContrastiveProjection(self.mmt_config)
 
     def _build_aux_heads(self):
-        from vilbert.vilbert import SimpleClassifier
+        from mmt.vilbert import SimpleClassifier
         # spatial-category classification head
         self.origin_transform = SimpleClassifier(self.mmt_config.hidden_size, 128, 32)
         self.dest_transform = SimpleClassifier(self.mmt_config.hidden_size, 128, 32)

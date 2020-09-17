@@ -14,10 +14,10 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from tools.registry import registry
-from vilbert.datasets.vqa_dataset import VQAClassificationDataset
-from vilbert.datasets._image_features_reader import ImageFeaturesH5Reader
-from vilbert.losses import ScaledSupConLoss
-from vilbert.metrics import get_consistency_score
+from mmt.datasets.vqa_dataset import VQAClassificationDataset
+from mmt.datasets._image_features_reader import ImageFeaturesH5Reader
+from mmt.losses import ScaledSupConLoss
+from mmt.metrics import get_consistency_score
 
 logger = logging.getLogger(__name__)
 
@@ -138,9 +138,6 @@ def run_model(batch, model, device):
 
 
 def forward_train(device, dataloaders, model, train_type):
-    if registry.debug:
-        train_type = "ce"
-
     if train_type == "ce":
         batch_dicts = get_batch(dataloaders, "train_ce")
         # throw away rephrasings batch
@@ -195,7 +192,7 @@ def add_ce_loss(batch_dict, device, val_run=False, revqa_eval=False, split="revq
 
 
 def load_dataset(task_cfg):
-    from vilbert.samplers import RandomSampler, ContrastiveSampler
+    from mmt.samplers import RandomSampler, ContrastiveSampler
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
 
     # image-features

@@ -63,4 +63,3 @@ workers: 16
 revqa_eval: true
 two_norm: false
 freeze_textbert_and_mmt: false
-debug: true

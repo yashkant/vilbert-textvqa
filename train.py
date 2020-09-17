@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 from evaluator import final_evaluate
 from tools.registry import registry
-from vilbert.metrics import get_consistency_score
+from mmt.metrics import get_consistency_score
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -30,12 +30,6 @@ logger = logging.getLogger(__name__)
 def get_config():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--output_dir",
-        default="save",
-        type=str,
-        help="The output directory where the model checkpoints will be written.",
-    )
-    parser.add_argument(
         "--hard_stop",
         type=int,
         default=25000,
@@ -44,9 +38,7 @@ def get_config():
         "--task_file", default="sweeps/vqa_task.yml", type=str, help="joint config file"
     )
 
-    parser.add_argument(
-        "--tag", default="debug", type=str, help="tag for the experiment", required=True
-    )
+    parser.add_argument("--tag", required=True, type=str, help="tag for the experiment")
 
     parser.add_argument(
         "--model_type", default=None, type=str, help="Type of model 22 or 31 or 22nf or 22lf"
@@ -84,7 +76,7 @@ def set_device_folder(task_cfg, args):
         raise ValueError("Cuda not available!")
 
     # build experiment directory
-    save_path = os.path.join(args.output_dir, args.tag)
+    save_path = os.path.join("save", args.tag)
     if not os.path.exists(save_path):
         os.makedirs(save_path)
 
@@ -115,13 +107,13 @@ def main():
 
     task_cfg, args = get_config()
 
-    from vilbert.task_utils import (
+    from mmt.task_utils import (
         load_dataset,
         forward_train,
         clip_gradients,
         get_optim_scheduler)
 
-    from vilbert.m4c import BertConfig, M4C
+    from mmt.mmt import BertConfig, MMT
     base_lr = task_cfg["lr"]
 
     device, multi_gpu, save_path = set_device_folder(task_cfg, args)
@@ -132,7 +124,7 @@ def main():
     # build model
     mmt_config = BertConfig.from_dict(task_cfg["MMT"])
     text_bert_config = BertConfig.from_dict(task_cfg["TextBERT"])
-    model = M4C(mmt_config, text_bert_config)
+    model = MMT(mmt_config, text_bert_config)
 
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Training Parameters: {trainable_params}")
@@ -257,15 +249,15 @@ def reset_evaluation_bins():
 
 
 def evaluate_rephrasings(dataloaders, model, device):
-    from vilbert.task_utils import forward_eval
+    from mmt.task_utils import forward_eval
     reset_evaluation_bins()
     for batch in tqdm(dataloaders["revqa"], desc="Evaluate (Human Rephrasings)"):
         with torch.no_grad():  # turn off autograd engine
             forward_eval(device, batch, model, revqa_eval=True, revqa_split="revqa")
-
+            import pdb
+            pdb.set_trace()
     # collect consensus results
     human_cs_scores = get_consistency_score(bins_key="revqa_bins")
-
 
     for batch in tqdm(dataloaders["revqa_bt"], desc="Evaluate (Back Translated Rephrasings)"):
         with torch.no_grad():  # turn off autograd engine
@@ -286,7 +278,7 @@ def run_evaluation(
         device,
         model,
 ):
-    from vilbert.task_utils import forward_eval
+    from mmt.task_utils import forward_eval
     model.eval()  # turn off dropout/batch-norm
 
     # run on validation-set

@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-from collections import defaultdict
 from copy import deepcopy
 from io import open
 
@@ -10,7 +9,6 @@ import torch
 from tqdm import tqdm
 
 from tools.registry import registry
-from vilbert.metrics import get_consistency_score
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -55,7 +53,7 @@ def final_evaluate(
     model,
     dataloaders,
     save_path,
-    val_split
+    eval_split
 ):
     if registry["monitor_value"] == "cs_score":
         resume_file = save_path + "/cs_best.tar"
@@ -68,13 +66,13 @@ def final_evaluate(
     # set model for evaluation
     model = set_model(model, resume_file)
 
-    from vilbert.task_utils import forward_eval
+    from mmt.task_utils import forward_eval
     registry.eval_only = True
 
     model.eval()
     results = {}
 
-    for batch in tqdm(dataloaders["val"]):
+    for batch in tqdm(dataloaders[eval_split]):
         with torch.no_grad():  # turn off autograd engine
             batch_dict = forward_eval(device, batch, model, revqa_eval=False)
 
@@ -89,7 +87,7 @@ def final_evaluate(
                     }
 
     human_cs_scores, bt_cs_scores = None, None
-    if registry.revqa_eval and val_split == "val":
+    if registry.revqa_eval and eval_split == "val":
         human_cs_scores, bt_cs_scores = evaluate_rephrasings(dataloaders, model, device)
 
 
@@ -103,8 +101,8 @@ def final_evaluate(
         del item["vqa_score"]
 
     save_dir = os.path.split(resume_file)[0]
-    evalai_path = f"{save_dir}/evalai_{val_split}.json"
-    preds_path = f"{save_dir}/preds_revqa_{val_split}.json"
+    evalai_path = f"{save_dir}/evalai_{eval_split}.json"
+    preds_path = f"{save_dir}/preds_revqa_{eval_split}.json"
 
     # dump eval-ai file and results file
     json.dump(evalai_results, open(evalai_path, "w"))
