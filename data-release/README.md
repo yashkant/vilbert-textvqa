@@ -56,10 +56,10 @@ python script/convert_to_lmdb.py --features_dir <path_to_extracted_features> --l
 Download and place the dataset splits and negatives files following the below commands:
 ```
 cd data-release
-wget negatives-url
-unzip negatives
-wget splits-url
-unzip splits
+wget https://aaai20.s3.amazonaws.com/negative-files.zip
+unzip negatives-files.zip
+wget https://aaai20.s3.amazonaws.com/splits.zip
+unzip splits.zip
 ``` 
 
 ## Data Organization
