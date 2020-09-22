@@ -49,7 +49,6 @@ checkpoints/
 # virtualenv
 venv/
 ENV/
-datasets/
 save
 jlogs/
 wandb
