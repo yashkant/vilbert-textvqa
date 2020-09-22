@@ -35,7 +35,7 @@ test_features_path: data-release/image-features/COCO_test_resnext152_faster_rcnn
 # training and evaluation data
 # revqa: human rephrasings set ,revqa-bt: back-translated rephrasings set
 val_split: [minval, revqa, revqa_bt, val, test]
-train_split: train_aug
+train_split: train
 aug_filter:  # rephrasings filter
   num_rephrasings: 4
   sim_threshold: 0.95
@@ -80,5 +80,5 @@ base_temperature: 0.07
 temperature: 0.5
 loss: SCLLoss
 scl_formulation: "normal"
-
+debug: True
 

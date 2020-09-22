@@ -113,6 +113,7 @@ def load_qa(name, sort=True, use_filter=False, set_dict=False):
     questions_path, answers_path, split = split_path_dict[name]
     questions = json.load(open(questions_path)) if questions_path.endswith(".json") \
         else cPickle.load(open(questions_path, "rb"))
+
     if isinstance(questions, dict):
         questions = questions["questions"]
 
@@ -132,7 +133,7 @@ def load_qa(name, sort=True, use_filter=False, set_dict=False):
         rephrasings_dict(split, questions)
 
     assert len(questions) == len(answers)
-    logger.info(f"Samples after filtering: {len(questions)}")
+    logger.info(f"Total Samples: {len(questions)} with filtering: {use_filter}")
     return questions, answers
 
 
@@ -140,8 +141,11 @@ def load_entries(name):
     """Load questions and answers.
     """
 
+    logger.info(f"Loading Split: {name}")
     if name == "train" or name == "val":
         questions, answers = load_qa(name)
+        if registry.debug:
+            questions, answers = questions[:40000], answers[:40000]
 
     elif name in ["train_aug", "val_aug", "trainval_aug"]:
         questions, answers = load_qa(name, sort=False, use_filter=True, set_dict=True)
@@ -319,11 +323,16 @@ class VQAClassificationDataset(Dataset):
             "mask": torch.tensor(1)
         })
 
+        return_list = [item_dict]
+
+        if registry.debug:
+            return return_list
+
         # don't use while evaluation loop
         if self.extra_args.get("contrastive", None) in ["better"] \
                 and self.split not in ["minval", "revqa", "test", "val"]:
-            return_list = [item_dict]
-            item_pos_dicts = [deepcopy(item_dict) for _ in range(registry.num_rep - 1)]
+            num_rep = 2     # number of rephrasing batches
+            item_pos_dicts = [deepcopy(item_dict) for _ in range(num_rep - 1)]
             # when there's no rephrasing available send the original
             if len(entry["rephrasing_ids"]) == 0:
                 item_dict["mask"] = item_dict["mask"] * 0
@@ -332,7 +341,7 @@ class VQAClassificationDataset(Dataset):
                 return_list.extend(item_pos_dicts)
                 return return_list
 
-            que_ids = np.random.choice(entry["rephrasing_ids"], registry.num_rep - 1)
+            que_ids = np.random.choice(entry["rephrasing_ids"], num_rep - 1)
             pos_entries = [self.entries[self.question_map[qid]] for qid in que_ids]
 
             for id, pe in zip(item_pos_dicts, pos_entries):
@@ -342,11 +351,10 @@ class VQAClassificationDataset(Dataset):
                     "question_id": pe["question_id"],
 
                 })
-
             return_list.extend(item_pos_dicts)
             return return_list
 
-        return item_dict
+        return return_list
 
     def __len__(self):
         return len(self.entries)

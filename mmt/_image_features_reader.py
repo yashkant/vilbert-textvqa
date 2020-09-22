@@ -88,7 +88,7 @@ class ImageFeaturesH5Reader(object):
                     features = item["features"].reshape(-1, 2048)
                     boxes = item["boxes"].reshape(-1, 4)
 
-                    # (YK): Get average feature and concatenate it to front + all features
+                    # Get average feature and concatenate it to front + all features
                     num_boxes = features.shape[0]
                     div_num_boxes = 0
                     if num_boxes == 0:
@@ -100,7 +100,7 @@ class ImageFeaturesH5Reader(object):
                     )
                     self.features[index] = features
 
-                    # (YK): Add bbox area
+                    # Add bbox area
                     image_location = np.zeros((boxes.shape[0], 5), dtype=np.float32)
                     image_location[:, :4] = boxes
                     image_location[:, 4] = (
@@ -111,7 +111,7 @@ class ImageFeaturesH5Reader(object):
 
                     image_location_ori = copy.deepcopy(image_location)
 
-                    # (YK): Normalize bboxes
+                    # Normalize bboxes
                     image_location[:, 0] = image_location[:, 0] / float(image_w)
                     image_location[:, 1] = image_location[:, 1] / float(image_h)
                     image_location[:, 2] = image_location[:, 2] / float(image_w)
@@ -122,7 +122,7 @@ class ImageFeaturesH5Reader(object):
                         [np.expand_dims(g_location, axis=0), image_location], axis=0
                     )
 
-                    # (YK): Normalized-bbox average + bboxes
+                    # Normalized-bbox average + bboxes
                     self.boxes[index] = image_location
 
                     g_location_ori = np.array(
@@ -132,7 +132,7 @@ class ImageFeaturesH5Reader(object):
                         [np.expand_dims(g_location_ori, axis=0), image_location_ori],
                         axis=0,
                     )
-                    # (YK): Un-normalized average + bboxes
+                    # Un-normalized average + bboxes
                     self.boxes_ori[index] = image_location_ori
                     self.num_boxes[index] = num_boxes
         else:
@@ -180,7 +180,7 @@ class ImageFeaturesH5Reader(object):
                     [np.expand_dims(g_location_ori, axis=0), image_location_ori], axis=0
                 )
 
-        # (YK): image_location_ori are un-normalized features we ignore them in case of VQA
+        # image_location_ori are un-normalized features we ignore them in case of VQA
         return features, num_boxes, image_location, image_location_ori
 
     def keys(self) -> List[int]:

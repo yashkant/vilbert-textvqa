@@ -13,9 +13,10 @@ from torch.utils.data import DataLoader
 from tools.registry import registry
 from mmt.vqa_dataset import VQAClassificationDataset
 from mmt._image_features_reader import ImageFeaturesH5Reader
-from mmt.losses import ScaledSupConLoss
+from mmt.losses import ScaledSupConLoss, ce_loss
 
 logger = logging.getLogger(__name__)
+
 
 LossMap = {
     "BCEWithLogitLoss": nn.BCEWithLogitsLoss(reduction="mean"),
@@ -75,19 +76,15 @@ def forward_eval(device,
                  batch_dict,
                  model,
                  revqa_eval=False,
-                 revqa_split="revqa",
-                 return_batch=False):
-    if not isinstance(batch_dict, tuple) and not isinstance(batch_dict, list):
-        batch_dict = [batch_dict]
-
+                 revqa_split="revqa"):
     batch_size = len(batch_dict[0]["question_id"])
     for batch in batch_dict:
         results_dict = run_model(batch, model, device)
         batch.update(results_dict)
 
-    loss, batch_score = add_ce_loss(batch_dict[0], device, val_run=True, revqa_eval=revqa_eval, split=revqa_split)
+    loss, batch_score = ce_loss(batch_dict[0], device, val_run=True, revqa_eval=revqa_eval, split=revqa_split)
 
-    # testing
+    # evaluation logging
     if registry.get("eval_only", False):
         return batch_dict[0]
 
@@ -134,6 +131,10 @@ def run_model(batch, model, device):
 
 
 def forward_train(device, dataloaders, model, train_type):
+
+    if registry.debug:
+        train_type = "ce"
+
     if train_type == "ce":
         batch_dicts = get_batch(dataloaders, "train_ce")
         # throw away rephrasings batch
@@ -148,43 +149,10 @@ def forward_train(device, dataloaders, model, train_type):
     if train_type == "scl":
         loss, batch_score = LossMap["SCLLoss"](batch_dicts)
     else:
-        loss, batch_score = add_ce_loss(batch_dicts, device)
+        loss, batch_score = ce_loss(batch_dicts, device)
 
     del batch_dicts
     return loss, float(batch_score)
-
-
-def add_ce_loss(batch_dict, device, val_run=False, revqa_eval=False, split="revqa"):
-    if len(batch_dict) == 2 and not val_run:
-        # train time
-        vil_preds = torch.cat([batch_dict[0]["vil_prediction"], batch_dict[1]["vil_prediction"]], dim=0)
-        vil_targets = torch.cat([batch_dict[0]["target"], batch_dict[1]["target"]], dim=0)
-    else:
-        if len(batch_dict) == 1:
-            batch_dict = batch_dict[0]
-        # validation time
-        vil_preds = batch_dict["vil_prediction"]
-        vil_targets = batch_dict["target"]
-
-    vl_loss = LossMap["BCEWithLogitLoss"](vil_preds, vil_targets)
-    vl_loss = vl_loss.mean() * vil_targets.size(1)
-    batch_scores = compute_score_with_logits(vil_preds, vil_targets, device)
-    batch_score = batch_scores.sum() / len(vil_preds)
-
-    if isinstance(batch_dict, dict):
-        # fill the scores for each question into the batch-dict
-        batch_dict["vqa_scores"] = batch_scores.sum(dim=-1).tolist()
-
-    # calculate consistency scores during validation run!
-    if revqa_eval:
-        # add vqa-scores to defaultdict(list) for each bin
-        for idx, qid in enumerate(batch_dict["question_id"].tolist()):
-            min_qid = registry[f"question_rephrase_dict_{split}"][qid]
-            vqa_score = batch_dict["vqa_scores"][idx]
-            bins_key = "revqa_bins" if split in ["revqa", "val"] else "revqa_bt_bins"
-            registry[bins_key][min_qid].append((qid, vqa_score))
-
-    return vl_loss, batch_score
 
 
 def load_dataset(task_cfg):
@@ -198,16 +166,20 @@ def load_dataset(task_cfg):
     dataloaders = {}
 
     # one train split and multiple evaluation splits
-    # load_splits = [task_cfg["train_split"]] + task_cfg["val_split"]
-    load_splits = ["test", "val", "revqa_bt", "revqa", "train"]
+    load_splits = [task_cfg["train_split"]] + task_cfg["val_split"]
+    if registry.debug:
+        load_splits = ["train"]
+
+    logger.info(f"Splits to load: {load_splits}")
 
     for split in load_splits:
         dataset = VQAClassificationDataset(
             split=split,
-            image_features_reader   =trainval_features if "test" not in split else test_features,
+            image_features_reader=trainval_features if "test" not in split else test_features,
             tokenizer=tokenizer,
             extra_args=task_cfg
         )
+
         # specify the type of samplers
         if "train" in split:
             if registry.alt_train:
@@ -226,7 +198,7 @@ def load_dataset(task_cfg):
             else:
                 batch_size = task_cfg["batch_size"]
 
-                # build the sampler
+            # build the sampler
             if _sampler == "ce":
                 sampler = RandomSampler(dataset)
             elif _sampler == "scl":
@@ -251,13 +223,3 @@ def load_dataset(task_cfg):
     return dataloaders
 
 
-def compute_score_with_logits(logits, labels, device):
-    logits = torch.max(logits, 1)[1].data  # argmax
-    one_hots = torch.zeros(*labels.size())
-
-    if device.type != "cpu":
-        one_hots = one_hots.cuda()
-
-    one_hots.scatter_(1, logits.view(-1, 1), 1)
-    scores = one_hots * labels
-    return scores

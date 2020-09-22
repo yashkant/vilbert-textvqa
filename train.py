@@ -151,9 +151,12 @@ def main():
 
     # train loop
     num_iters = len(dataloaders["train_ce"])
+
+    if registry.debug:
+        num_iters = 1000
+
     for epochId in tqdm(range(start_epoch, task_cfg['num_epoch']), desc="Epoch"):
         model.train()
-        break
         for step in tqdm(range(num_iters), desc="Iters"):
 
             if global_step > args.hard_stop:

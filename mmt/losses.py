@@ -133,3 +133,46 @@ class ScaledSupConLoss(torch.nn.Module):
         return loss, -1
 
 
+def ce_loss(batch_dict, device, val_run=False, revqa_eval=False, split="revqa"):
+    if len(batch_dict) == 2 and not val_run:
+        # train time
+        vil_preds = torch.cat([batch_dict[0]["vil_prediction"], batch_dict[1]["vil_prediction"]], dim=0)
+        vil_targets = torch.cat([batch_dict[0]["target"], batch_dict[1]["target"]], dim=0)
+    else:
+        if len(batch_dict) == 1:
+            batch_dict = batch_dict[0]
+        # validation time
+        vil_preds = batch_dict["vil_prediction"]
+        vil_targets = batch_dict["target"]
+
+    vl_loss = LossMap["BCEWithLogitLoss"](vil_preds, vil_targets)
+    vl_loss = vl_loss.mean() * vil_targets.size(1)
+    batch_scores = compute_score_with_logits(vil_preds, vil_targets, device)
+    batch_score = batch_scores.sum() / len(vil_preds)
+
+    if isinstance(batch_dict, dict):
+        # fill the scores for each question into the batch-dict
+        batch_dict["vqa_scores"] = batch_scores.sum(dim=-1).tolist()
+
+    # calculate consistency scores during validation
+    if revqa_eval:
+        # add vqa-scores for each bin
+        for idx, qid in enumerate(batch_dict["question_id"].tolist()):
+            min_qid = registry[f"question_rephrase_dict_{split}"][qid]
+            vqa_score = batch_dict["vqa_scores"][idx]
+            bins_key = "revqa_bins" if split in ["revqa", "val"] else "revqa_bt_bins"
+            registry[bins_key][min_qid].append((qid, vqa_score))
+
+    return vl_loss, batch_score
+
+
+def compute_score_with_logits(logits, labels, device):
+    logits = torch.max(logits, 1)[1].data  # argmax
+    one_hots = torch.zeros(*labels.size())
+
+    if device.type != "cpu":
+        one_hots = one_hots.cuda()
+
+    one_hots.scatter_(1, logits.view(-1, 1), 1)
+    scores = one_hots * labels
+    return scores
