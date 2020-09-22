@@ -1,7 +1,5 @@
 import logging
-import time
 from bisect import bisect
-from collections import defaultdict
 
 import torch
 import torch.nn as nn
@@ -11,13 +9,11 @@ from torch.optim.lr_scheduler import (
     LambdaLR,
 )
 from torch.utils.data import DataLoader
-from tqdm import tqdm
 
 from tools.registry import registry
-from mmt.datasets.vqa_dataset import VQAClassificationDataset
-from mmt.datasets._image_features_reader import ImageFeaturesH5Reader
+from mmt.vqa_dataset import VQAClassificationDataset
+from mmt._image_features_reader import ImageFeaturesH5Reader
 from mmt.losses import ScaledSupConLoss
-from mmt.metrics import get_consistency_score
 
 logger = logging.getLogger(__name__)
 

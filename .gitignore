@@ -2,3 +2,7 @@
 __pycache__/
 .vscode
 
+# Data paths
+data-release/
+datasets/
+data/
