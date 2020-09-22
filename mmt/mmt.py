@@ -5,8 +5,13 @@ import math
 import torch
 import torch.nn.functional as F
 from pytorch_transformers.modeling_bert import (
-    BertLayerNorm, BertEmbeddings, BertPreTrainedModel, BertSelfOutput, BertIntermediate, BertOutput,
-    BertConfig
+    BertLayerNorm,
+    BertEmbeddings,
+    BertPreTrainedModel,
+    BertSelfOutput,
+    BertIntermediate,
+    BertOutput,
+    BertConfig,
 )
 from torch import nn
 
@@ -17,18 +22,18 @@ logger = logging.getLogger(__name__)
 
 def gelu(x):
     """Implementation of the gelu activation function.
-        For information: OpenAI GPT's gelu is slightly different (and gives slightly different results):
-        0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
-        Also see https://arxiv.org/abs/1606.08415
+    For information: OpenAI GPT's gelu is slightly different (and gives slightly different results):
+    0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
+    Also see https://arxiv.org/abs/1606.08415
     """
     return x * 0.5 * (1.0 + torch.erf(x / math.sqrt(2.0)))
 
 
 class GeLU(nn.Module):
     """Implementation of the gelu activation function.
-        For information: OpenAI GPT's gelu is slightly different (and gives slightly different results):
-        0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
-        Also see https://arxiv.org/abs/1606.08415
+    For information: OpenAI GPT's gelu is slightly different (and gives slightly different results):
+    0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
+    Also see https://arxiv.org/abs/1606.08415
     """
 
     def __init__(self):
@@ -44,7 +49,8 @@ class BertSelfAttention(nn.Module):
         if config.hidden_size % config.num_attention_heads != 0:
             raise ValueError(
                 "The hidden size (%d) is not a multiple of the number of attention "
-                "heads (%d)" % (config.hidden_size, config.num_attention_heads))
+                "heads (%d)" % (config.hidden_size, config.num_attention_heads)
+            )
         self.output_attentions = config.output_attentions
 
         self.num_attention_heads = config.num_attention_heads
@@ -58,7 +64,10 @@ class BertSelfAttention(nn.Module):
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
 
     def transpose_for_scores(self, x):
-        new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
+        new_x_shape = x.size()[:-1] + (
+            self.num_attention_heads,
+            self.attention_head_size,
+        )
         x = x.view(*new_x_shape)
         return x.permute(0, 2, 1, 3)
 
@@ -95,7 +104,11 @@ class BertSelfAttention(nn.Module):
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
         context_layer = context_layer.view(*new_context_layer_shape)
 
-        outputs = (context_layer, attention_probs) if self.output_attentions else (context_layer,)
+        outputs = (
+            (context_layer, attention_probs)
+            if self.output_attentions
+            else (context_layer,)
+        )
         return outputs
 
 
@@ -110,7 +123,9 @@ class BertAttention(nn.Module):
         if len(heads) == 0:
             return
         mask = torch.ones(self.self.num_attention_heads, self.self.attention_head_size)
-        heads = set(heads) - self.pruned_heads  # Convert to set and emove already pruned heads
+        heads = (
+            set(heads) - self.pruned_heads
+        )  # Convert to set and emove already pruned heads
         for head in heads:
             # Compute how many pruned heads are before the head and move the index accordingly
             head = head - sum(1 if h < head else 0 for h in self.pruned_heads)
@@ -126,13 +141,17 @@ class BertAttention(nn.Module):
 
         # Update hyper params and store pruned heads
         self.self.num_attention_heads = self.self.num_attention_heads - len(heads)
-        self.self.all_head_size = self.self.attention_head_size * self.self.num_attention_heads
+        self.self.all_head_size = (
+            self.self.attention_head_size * self.self.num_attention_heads
+        )
         self.pruned_heads = self.pruned_heads.union(heads)
 
     def forward(self, input_tensor, attention_mask, head_mask=None):
         self_outputs = self.self(input_tensor, attention_mask, head_mask)
         attention_output = self.output(self_outputs[0], input_tensor)
-        outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
+        outputs = (attention_output,) + self_outputs[
+            1:
+        ]  # add attentions if we output them
         return outputs
 
 
@@ -141,7 +160,9 @@ class BertEncoder(nn.Module):
         super(BertEncoder, self).__init__()
         self.output_attentions = config.output_attentions
         self.output_hidden_states = config.output_hidden_states
-        self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layer = nn.ModuleList(
+            [BertLayer(config) for _ in range(config.num_hidden_layers)]
+        )
 
     def forward(self, hidden_states, attention_mask, head_mask=None):
         all_hidden_states = ()
@@ -180,7 +201,9 @@ class BertLayer(nn.Module):
         attention_output = attention_outputs[0]
         intermediate_output = self.intermediate(attention_output)
         layer_output = self.output(intermediate_output, attention_output)
-        outputs = (layer_output,) + attention_outputs[1:]  # add attentions if we output them
+        outputs = (layer_output,) + attention_outputs[
+            1:
+        ]  # add attentions if we output them
         return outputs
 
 
@@ -210,9 +233,15 @@ class MMT(nn.Module):
         logger.info(f"Fusion Method is : {self.fusion_method}")
 
         # weight-decay
-        self.weight_decay = mmt_config.weight_decay if hasattr(mmt_config, "weight_decay") else 0.0
+        self.weight_decay = (
+            mmt_config.weight_decay if hasattr(mmt_config, "weight_decay") else 0.0
+        )
 
-        self.freeze_mmt_and_textbert = mmt_config.freeze_mmt_and_textbert if hasattr(mmt_config, "freeze_mmt_and_textbert") else False
+        self.freeze_mmt_and_textbert = (
+            mmt_config.freeze_mmt_and_textbert
+            if hasattr(mmt_config, "freeze_mmt_and_textbert")
+            else False
+        )
         if self.freeze_mmt_and_textbert:
             logger.info(f"Freezing MMT and TextBERT")
 
@@ -226,7 +255,6 @@ class MMT(nn.Module):
                     continue
                 else:
                     param.requires_grad = False
-
 
     def build(self):
         # modules requiring custom learning rates (usually for finetuning)
@@ -243,22 +271,23 @@ class MMT(nn.Module):
             logger.info("Building a linear classifier layer")
             self.linear_classifier = LinearClassifier(3129, 3129)
 
-
     def _build_txt_encoding(self):
         TEXT_BERT_HIDDEN_SIZE = 768
         # self.text_bert_config = BertConfig(**self.config.text_bert)
         if self.text_bert_config.text_bert_init_from_bert_base:
             self.text_bert = TextBert.from_pretrained(
-                'bert-base-uncased', config=self.text_bert_config
+                "bert-base-uncased", config=self.text_bert_config
             )
             # Use a smaller learning rate on text bert when initializing
             # from BERT_BASE
-            self.finetune_modules.append({
-                'module': self.text_bert,
-                'lr_scale': self.text_bert_config.lr_scale_text_bert,
-            })
+            self.finetune_modules.append(
+                {
+                    "module": self.text_bert,
+                    "lr_scale": self.text_bert_config.lr_scale_text_bert,
+                }
+            )
         else:
-            logger.info('NOT initializing text_bert from BERT_BASE')
+            logger.info("NOT initializing text_bert from BERT_BASE")
             self.text_bert = TextBert(self.text_bert_config)
 
         # if the text bert output dimension doesn't match the
@@ -266,7 +295,7 @@ class MMT(nn.Module):
         # add a linear projection layer between the two
         if self.mmt_config.hidden_size != TEXT_BERT_HIDDEN_SIZE:
             logger.info(
-                'Projecting text_bert output to {} dim'.format(
+                "Projecting text_bert output to {} dim".format(
                     self.mmt_config.hidden_size
                 )
             )
@@ -280,10 +309,12 @@ class MMT(nn.Module):
         self.mmt = MMT_VQA(self.mmt_config)
 
         # allow specifying a different/scaled lr for  multimodal transformer
-        self.finetune_modules.append({
-            'module': self.mmt,
-            'lr_scale': self.mmt_config.lr_scale_mmt,
-        })
+        self.finetune_modules.append(
+            {
+                "module": self.mmt,
+                "lr_scale": self.mmt_config.lr_scale_mmt,
+            }
+        )
 
     def _build_output(self):
         # dynamic OCR-copying scores with pointer network
@@ -295,11 +326,16 @@ class MMT(nn.Module):
         )
         self.dropout = nn.Dropout(self.mmt_config.hidden_dropout_prob)
 
-        if hasattr(self.mmt_config, "contrastive") and self.mmt_config.contrastive in ["simclr", "better", "finetune"]:
+        if hasattr(self.mmt_config, "contrastive") and self.mmt_config.contrastive in [
+            "simclr",
+            "better",
+            "finetune",
+        ]:
             self.contrastive_projection = ContrastiveProjection(self.mmt_config)
 
     def _build_aux_heads(self):
         from mmt.vilbert import SimpleClassifier
+
         # spatial-category classification head
         self.origin_transform = SimpleClassifier(self.mmt_config.hidden_size, 128, 32)
         self.dest_transform = SimpleClassifier(self.mmt_config.hidden_size, 128, 32)
@@ -313,14 +349,18 @@ class MMT(nn.Module):
             results_dict = {
                 "vil_prediction": batch_dict["lc_out"],
                 "contastive_projection_norm": None,
-                "attention_weights": None
+                "attention_weights": None,
             }
             return results_dict
 
         results_dict = {
             "vil_prediction": batch_dict["vil_prediction"],
             "contrastive_projection_norm": batch_dict["contrastive_projection_norm"]
-            if (hasattr(self.mmt_config, "contrastive") and self.mmt_config.contrastive in ["simclr", "better"]) else None,
+            if (
+                hasattr(self.mmt_config, "contrastive")
+                and self.mmt_config.contrastive in ["simclr", "better"]
+            )
+            else None,
             # "attention_weights": batch_dict["attention_weights"] if registry.squint_loss else None
         }
         return results_dict
@@ -332,27 +372,33 @@ class MMT(nn.Module):
 
         # first forward the text BERT layers
         text_bert_out = self.text_bert(batch_dict)
-        batch_dict['text_bert_emb'] = self.text_bert_out_linear(text_bert_out)
+        batch_dict["text_bert_emb"] = self.text_bert_out_linear(text_bert_out)
 
         mmt_results = self.mmt(batch_dict)
         batch_dict.update(mmt_results)
 
     def _forward_output(self, batch_dict):
         if self.fusion_method == "sum":
-            batch_dict["pooled_output"] = self.dropout(batch_dict["pooled_text_output"] + batch_dict["pooled_image_output"])
+            batch_dict["pooled_output"] = self.dropout(
+                batch_dict["pooled_text_output"] + batch_dict["pooled_image_output"]
+            )
         elif self.fusion_method == "mul":
-            batch_dict["pooled_output"] = self.dropout(batch_dict["pooled_text_output"] * batch_dict["pooled_image_output"])
+            batch_dict["pooled_output"] = self.dropout(
+                batch_dict["pooled_text_output"] * batch_dict["pooled_image_output"]
+            )
         else:
             assert False
         batch_dict["vil_prediction"] = self.vil_prediction(batch_dict["pooled_output"])
         # batch_dict["vil_prediction_gqa"] = self.vil_prediction_gqa(batch_dict["pooled_output"])
 
-
         if registry.freeze_textbert_and_mmt:
             batch_dict["lc_out"] = self.linear_classifier(batch_dict["vil_prediction"])
             return
 
-        if (hasattr(self.mmt_config, "contrastive") and self.mmt_config.contrastive in ["simclr", "better"]):
+        if hasattr(self.mmt_config, "contrastive") and self.mmt_config.contrastive in [
+            "simclr",
+            "better",
+        ]:
             self.contrastive_projection(batch_dict)
 
     def get_optimizer_parameters(self, base_lr):
@@ -361,7 +407,7 @@ class MMT(nn.Module):
         finetune_params_set = set()
 
         for fine_module in self.finetune_modules:
-            use_wd, no_wd =[], []
+            use_wd, no_wd = [], []
             for name, param in fine_module["module"].named_parameters():
                 if param.requires_grad:
                     if len(param.shape) == 1 or name.endswith(".bias"):
@@ -370,18 +416,22 @@ class MMT(nn.Module):
                         use_wd.append(param)
 
             # Add parameters with weight-decay
-            optimizer_param_groups.append({
-                "params": use_wd,
-                "lr": base_lr * fine_module['lr_scale'],
-                "weight_decay": self.weight_decay
-            })
+            optimizer_param_groups.append(
+                {
+                    "params": use_wd,
+                    "lr": base_lr * fine_module["lr_scale"],
+                    "weight_decay": self.weight_decay,
+                }
+            )
 
             # Add parameters without weight-decay
-            optimizer_param_groups.append({
-                "params": no_wd,
-                "lr": base_lr * fine_module['lr_scale'],
-                "weight_decay": 0.0
-            })
+            optimizer_param_groups.append(
+                {
+                    "params": no_wd,
+                    "lr": base_lr * fine_module["lr_scale"],
+                    "weight_decay": 0.0,
+                }
+            )
 
             # build a set of parameters handled, remaining will be handled next
             finetune_params_set.update(list(fine_module["module"].parameters()))
@@ -398,15 +448,11 @@ class MMT(nn.Module):
                     use_wd.append(param)
 
         # Add parameters with weight-decay
-        optimizer_param_groups.append({
-            "params": use_wd,
-            "weight_decay": self.weight_decay
-        })
+        optimizer_param_groups.append(
+            {"params": use_wd, "weight_decay": self.weight_decay}
+        )
         # Add parameters without weight-decay
-        optimizer_param_groups.append({
-            "params": no_wd,
-            "weight_decay": 0.0
-        })
+        optimizer_param_groups.append({"params": no_wd, "weight_decay": 0.0})
 
         return optimizer_param_groups
 
@@ -429,9 +475,7 @@ class TextBert(BertPreTrainedModel):
         head_mask = [None] * self.config.num_hidden_layers
 
         encoder_outputs = self.encoder(
-            encoder_inputs,
-            extended_attention_mask,
-            head_mask=head_mask
+            encoder_inputs, extended_attention_mask, head_mask=head_mask
         )
         seq_output = encoder_outputs[0]
 
@@ -439,8 +483,8 @@ class TextBert(BertPreTrainedModel):
 
 
 class BertImageEmbeddings(nn.Module):
-    """Construct the embeddings from image, spatial location (omit now) and token_type embeddings.
-    """
+    """Construct the embeddings from image, spatial location (omit now) and token_type embeddings."""
+
     def __init__(self, config):
         super(BertImageEmbeddings, self).__init__()
         self.image_embeddings = nn.Linear(2048, config.hidden_size)
@@ -454,13 +498,14 @@ class BertImageEmbeddings(nn.Module):
         loc_embeddings = self.image_location_embeddings(input_loc)
         type_ids = input_ids.new_zeros(img_embeddings.shape[:-1], dtype=torch.long)
         img_type_embeddings = self.image_type_embeddings(type_ids)
-        embeddings = self.LayerNorm(img_embeddings + loc_embeddings + img_type_embeddings)
+        embeddings = self.LayerNorm(
+            img_embeddings + loc_embeddings + img_type_embeddings
+        )
         embeddings = self.dropout(embeddings)
         return embeddings
 
 
 class ContrastiveProjection(nn.Module):
-
     def __init__(self, config):
         super().__init__()
         self.linear1 = nn.Linear(config.hidden_size, config.hidden_size)
@@ -473,9 +518,13 @@ class ContrastiveProjection(nn.Module):
         if self.two_norm:
             # use norm twice
             pooled_norm = F.normalize(batch_dict["pooled_output"], dim=-1)
-            batch_dict["contrastive_projection_norm"] = F.normalize(self.linear2(F.relu(self.linear1(pooled_norm))), dim=-1)
+            batch_dict["contrastive_projection_norm"] = F.normalize(
+                self.linear2(F.relu(self.linear1(pooled_norm))), dim=-1
+            )
         else:
-            batch_dict["contrastive_projection_norm"] = F.normalize(self.linear2(F.relu(self.linear1(batch_dict["pooled_output"]))), dim=-1)
+            batch_dict["contrastive_projection_norm"] = F.normalize(
+                self.linear2(F.relu(self.linear1(batch_dict["pooled_output"]))), dim=-1
+            )
 
 
 class MMT_VQA(BertPreTrainedModel):
@@ -496,22 +545,23 @@ class MMT_VQA(BertPreTrainedModel):
         text_embeddings = batch_dict["text_bert_emb"]
         # text_embeddings = self.text_embeddings(batch_dict["question_indices"])
         image_embeddings = self.image_embeddings(
-            batch_dict["input_imgs"],
-            batch_dict["image_loc"]
+            batch_dict["input_imgs"], batch_dict["image_loc"]
         )
 
         joint_embeddings = torch.cat([text_embeddings, image_embeddings], dim=1)
-        joint_mask = torch.cat([batch_dict["question_mask"], batch_dict["image_mask"]], dim=-1)
+        joint_mask = torch.cat(
+            [batch_dict["question_mask"], batch_dict["image_mask"]], dim=-1
+        )
         extended_attention_mask = joint_mask.unsqueeze(1).unsqueeze(2)
-        extended_attention_mask = extended_attention_mask.to(dtype=next(self.parameters()).dtype)  # fp16 compatibility
+        extended_attention_mask = extended_attention_mask.to(
+            dtype=next(self.parameters()).dtype
+        )  # fp16 compatibility
         extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
         assert not extended_attention_mask.requires_grad
         head_mask = [None] * self.config.num_hidden_layers
 
         encoder_outputs = self.encoder(
-            joint_embeddings,
-            extended_attention_mask,
-            head_mask=head_mask
+            joint_embeddings, extended_attention_mask, head_mask=head_mask
         )
 
         text_len = text_embeddings.shape[1]
@@ -519,8 +569,8 @@ class MMT_VQA(BertPreTrainedModel):
         pooled_image_output = self.image_pooler(encoder_outputs[0][:, text_len:])
 
         results = {
-            'pooled_text_output': pooled_text_output,
-            'pooled_image_output': pooled_image_output,
+            "pooled_text_output": pooled_text_output,
+            "pooled_image_output": pooled_image_output,
             # "attention_weights": encoder_outputs[1] if registry.squint_loss else None
         }
         return results
@@ -571,7 +621,7 @@ def _get_causal_mask(seq_length, device):
     mask = torch.zeros(seq_length, seq_length, device=device)
     for i in range(seq_length):
         for j in range(i + 1):
-            mask[i, j] = 1.
+            mask[i, j] = 1.0
     return mask
 
 

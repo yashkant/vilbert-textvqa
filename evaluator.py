@@ -32,7 +32,16 @@ def set_model(model, resume_file):
     model.load_state_dict(new_dict)
 
     # Add checkpoint string
-    log_keys = ["cs_rank", "vqa_rank", "vqa_acc", "cs_score", "global_step", "cs_bt_rank", "cs_score", "cs_bt_score"]
+    log_keys = [
+        "cs_rank",
+        "vqa_rank",
+        "vqa_acc",
+        "cs_score",
+        "global_step",
+        "cs_bt_rank",
+        "cs_score",
+        "cs_bt_score",
+    ]
     ckpt_string = f"-------------- \n Checkpoint information: \n"
 
     for key in log_keys:
@@ -48,12 +57,7 @@ def set_model(model, resume_file):
 
 
 def final_evaluate(
-    evaluate_rephrasings,
-    device,
-    model,
-    dataloaders,
-    save_path,
-    eval_split
+    evaluate_rephrasings, device, model, dataloaders, save_path, eval_split
 ):
     if registry["monitor_value"] == "cs_score":
         resume_file = save_path + "/cs_best.tar"
@@ -67,6 +71,7 @@ def final_evaluate(
     model = set_model(model, resume_file)
 
     from mmt.task_utils import forward_eval
+
     registry.eval_only = True
 
     model.eval()
@@ -79,17 +84,17 @@ def final_evaluate(
             # build the json file here!
             logits = torch.max(batch_dict["vil_prediction"], 1)[1].data  # argmax
             for idx in range(logits.size(0)):
-                results[batch_dict["question_id"][idx].item()] = \
-                    {
-                        "question_id": batch_dict["question_id"][idx].item(),
-                        "answer": registry.label2ans[logits[idx].item()],
-                        "vqa_score": np.round(batch_dict["vqa_scores"][idx], 1) if "vqa_scores" in batch_dict else None
-                    }
+                results[batch_dict["question_id"][idx].item()] = {
+                    "question_id": batch_dict["question_id"][idx].item(),
+                    "answer": registry.label2ans[logits[idx].item()],
+                    "vqa_score": np.round(batch_dict["vqa_scores"][idx], 1)
+                    if "vqa_scores" in batch_dict
+                    else None,
+                }
 
     human_cs_scores, bt_cs_scores = None, None
     if registry.revqa_eval and eval_split == "val":
         human_cs_scores, bt_cs_scores = evaluate_rephrasings(dataloaders, model, device)
-
 
     final_results = {}
     final_results["results"] = results

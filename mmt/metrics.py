@@ -25,7 +25,7 @@ def get_consistency_score(results=None, bins_scores=False, bins_key="revqa_bins"
         revqa_bins_scores[key] = {
             "vqa_scores": value,
             "question_ids": question_ids,
-            "answers": answers
+            "answers": answers,
         }
 
         total_vqa_scores.extend(value)
@@ -34,6 +34,7 @@ def get_consistency_score(results=None, bins_scores=False, bins_key="revqa_bins"
             assert sum(vqa_scores) <= len(vqa_scores)
         except:
             import pdb
+
             pdb.set_trace()
 
         # for subsets of size = k, check VQA accuracy
@@ -47,13 +48,15 @@ def get_consistency_score(results=None, bins_scores=False, bins_key="revqa_bins"
                     value_subset_scores.append(1.0)
                 else:
                     value_subset_scores.append(0.0)
-            revqa_bins_scores[key][k_value] = sum(value_subset_scores) / len(value_subsets)
+            revqa_bins_scores[key][k_value] = sum(value_subset_scores) / len(
+                value_subsets
+            )
 
     result_dict = {}
 
     # Consistency Score Calculation
     max_k = 4
-    for k_value in range(1, max_k+1):
+    for k_value in range(1, max_k + 1):
         scores = []
         for key, rbs in revqa_bins_scores.items():
             # only consider questions that have all the rephrasings available
@@ -68,4 +71,3 @@ def get_consistency_score(results=None, bins_scores=False, bins_key="revqa_bins"
         return result_dict, revqa_bins_scores
 
     return result_dict
-

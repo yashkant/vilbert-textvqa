@@ -38,23 +38,33 @@ class RandomSampler(Sampler):
         self.num_samples = num_samples
 
         if self.num_samples is not None and replacement is False:
-            raise ValueError("With replacement=False, num_samples should not be specified, "
-                             "since a random permute will be performed.")
+            raise ValueError(
+                "With replacement=False, num_samples should not be specified, "
+                "since a random permute will be performed."
+            )
 
         if self.num_samples is None:
             self.num_samples = len(self.data_source)
 
         if not isinstance(self.num_samples, int) or self.num_samples <= 0:
-            raise ValueError("num_samples should be a positive integeral "
-                             "value, but got num_samples={}".format(self.num_samples))
+            raise ValueError(
+                "num_samples should be a positive integeral "
+                "value, but got num_samples={}".format(self.num_samples)
+            )
         if not isinstance(self.replacement, bool):
-            raise ValueError("replacement should be a boolean value, but got "
-                             "replacement={}".format(self.replacement))
+            raise ValueError(
+                "replacement should be a boolean value, but got "
+                "replacement={}".format(self.replacement)
+            )
 
     def __iter__(self):
         n = len(self.data_source)
         if self.replacement:
-            return iter(torch.randint(high=n, size=(self.num_samples,), dtype=torch.int64).tolist())
+            return iter(
+                torch.randint(
+                    high=n, size=(self.num_samples,), dtype=torch.int64
+                ).tolist()
+            )
         return iter(torch.randperm(n).tolist())
 
     def __len__(self):
@@ -65,10 +75,8 @@ class ContrastiveSampler(Sampler):
     """
     Sample Contrastive Batches for Scaled Supervised Contrastive Loss.
     """
-    def __init__(self,
-                 data_source,
-                 task_cfg,
-                 split="train"):
+
+    def __init__(self, data_source, task_cfg, split="train"):
         self.data_source = data_source
         self.batch_size = task_cfg["batch_size"]
 
@@ -97,7 +105,9 @@ class ContrastiveSampler(Sampler):
         self.load_hard_negatives()
 
     def load_hard_negatives(self):
-        negs_path = "datasets/VQA/back-translate/fil_{}_question_negs.pkl".format(self.split)
+        negs_path = "datasets/VQA/back-translate/fil_{}_question_negs.pkl".format(
+            self.split
+        )
         logger.info(f"Negatives path: {negs_path}")
         assert os.path.exists(negs_path)
         self.negs_data = cPickle.load(open(negs_path, "rb"))
@@ -110,8 +120,9 @@ class ContrastiveSampler(Sampler):
         total_answers = len(self.qid_ans_dict[entry_map_key])
 
         for (ans_label, freq) in self.qid_ans_dict[entry_map_key]:
-            if freq >= self.freq_ans_threshold and \
-                    not (total_answers == 2 and freq in [4, 5, 6] and registry.remove_ambiguous):
+            if freq >= self.freq_ans_threshold and not (
+                total_answers == 2 and freq in [4, 5, 6] and registry.remove_ambiguous
+            ):
 
                 if ans_label in self.answer_map:
                     self.answer_map[ans_label].append((entry_map_key, freq))
@@ -123,14 +134,17 @@ class ContrastiveSampler(Sampler):
             "data-release/splits/v2_mscoco_train2014_annotations.json",
             "data-release/splits/v2_mscoco_val2014_annotations.json",
         ]
-        ann_data = json.load(open(ann_path[0]))["annotations"] + json.load(open(ann_path[1]))["annotations"]
+        ann_data = (
+            json.load(open(ann_path[0]))["annotations"]
+            + json.load(open(ann_path[1]))["annotations"]
+        )
         self.qid_ans_dict = {}
         for ann in ann_data:
             ans_counter = Counter()
             for ans in ann["answers"]:
                 # only consider answers available in vocabulary
-                if ans['answer'] in registry.ans2label:
-                    ans_counter[registry.ans2label[ans['answer']]] += 1
+                if ans["answer"] in registry.ans2label:
+                    ans_counter[registry.ans2label[ans["answer"]]] += 1
 
             # build dict with qid -> [(ans_label, freq)...]
             self.qid_ans_dict[ann["question_id"]] = ans_counter.most_common()
@@ -143,8 +157,14 @@ class ContrastiveSampler(Sampler):
 
         self.entry_map = {}
         self.answer_map = {}
-        for entry in tqdm(self.entries, desc="Building question and answer maps", total=len(self.entries)):
-            question_ids = list(set(deepcopy(entry["rephrasing_ids"]) + [entry["question_id"]]))
+        for entry in tqdm(
+            self.entries,
+            desc="Building question and answer maps",
+            total=len(self.entries),
+        ):
+            question_ids = list(
+                set(deepcopy(entry["rephrasing_ids"]) + [entry["question_id"]])
+            )
             question_ids.sort()
             entry_map_key = min(question_ids)
             # skip creating bins for rephrasings
@@ -158,7 +178,9 @@ class ContrastiveSampler(Sampler):
             self.add_to_answer_map(entry_map_key)
 
         # post-process: remove duplicates, build sampling weights
-        for key in tqdm(self.answer_map.keys(), desc="Post-processing", total=len(self.answer_map)):
+        for key in tqdm(
+            self.answer_map.keys(), desc="Post-processing", total=len(self.answer_map)
+        ):
             self.answer_map[key] = list(set(self.answer_map[key]))
             ans_labels, freqs = list(zip(*self.answer_map[key]))
             self.answer_map[key] = (cycle(ans_labels), len(ans_labels))
@@ -200,36 +222,41 @@ class ContrastiveSampler(Sampler):
 
         return -1, True, -1
 
-
     def build_hard_batches(self):
         self.build_maps()
         self.re_bins = ContrastiveSampler.shuffle(self.re_bins, 0, len(self.re_bins))
         init_batch_size = self.task_cfg["init_batch_size"]
         neg_type_weights = self.task_cfg["neg_type_weights"]
         assert np.sum(neg_type_weights) == 1.0
-        init_pass_bs = init_batch_size + self.num_positives*init_batch_size
-        num_batches = int(len(self.entries)/init_batch_size)
-        question_rephrase_dict = getattr(registry, f"question_rephrase_dict_{self.split}")
+        init_pass_bs = init_batch_size + self.num_positives * init_batch_size
+        num_batches = int(len(self.entries) / init_batch_size)
+        question_rephrase_dict = getattr(
+            registry, f"question_rephrase_dict_{self.split}"
+        )
 
         if "re" in self.arg_split:
             question_rephrase_dict = getattr(registry, f"question_rephrase_dict_train")
 
         # actual no. of batches to return (for one epoch)
-        self.num_batches = int(len(self.entries)/self.batch_size)
+        self.num_batches = int(len(self.entries) / self.batch_size)
 
         extra_args = edict()
-        extra_args.update({
-            "num_positives": self.num_positives,
-            "bin_ans_threshold": self.bin_ans_threshold
-        })
+        extra_args.update(
+            {
+                "num_positives": self.num_positives,
+                "bin_ans_threshold": self.bin_ans_threshold,
+            }
+        )
 
-        _args = [self.entry_map,
-                 self.re_bins,
-                 self.answer_map,
-                 self.qid_ans_dict,
-                 extra_args,
-                 num_batches if num_batches < 20000 else 20000,
-                 init_pass_bs]
+        _args = [
+            self.entry_map,
+            self.re_bins,
+            self.answer_map,
+            self.qid_ans_dict,
+            extra_args,
+            num_batches if num_batches < 20000 else 20000,
+            init_pass_bs,
+        ]
 
         # shuffle bins
         self.re_bins = ContrastiveSampler.shuffle(self.re_bins, 0, len(self.re_bins))
@@ -239,19 +266,23 @@ class ContrastiveSampler(Sampler):
 
         # replace w/ original batch-size
         _args[-1] = self.batch_size
-        _args += list([neg_type_weights, self.entries, self.negs_data, self.negs_index_dict])
+        _args += list(
+            [neg_type_weights, self.entries, self.negs_data, self.negs_index_dict]
+        )
 
         # shuffle bins
         self.re_bins = ContrastiveSampler.shuffle(self.re_bins, 0, len(self.re_bins))
         # add hard-negatives
-        batches, batches_bins = ContrastiveSampler.add_hard_negatives(batches, batches_bins, _args, question_rephrase_dict)
+        batches, batches_bins = ContrastiveSampler.add_hard_negatives(
+            batches, batches_bins, _args, question_rephrase_dict
+        )
 
-        num_epochs = int(len(batches)/self.num_batches)
+        num_epochs = int(len(batches) / self.num_batches)
         epochs = []
         # build epochs
         for epoch_idx in range(num_epochs):
             batch_start_idx = epoch_idx * self.num_batches
-            batch_end_idx = (epoch_idx+1) * self.num_batches
+            batch_end_idx = (epoch_idx + 1) * self.num_batches
             assert batch_end_idx <= len(batches)
             epoch = []
             for batch_idx in range(batch_start_idx, batch_end_idx):
@@ -271,17 +302,25 @@ class ContrastiveSampler(Sampler):
         return array
 
     @staticmethod
-    def get_batches(
-        args
-    ):
-        entry_map, re_bins, answer_map, qid_ans_dict, extra_args, num_batches, batch_size = args
+    def get_batches(args):
+        (
+            entry_map,
+            re_bins,
+            answer_map,
+            qid_ans_dict,
+            extra_args,
+            num_batches,
+            batch_size,
+        ) = args
         batches = []
         batches_bins = []
         num_positives = extra_args.num_positives
         add_positives = num_positives > 0
         bins_iterator = cycle(range(len(re_bins)))
 
-        for _ in tqdm(zip(range(num_batches)), total=num_batches, desc="Building Batches"):
+        for _ in tqdm(
+            zip(range(num_batches)), total=num_batches, desc="Building Batches"
+        ):
 
             # start building a batch
             batch_inds = []
@@ -326,10 +365,7 @@ class ContrastiveSampler(Sampler):
         return batches, batches_bins
 
     @staticmethod
-    def add_hard_negatives(batches,
-                           batches_bins,
-                           args,
-                           question_rephrase_dict):
+    def add_hard_negatives(batches, batches_bins, args, question_rephrase_dict):
 
         (
             entry_map,
@@ -342,16 +378,20 @@ class ContrastiveSampler(Sampler):
             neg_type_weights,
             entries,
             negs_data,
-            negs_index_dict
+            negs_index_dict,
         ) = args
 
         bins_iterator = cycle(range(len(re_bins)))
 
-        for batch_inds, batch_bins in tqdm(zip(batches, batches_bins), total=len(batches), desc="Adding Hard Negatives"):
+        for batch_inds, batch_bins in tqdm(
+            zip(batches, batches_bins), total=len(batches), desc="Adding Hard Negatives"
+        ):
             batch_inds_iter = cycle(batch_inds)
 
             while True:
-                neg_choice = np.random.choice(["image_neg", "question_neg", "random"], p=neg_type_weights)
+                neg_choice = np.random.choice(
+                    ["image_neg", "question_neg", "random"], p=neg_type_weights
+                )
                 passed = False
 
                 if neg_choice in ["image_neg"]:
@@ -360,7 +400,13 @@ class ContrastiveSampler(Sampler):
                     negs_idx = negs_index_dict[question_id]
                     negatives_list = negs_data["same_image_questions_neg"][negs_idx]
                     # add better negatives
-                    neg_entry_idx, passed, bin_idx = ContrastiveSampler.get_hard_negative(negatives_list, batch_bins, entry_map, question_rephrase_dict)
+                    (
+                        neg_entry_idx,
+                        passed,
+                        bin_idx,
+                    ) = ContrastiveSampler.get_hard_negative(
+                        negatives_list, batch_bins, entry_map, question_rephrase_dict
+                    )
                     if not passed:
                         batch_inds.append(neg_entry_idx)
                         batch_bins.append(bin_idx)
@@ -377,7 +423,13 @@ class ContrastiveSampler(Sampler):
                         negatives_list = negs_data["question_negs"][negs_idx]
 
                     # add better negatives
-                    neg_entry_idx, passed, bin_idx = ContrastiveSampler.get_hard_negative(negatives_list, batch_bins, entry_map, question_rephrase_dict)
+                    (
+                        neg_entry_idx,
+                        passed,
+                        bin_idx,
+                    ) = ContrastiveSampler.get_hard_negative(
+                        negatives_list, batch_bins, entry_map, question_rephrase_dict
+                    )
                     if not passed:
                         batch_inds.append(neg_entry_idx)
                         batch_bins.append(bin_idx)
@@ -402,6 +454,7 @@ class ContrastiveSampler(Sampler):
                     break
                 elif len(batch_inds) > batch_size:
                     import pdb
+
                     pdb.set_trace()
 
         return batches, batches_bins
@@ -412,15 +465,17 @@ class ContrastiveSampler(Sampler):
             assert item[1]["bin_idx"] == i
 
     @staticmethod
-    def add_positives(re_bins,
-                      entry_map,
-                      qid_ans_dict,
-                      answer_map,
-                      bin_idx,
-                      num_positives,
-                      batch_inds,
-                      batch_bins,
-                      extra_args):
+    def add_positives(
+        re_bins,
+        entry_map,
+        qid_ans_dict,
+        answer_map,
+        bin_idx,
+        num_positives,
+        batch_inds,
+        batch_bins,
+        extra_args,
+    ):
 
         if num_positives <= 0:
             return
@@ -440,8 +495,12 @@ class ContrastiveSampler(Sampler):
         if len(filtered_bin_answers) <= 0:
             return
 
-        filtered_bin_answers_weights = np.array(filtered_bin_answers_weights) / sum(filtered_bin_answers_weights)
-        answer = int(np.random.choice(filtered_bin_answers, 1, p=filtered_bin_answers_weights))
+        filtered_bin_answers_weights = np.array(filtered_bin_answers_weights) / sum(
+            filtered_bin_answers_weights
+        )
+        answer = int(
+            np.random.choice(filtered_bin_answers, 1, p=filtered_bin_answers_weights)
+        )
 
         count_pos = 0
         qids_iter, qids_len = answer_map[int(answer)]
@@ -480,7 +539,9 @@ class ContrastiveSampler(Sampler):
 
         epoch_indices = self.epochs[self.epoch_idx]
         self.epoch_idx += 1
-        logger.info(f"No. of Unique Samples: {len(set(epoch_indices))} / {len(epoch_indices)}")
+        logger.info(
+            f"No. of Unique Samples: {len(set(epoch_indices))} / {len(epoch_indices)}"
+        )
         self.iter_count += 1
         return iter(epoch_indices)
 

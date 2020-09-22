@@ -26,12 +26,13 @@ def create_entry(question, answer):
         "question": question["question"],
         "answer": answer,
     }
-    retain_keys = ["rephrasing_ids",
-                   "top_k_questions",
-                   "top_k_questions_neg",
-                   "same_image_questions",
-                   "same_image_questions_neg"
-                   ]
+    retain_keys = [
+        "rephrasing_ids",
+        "top_k_questions",
+        "top_k_questions_neg",
+        "same_image_questions",
+        "same_image_questions_neg",
+    ]
     for key in retain_keys:
         if key in question:
             entry[key] = question[key]
@@ -45,14 +46,22 @@ def filter_aug(questions_list, answers_list):
     sim_threshold = registry.aug_filter["sim_threshold"]
     assert len(questions_list) == len(answers_list)
 
-    for idx, (que_list, ans_list) in tqdm(enumerate(zip(questions_list, answers_list)),
-                                          total=len(questions_list),
-                                          desc="Filtering Data"):
+    for idx, (que_list, ans_list) in tqdm(
+        enumerate(zip(questions_list, answers_list)),
+        total=len(questions_list),
+        desc="Filtering Data",
+    ):
 
         assert len(que_list) == len(ans_list)
         # filter for sim-threshold
         if sim_threshold > 0:
-            que_list, ans_list = zip(*[(q, a) for q, a in zip(que_list, ans_list) if q["sim_score"] > sim_threshold])
+            que_list, ans_list = zip(
+                *[
+                    (q, a)
+                    for q, a in zip(que_list, ans_list)
+                    if q["sim_score"] > sim_threshold
+                ]
+            )
 
         # filter for max-samples
         if max_samples > 0:
@@ -61,7 +70,9 @@ def filter_aug(questions_list, answers_list):
         filtered_rephrasing_ids = [que["question_id"] for que in que_list]
         min_qid = min(filtered_rephrasing_ids)
         for que in que_list:
-            que["rephrasing_ids"] = sorted([x for x in filtered_rephrasing_ids if x != que["question_id"]])
+            que["rephrasing_ids"] = sorted(
+                [x for x in filtered_rephrasing_ids if x != que["question_id"]]
+            )
             if "rephrasing_of" not in que:
                 que["rephrasing_of"] = min_qid
             else:
@@ -87,32 +98,60 @@ def rephrasings_dict(split, questions):
 
     # used in evaluation, hack to set attribute
     from easydict import EasyDict
-    super(EasyDict, registry).__setattr__(f"question_rephrase_dict_{split}", question_rephrase_dict)
-    super(EasyDict, registry).__setitem__(f"question_rephrase_dict_{split}", question_rephrase_dict)
+
+    super(EasyDict, registry).__setattr__(
+        f"question_rephrase_dict_{split}", question_rephrase_dict
+    )
+    super(EasyDict, registry).__setitem__(
+        f"question_rephrase_dict_{split}", question_rephrase_dict
+    )
     print(f"Built dictionary: question_rephrase_dict_{split}")
 
 
 def load_qa(name, sort=True, use_filter=False, set_dict=False):
     split_path_dict = {
-        "train_aug": ["data-release/splits/questions_train_aug.pkl",
-                      "data-release/splits/ans_train_aug.pkl", "train"],
-        "train": ["data-release/splits/v2_OpenEnded_mscoco_train2014_questions.json",
-                  "data-release/splits/train_target.pkl", "train"],
-        "val": ["data-release/splits/v2_OpenEnded_mscoco_val2014_questions.json",
-                "data-release/splits/val_target.pkl", "val"],
-        "val_aug": ["data-release/splits/questions_val_aug.pkl",
-                    "data-release/splits/ans_val_aug.pkl", "val"],
-        "test": ["data-release/splits/v2_OpenEnded_mscoco_test2015_questions.json",
-                 "", "test"],
-        "trainval_aug": ["data-release/splits/questions_trainval_aug.pkl",
-                         "data-release/splits/ans_trainval_aug.pkl", "trainval"],
-        "revqa": ["data-release/splits/revqa_total_proc.pkl",
-                  "data-release/splits/revqa_total_proc_target.pkl", "revqa"],
-
+        "train_aug": [
+            "data-release/splits/questions_train_aug.pkl",
+            "data-release/splits/ans_train_aug.pkl",
+            "train",
+        ],
+        "train": [
+            "data-release/splits/v2_OpenEnded_mscoco_train2014_questions.json",
+            "data-release/splits/train_target.pkl",
+            "train",
+        ],
+        "val": [
+            "data-release/splits/v2_OpenEnded_mscoco_val2014_questions.json",
+            "data-release/splits/val_target.pkl",
+            "val",
+        ],
+        "val_aug": [
+            "data-release/splits/questions_val_aug.pkl",
+            "data-release/splits/ans_val_aug.pkl",
+            "val",
+        ],
+        "test": [
+            "data-release/splits/v2_OpenEnded_mscoco_test2015_questions.json",
+            "",
+            "test",
+        ],
+        "trainval_aug": [
+            "data-release/splits/questions_trainval_aug.pkl",
+            "data-release/splits/ans_trainval_aug.pkl",
+            "trainval",
+        ],
+        "revqa": [
+            "data-release/splits/revqa_total_proc.pkl",
+            "data-release/splits/revqa_total_proc_target.pkl",
+            "revqa",
+        ],
     }
     questions_path, answers_path, split = split_path_dict[name]
-    questions = json.load(open(questions_path)) if questions_path.endswith(".json") \
+    questions = (
+        json.load(open(questions_path))
+        if questions_path.endswith(".json")
         else cPickle.load(open(questions_path, "rb"))
+    )
 
     if isinstance(questions, dict):
         questions = questions["questions"]
@@ -138,8 +177,7 @@ def load_qa(name, sort=True, use_filter=False, set_dict=False):
 
 
 def load_entries(name):
-    """Load questions and answers.
-    """
+    """Load questions and answers."""
 
     logger.info(f"Loading Split: {name}")
     if name == "train" or name == "val":
@@ -188,7 +226,9 @@ def load_entries(name):
         assert_eq(len(questions), len(answers))
         entries = []
 
-        for question, answer in tqdm(zip(questions, answers), total=len(questions), desc="Building Entries"):
+        for question, answer in tqdm(
+            zip(questions, answers), total=len(questions), desc="Building Entries"
+        ):
             assert_eq(question["question_id"], answer["question_id"])
             assert_eq(question["image_id"], answer["image_id"])
             entries.append(create_entry(question, answer))
@@ -198,20 +238,24 @@ def load_entries(name):
 
 class VQAClassificationDataset(Dataset):
     def __init__(
-            self,
-            split,
-            image_features_reader,
-            tokenizer,
-            padding_index=0,
-            extra_args=None,
+        self,
+        split,
+        image_features_reader,
+        tokenizer,
+        padding_index=0,
+        extra_args=None,
     ):
         """
         Builds self.entries by reading questions and answers and caches them.
         """
         super().__init__()
         self.split = split
-        self.ans2label = cPickle.load(open("data-release/splits/trainval_ans2label.pkl", "rb"))
-        self.label2ans = cPickle.load(open("data-release/splits/trainval_label2ans.pkl", "rb"))
+        self.ans2label = cPickle.load(
+            open("data-release/splits/trainval_ans2label.pkl", "rb")
+        )
+        self.label2ans = cPickle.load(
+            open("data-release/splits/trainval_label2ans.pkl", "rb")
+        )
         # attach to registry
         registry.ans2label = self.ans2label
         registry.label2ans = self.label2ans
@@ -311,17 +355,19 @@ class VQAClassificationDataset(Dataset):
             if labels is not None:
                 target.scatter_(0, labels, scores)
 
-        item_dict.update({
-            "input_imgs": features,
-            "image_mask": image_mask,
-            "image_loc": spatials,
-            "question_indices": question,
-            "question_mask": input_mask,
-            "image_id": image_id,
-            "question_id": question_id,
-            "target": target,
-            "mask": torch.tensor(1)
-        })
+        item_dict.update(
+            {
+                "input_imgs": features,
+                "image_mask": image_mask,
+                "image_loc": spatials,
+                "question_indices": question,
+                "question_mask": input_mask,
+                "image_id": image_id,
+                "question_id": question_id,
+                "target": target,
+                "mask": torch.tensor(1),
+            }
+        )
 
         return_list = [item_dict]
 
@@ -329,9 +375,10 @@ class VQAClassificationDataset(Dataset):
             return return_list
 
         # don't use while evaluation loop
-        if self.extra_args.get("contrastive", None) in ["better"] \
-                and self.split not in ["minval", "revqa", "test", "val"]:
-            num_rep = 2     # number of rephrasing batches
+        if self.extra_args.get("contrastive", None) in [
+            "better"
+        ] and self.split not in ["minval", "revqa", "test", "val"]:
+            num_rep = 2  # number of rephrasing batches
             item_pos_dicts = [deepcopy(item_dict) for _ in range(num_rep - 1)]
             # when there's no rephrasing available send the original
             if len(entry["rephrasing_ids"]) == 0:
@@ -345,12 +392,13 @@ class VQAClassificationDataset(Dataset):
             pos_entries = [self.entries[self.question_map[qid]] for qid in que_ids]
 
             for id, pe in zip(item_pos_dicts, pos_entries):
-                id.update({
-                    "question_indices": pe["q_token"],
-                    "question_mask": pe["q_input_mask"],
-                    "question_id": pe["question_id"],
-
-                })
+                id.update(
+                    {
+                        "question_indices": pe["q_token"],
+                        "question_mask": pe["q_input_mask"],
+                        "question_id": pe["question_id"],
+                    }
+                )
             return_list.extend(item_pos_dicts)
             return return_list
 

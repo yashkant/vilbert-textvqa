@@ -28,13 +28,16 @@ def clip_gradients(model, max_grad_l2_norm, clip_norm_mode):
                 question_embedding.parameters(), max_grad_l2_norm
             )
         else:
-            raise NotImplementedError("Clip norm mode %s not implemented" % clip_norm_mode)
+            raise NotImplementedError(
+                "Clip norm mode %s not implemented" % clip_norm_mode
+            )
 
 
-def get_optim_scheduler(task_cfg,
-                        optimizer_grouped_parameters,
-                        base_lr,
-                        ):
+def get_optim_scheduler(
+    task_cfg,
+    optimizer_grouped_parameters,
+    base_lr,
+):
     optimizer = Adam(optimizer_grouped_parameters, lr=base_lr)
     warmup_iters = task_cfg["warmup_iters"]
     warmup_factor = task_cfg["warmup_factor"]
@@ -64,17 +67,15 @@ def to_device(batch_dict, device):
                 batch[key] = value.cuda(device=device, non_blocking=True)
 
 
-def forward_eval(device,
-                 batch_dict,
-                 model,
-                 revqa_eval=False,
-                 revqa_split="revqa"):
+def forward_eval(device, batch_dict, model, revqa_eval=False, revqa_split="revqa"):
     batch_size = len(batch_dict[0]["question_id"])
     for batch in batch_dict:
         results_dict = run_model(batch, model, device)
         batch.update(results_dict)
 
-    loss, batch_score = ce_loss(batch_dict[0], device, val_run=True, revqa_eval=revqa_eval, split=revqa_split)
+    loss, batch_score = ce_loss(
+        batch_dict[0], device, val_run=True, revqa_eval=revqa_eval, split=revqa_split
+    )
 
     # evaluation logging
     if registry.get("eval_only", False):
@@ -149,6 +150,7 @@ def forward_train(device, dataloaders, model, train_type):
 
 def load_dataset(task_cfg):
     from mmt.samplers import RandomSampler, ContrastiveSampler
+
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
 
     # image-features
@@ -167,9 +169,11 @@ def load_dataset(task_cfg):
     for split in load_splits:
         dataset = VQAClassificationDataset(
             split=split,
-            image_features_reader=trainval_features if "test" not in split else test_features,
+            image_features_reader=trainval_features
+            if "test" not in split
+            else test_features,
             tokenizer=tokenizer,
-            extra_args=task_cfg
+            extra_args=task_cfg,
         )
 
         # specify the type of samplers
@@ -194,11 +198,7 @@ def load_dataset(task_cfg):
             if _sampler == "ce":
                 sampler = RandomSampler(dataset)
             elif _sampler == "scl":
-                sampler = ContrastiveSampler(
-                    dataset,
-                    task_cfg,
-                    split=split
-                )
+                sampler = ContrastiveSampler(dataset, task_cfg, split=split)
             else:
                 sampler = None
 
@@ -206,12 +206,10 @@ def load_dataset(task_cfg):
             dataloaders[f"{split_tag}" + sampler_tag] = DataLoader(
                 dataset,
                 sampler=sampler,
-                batch_size= batch_size,
+                batch_size=batch_size,
                 num_workers=registry.workers,
                 pin_memory=True,
-                drop_last=True if split_tag == "train" else False
+                drop_last=True if split_tag == "train" else False,
             )
 
     return dataloaders
-
-
