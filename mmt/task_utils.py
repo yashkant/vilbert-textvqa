@@ -13,17 +13,9 @@ from torch.utils.data import DataLoader
 from tools.registry import registry
 from mmt.vqa_dataset import VQAClassificationDataset
 from mmt._image_features_reader import ImageFeaturesH5Reader
-from mmt.losses import ScaledSupConLoss, ce_loss
+from mmt.losses import ce_loss, LossMap
 
 logger = logging.getLogger(__name__)
-
-
-LossMap = {
-    "BCEWithLogitLoss": nn.BCEWithLogitsLoss(reduction="mean"),
-    "SCLLoss": ScaledSupConLoss(temperature=registry.get("temperature", 0.5),
-                                formulation=registry.get("scl_formulation", "normal"),
-                                base_temperature=registry.get("base_temperature", 0.07)),  # using the default parameter setting
-}
 
 
 def clip_gradients(model, max_grad_l2_norm, clip_norm_mode):

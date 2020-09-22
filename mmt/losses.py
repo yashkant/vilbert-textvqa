@@ -1,5 +1,4 @@
 import torch
-import numpy as np
 from tools.registry import registry
 import logging
 
@@ -131,6 +130,14 @@ class ScaledSupConLoss(torch.nn.Module):
         loss = loss.view(anchor_count, batch_size).mean()
 
         return loss, -1
+
+
+LossMap = {
+    "BCEWithLogitLoss": torch.nn.BCEWithLogitsLoss(reduction="mean"),
+    "SCLLoss": ScaledSupConLoss(temperature=registry.get("temperature", 0.5),
+                                formulation=registry.get("scl_formulation", "normal"),
+                                base_temperature=registry.get("base_temperature", 0.07)),  # using the default parameter setting
+}
 
 
 def ce_loss(batch_dict, device, val_run=False, revqa_eval=False, split="revqa"):

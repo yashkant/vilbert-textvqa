@@ -41,7 +41,10 @@ def get_config():
     parser.add_argument("--tag", required=True, type=str, help="tag for the experiment")
 
     parser.add_argument(
-        "--model_type", default=None, type=str, help="Type of model 22 or 31 or 22nf or 22lf"
+        "--model_type",
+        default=None,
+        type=str,
+        help="Type of model 22 or 31 or 22nf or 22lf",
     )
 
     args = parser.parse_args()
@@ -89,7 +92,9 @@ def set_device_folder(task_cfg, args):
     return device, multi_gpu, save_path
 
 
-def build_checkpoint(model, optimizer, warmup_scheduler, global_step, vqa_score, cs_scores, cs_bt_scores):
+def build_checkpoint(
+    model, optimizer, warmup_scheduler, global_step, vqa_score, cs_scores, cs_bt_scores
+):
     model_to_save = model.module if hasattr(model, "module") else model
     checkpoint_dict = {
         "model_state_dict": model_to_save.state_dict(),
@@ -98,7 +103,7 @@ def build_checkpoint(model, optimizer, warmup_scheduler, global_step, vqa_score,
         "global_step": global_step,
         "vqa_score": vqa_score,
         "cs_scores": cs_scores,
-        "cs_bt_scores": cs_bt_scores
+        "cs_bt_scores": cs_bt_scores,
     }
     return checkpoint_dict
 
@@ -111,9 +116,11 @@ def main():
         load_dataset,
         forward_train,
         clip_gradients,
-        get_optim_scheduler)
+        get_optim_scheduler,
+    )
 
     from mmt.mmt import BertConfig, MMT
+
     base_lr = task_cfg["lr"]
 
     device, multi_gpu, save_path = set_device_folder(task_cfg, args)
@@ -131,7 +138,9 @@ def main():
 
     # load optimizers
     optimizer_grouped_parameters = model.get_optimizer_parameters(base_lr)
-    optimizer, warmup_scheduler = get_optim_scheduler(task_cfg, optimizer_grouped_parameters, base_lr)
+    optimizer, warmup_scheduler = get_optim_scheduler(
+        task_cfg, optimizer_grouped_parameters, base_lr
+    )
 
     # send to gpu
     model.to(device)
@@ -155,7 +164,7 @@ def main():
     if registry.debug:
         num_iters = 1000
 
-    for epochId in tqdm(range(start_epoch, task_cfg['num_epoch']), desc="Epoch"):
+    for epochId in tqdm(range(start_epoch, task_cfg["num_epoch"]), desc="Epoch"):
         model.train()
         for step in tqdm(range(num_iters), desc="Iters"):
 
@@ -171,17 +180,14 @@ def main():
             else:
                 train_type = "ce"
 
-            loss, score = forward_train(
-                device,
-                dataloaders,
-                model,
-                train_type
-            )
+            loss, score = forward_train(device, dataloaders, model, train_type)
 
             loss.backward()
 
             if task_cfg["grad_clip_mode"] == "all":
-                clip_gradients(model, task_cfg["max_grad_norm"], task_cfg["grad_clip_mode"])
+                clip_gradients(
+                    model, task_cfg["max_grad_norm"], task_cfg["grad_clip_mode"]
+                )
 
             optimizer.step()
             warmup_scheduler.step()
@@ -196,16 +202,30 @@ def main():
             del score
 
             if step % 20 == 0 and step != 0:
-                logger.info(f"Score: {sum(score_hist)/len(score_hist)}, Loss: {sum(loss_hist)/len(loss_hist)}")
-                logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}")
+                logger.info(
+                    f"Score: {sum(score_hist)/len(score_hist)}, Loss: {sum(loss_hist)/len(loss_hist)}"
+                )
+                logger.info(
+                    f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}"
+                )
                 loss_hist, score_hist = [], []
 
-            if (iterId != 0 and iterId % eval_iter_factor == 0) or (global_step == args.hard_stop):
+            if (iterId != 0 and iterId % eval_iter_factor == 0) or (
+                global_step == args.hard_stop
+            ):
                 logger.info("Starting Validation Run....")
-                curr_val_score, curr_val_loss, cs_scores, cs_bt_scores = run_evaluation(dataloaders, device, model)
+                curr_val_score, curr_val_loss, cs_scores, cs_bt_scores = run_evaluation(
+                    dataloaders, device, model
+                )
 
                 checkpoint_dict = build_checkpoint(
-                    model, optimizer, warmup_scheduler, global_step, curr_val_score, cs_scores, cs_bt_scores
+                    model,
+                    optimizer,
+                    warmup_scheduler,
+                    global_step,
+                    curr_val_score,
+                    cs_scores,
+                    cs_bt_scores,
                 )
 
                 # checkpoint based on best vqa-score
@@ -229,18 +249,21 @@ def main():
             break
 
     import pdb
+
     pdb.set_trace()
 
     # Run final-evaluation, generates the EvalAI file.
     for split in ["test", "val"]:
-        final_evaluate(evaluate_rephrasings, device, model, dataloaders, save_path, split)
-
+        final_evaluate(
+            evaluate_rephrasings, device, model, dataloaders, save_path, split
+        )
 
 
 def reset_evaluation_bins():
     # reset revqa_bins for each evaluation!
     if registry.revqa_eval:
         from easydict import EasyDict
+
         dd = defaultdict(list)
         dd_bt = defaultdict(list)
 
@@ -253,16 +276,20 @@ def reset_evaluation_bins():
 
 def evaluate_rephrasings(dataloaders, model, device):
     from mmt.task_utils import forward_eval
+
     reset_evaluation_bins()
     for batch in tqdm(dataloaders["revqa"], desc="Evaluate (Human Rephrasings)"):
         with torch.no_grad():  # turn off autograd engine
             forward_eval(device, batch, model, revqa_eval=True, revqa_split="revqa")
             import pdb
+
             pdb.set_trace()
     # collect consensus results
     human_cs_scores = get_consistency_score(bins_key="revqa_bins")
 
-    for batch in tqdm(dataloaders["revqa_bt"], desc="Evaluate (Back Translated Rephrasings)"):
+    for batch in tqdm(
+        dataloaders["revqa_bt"], desc="Evaluate (Back Translated Rephrasings)"
+    ):
         with torch.no_grad():  # turn off autograd engine
             forward_eval(device, batch, model, revqa_eval=True, revqa_split="revqa_bt")
 
@@ -277,18 +304,25 @@ def evaluate_rephrasings(dataloaders, model, device):
 
 
 def run_evaluation(
-        dataloaders,
-        device,
-        model,
+    dataloaders,
+    device,
+    model,
 ):
     from mmt.task_utils import forward_eval
+
     model.eval()  # turn off dropout/batch-norm
 
     # run on validation-set
     val_scores, val_losses, batch_sizes = [], [], []
-    for i, batch in tqdm(enumerate(dataloaders["minval"]), total=len(dataloaders["minval"]), desc="Evaluate (Mini-Val)"):
+    for i, batch in tqdm(
+        enumerate(dataloaders["minval"]),
+        total=len(dataloaders["minval"]),
+        desc="Evaluate (Mini-Val)",
+    ):
         with torch.no_grad():  # turn off autograd engine
-            loss, score, batch_size = forward_eval(device, batch, model, revqa_eval=False)
+            loss, score, batch_size = forward_eval(
+                device, batch, model, revqa_eval=False
+            )
             val_scores.append(score * batch_size)
             val_losses.append(loss * batch_size)
             batch_sizes.append(batch_size)
@@ -301,8 +335,8 @@ def run_evaluation(
     else:
         human_cs_scores, bt_cs_scores = None, None
 
-    vqa_score = sum(val_scores)/sum(batch_sizes)
-    vqa_loss = sum(val_losses)/sum(batch_sizes)
+    vqa_score = sum(val_scores) / sum(batch_sizes)
+    vqa_loss = sum(val_losses) / sum(batch_sizes)
 
     return vqa_score, vqa_loss, human_cs_scores, bt_cs_scores
 
