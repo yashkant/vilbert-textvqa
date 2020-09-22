@@ -1,6 +1,5 @@
 from itertools import combinations
 from tools.registry import registry
-import numpy as np
 
 
 def get_consistency_score(results=None, bins_scores=False, bins_key="revqa_bins"):
@@ -29,13 +28,7 @@ def get_consistency_score(results=None, bins_scores=False, bins_key="revqa_bins"
         }
 
         total_vqa_scores.extend(value)
-
-        try:
-            assert sum(vqa_scores) <= len(vqa_scores)
-        except:
-            import pdb
-
-            pdb.set_trace()
+        assert sum(vqa_scores) <= len(vqa_scores)
 
         # for subsets of size = k, check VQA accuracy
         for k_value in k_values:
@@ -62,7 +55,6 @@ def get_consistency_score(results=None, bins_scores=False, bins_key="revqa_bins"
             # only consider questions that have all the rephrasings available
             if max_k in rbs:
                 scores.append(rbs[k_value])
-        # print(f"Consensus Score with K={k_value} is {sum(scores) / len(scores)}")
         add_str = "_bt" if bins_key == "revqa_bt_bins" else ""
         result_dict[str(k_value) + add_str] = sum(scores) / len(scores)
         result_dict[f"len_{k_value}" + add_str] = len(scores)
