@@ -5,13 +5,13 @@ import math
 import torch
 import torch.nn.functional as F
 from pytorch_transformers.modeling_bert import (
-    BertLayerNorm,
+    BertConfig,
     BertEmbeddings,
+    BertIntermediate,
+    BertLayerNorm,
+    BertOutput,
     BertPreTrainedModel,
     BertSelfOutput,
-    BertIntermediate,
-    BertOutput,
-    BertConfig,
 )
 from torch import nn
 
@@ -259,9 +259,6 @@ class MMT(nn.Module):
     def build(self):
         # modules requiring custom learning rates (usually for finetuning)
         self.finetune_modules = []
-
-        # import pdb
-        # pdb.set_trace()
 
         # split model building into several components
         self._build_txt_encoding()

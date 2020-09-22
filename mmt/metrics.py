@@ -1,4 +1,5 @@
 from itertools import combinations
+
 from tools.registry import registry
 
 

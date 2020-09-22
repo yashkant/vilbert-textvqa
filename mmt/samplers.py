@@ -1,21 +1,22 @@
 import itertools
 import json
+import logging
+import multiprocessing as mp
 import os
-from collections import defaultdict, Counter
+import pickle as cPickle
+import random
+import time
+from collections import Counter, defaultdict
 from copy import deepcopy
 from itertools import cycle
-import time
-import random
-from easydict import EasyDict as edict
 
 import numpy as np
 import torch
+from easydict import EasyDict as edict
 from torch.utils.data.sampler import Sampler
 from tqdm import tqdm
-import logging
+
 from tools.registry import registry
-import multiprocessing as mp
-import pickle as cPickle
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
@@ -105,6 +106,7 @@ class ContrastiveSampler(Sampler):
         self.load_hard_negatives()
 
     def load_hard_negatives(self):
+        """Load negatives of type `Image` and `Question` """
         negs_path = "datasets/VQA/back-translate/fil_{}_question_negs.pkl".format(
             self.split
         )
@@ -116,7 +118,7 @@ class ContrastiveSampler(Sampler):
             self.negs_index_dict[qid] = idx
 
     def add_to_answer_map(self, entry_map_key):
-        # maps gt_ans -> [(entry_map_key, ans_freq) ...]
+        """ Helper function to generate answer -> question-ids  """
         total_answers = len(self.qid_ans_dict[entry_map_key])
 
         for (ans_label, freq) in self.qid_ans_dict[entry_map_key]:
@@ -130,6 +132,7 @@ class ContrastiveSampler(Sampler):
                     self.answer_map[ans_label] = [(entry_map_key, freq)]
 
     def read_annotations(self):
+        """Read VQA Annotations to generate question-id -> answer mapping"""
         ann_path = [
             "data-release/splits/v2_mscoco_train2014_annotations.json",
             "data-release/splits/v2_mscoco_val2014_annotations.json",
@@ -190,16 +193,9 @@ class ContrastiveSampler(Sampler):
             bin[1]["bin_idx"] = idx
             bin[1]["iter_idx"] = cycle(list(range(len(bin[1]["question_ids"]))))
 
-    # def get_entry_answers(self, entry):
-    #     entry_answers = entry["answer"]["labels"]
-    #     if entry_answers is None:
-    #         entry_answers = []
-    #     else:
-    #         entry_answers = entry_answers.tolist()
-    #     return entry_answers
-
     @staticmethod
     def get_hard_negative(negative_list, batch_bins, entry_map, question_rephrase_dict):
+        """ Given a list of negatives return a valid one. """
         if len(negative_list) == 0:
             return -1, True, -1
 
@@ -223,6 +219,7 @@ class ContrastiveSampler(Sampler):
         return -1, True, -1
 
     def build_hard_batches(self):
+        """ Build batches w/ `Random`, `Image` and `Question` negatives. """
         self.build_maps()
         self.re_bins = ContrastiveSampler.shuffle(self.re_bins, 0, len(self.re_bins))
         init_batch_size = self.task_cfg["init_batch_size"]
@@ -233,9 +230,6 @@ class ContrastiveSampler(Sampler):
         question_rephrase_dict = getattr(
             registry, f"question_rephrase_dict_{self.split}"
         )
-
-        if "re" in self.arg_split:
-            question_rephrase_dict = getattr(registry, f"question_rephrase_dict_train")
 
         # actual no. of batches to return (for one epoch)
         self.num_batches = int(len(self.entries) / self.batch_size)
@@ -272,6 +266,7 @@ class ContrastiveSampler(Sampler):
 
         # shuffle bins
         self.re_bins = ContrastiveSampler.shuffle(self.re_bins, 0, len(self.re_bins))
+
         # add hard-negatives
         batches, batches_bins = ContrastiveSampler.add_hard_negatives(
             batches, batches_bins, _args, question_rephrase_dict
@@ -279,6 +274,7 @@ class ContrastiveSampler(Sampler):
 
         num_epochs = int(len(batches) / self.num_batches)
         epochs = []
+
         # build epochs
         for epoch_idx in range(num_epochs):
             batch_start_idx = epoch_idx * self.num_batches
@@ -295,6 +291,7 @@ class ContrastiveSampler(Sampler):
 
     @staticmethod
     def shuffle(array, start_idx, end_idx):
+        """ Shuffle elements in a given subset of array. """
         np.random.shuffle(array[start_idx:end_idx])
         for i, item in enumerate(array[start_idx:end_idx]):
             item[1]["bin_idx"] = i + start_idx
@@ -366,7 +363,7 @@ class ContrastiveSampler(Sampler):
 
     @staticmethod
     def add_hard_negatives(batches, batches_bins, args, question_rephrase_dict):
-
+        """ Given batch of only reference samples and positives, add negatives.  """
         (
             entry_map,
             re_bins,
@@ -452,10 +449,6 @@ class ContrastiveSampler(Sampler):
                 if len(batch_inds) == batch_size:
                     assert len(batch_bins) == len(set(batch_bins)) == batch_size
                     break
-                elif len(batch_inds) > batch_size:
-                    import pdb
-
-                    pdb.set_trace()
 
         return batches, batches_bins
 
@@ -476,6 +469,7 @@ class ContrastiveSampler(Sampler):
         batch_bins,
         extra_args,
     ):
+        """Add intra-class positives given references"""
 
         if num_positives <= 0:
             return

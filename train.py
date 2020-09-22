@@ -14,8 +14,8 @@ from easydict import EasyDict as edict
 from tqdm import tqdm
 
 from evaluator import final_evaluate
-from tools.registry import registry
 from mmt.metrics import get_consistency_score
+from tools.registry import registry
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -112,14 +112,13 @@ def main():
 
     task_cfg, args = get_config()
 
+    from mmt.mmt import MMT, BertConfig
     from mmt.task_utils import (
-        load_dataset,
-        forward_train,
         clip_gradients,
+        forward_train,
         get_optim_scheduler,
+        load_dataset,
     )
-
-    from mmt.mmt import BertConfig, MMT
 
     base_lr = task_cfg["lr"]
 

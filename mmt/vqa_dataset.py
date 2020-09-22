@@ -1,12 +1,14 @@
-import _pickle as cPickle
 import json
 import logging
 import os
 from copy import deepcopy
+
+import _pickle as cPickle
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 from tqdm import tqdm
+
 from tools.registry import registry
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name

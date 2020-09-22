@@ -1,6 +1,8 @@
-import torch
-from tools.registry import registry
 import logging
+
+import torch
+
+from tools.registry import registry
 
 logger = logging.getLogger(__name__)
 

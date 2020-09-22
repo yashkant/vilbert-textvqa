@@ -5,15 +5,13 @@ import torch
 import torch.nn as nn
 from pytorch_transformers.tokenization_bert import BertTokenizer
 from torch.optim import Adam
-from torch.optim.lr_scheduler import (
-    LambdaLR,
-)
+from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 
-from tools.registry import registry
-from mmt.vqa_dataset import VQAClassificationDataset
 from mmt._image_features_reader import ImageFeaturesH5Reader
-from mmt.losses import ce_loss, LossMap
+from mmt.losses import LossMap, ce_loss
+from mmt.vqa_dataset import VQAClassificationDataset
+from tools.registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +147,7 @@ def forward_train(device, dataloaders, model, train_type):
 
 
 def load_dataset(task_cfg):
-    from mmt.samplers import RandomSampler, ContrastiveSampler
+    from mmt.samplers import ContrastiveSampler, RandomSampler
 
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
 
