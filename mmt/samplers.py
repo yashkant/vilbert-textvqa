@@ -314,7 +314,7 @@ class ContrastiveSampler(Sampler):
         bins_iterator = cycle(range(len(re_bins)))
 
         for _ in tqdm(
-            zip(range(num_batches)), total=num_batches, desc="Building Batches"
+            zip(range(num_batches)), total=num_batches, desc="Build Batches [References and Intra-class Positives]"
         ):
 
             # start building a batch
@@ -379,7 +379,7 @@ class ContrastiveSampler(Sampler):
         bins_iterator = cycle(range(len(re_bins)))
 
         for batch_inds, batch_bins in tqdm(
-            zip(batches, batches_bins), total=len(batches), desc="Adding Hard Negatives"
+            zip(batches, batches_bins), total=len(batches), desc="Build Batches [Negatives]"
         ):
             batch_inds_iter = cycle(batch_inds)
 

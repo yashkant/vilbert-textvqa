@@ -147,9 +147,10 @@ def main():
     loss_hist, score_hist = [], []
     global_step = 0
     start_epoch = 0
+    eval_ckpts_file = os.path.join(save_path, "ckpts.txt")
 
     # train loop
-    num_iters = len(dataloaders["train_ce"])
+    num_iters = len(dataloaders["train_scl"] if registry.alt_train else dataloaders["train_ce"])
 
     # if registry.debug:
     #     num_iters = 100
@@ -208,6 +209,13 @@ def main():
                     dataloaders, device, model
                 )
 
+                # log current results
+                ckpt_string = f"Iter: {global_step} | VQA: {curr_val_loss} | CS: {cs_scores} | CS-BT: {cs_bt_scores}"
+                with open(eval_ckpts_file, "a") as f:
+                    f.write(ckpt_string)
+                logger.info(ckpt_string)
+
+                # build dict for storing the checkpoint
                 checkpoint_dict = build_checkpoint(
                     model,
                     optimizer,
@@ -224,6 +232,7 @@ def main():
                         output_checkpoint = os.path.join(save_path, f"vqa_best.tar")
                         torch.save(checkpoint_dict, output_checkpoint)
                         best_vqa = curr_val_score
+                    logger.info(f"Monitoring vqa-score, best: {best_vqa} | current: {curr_val_score}")
 
                 # checkpoint based on best cs-score on back-translation rephrasings
                 elif task_cfg["monitor_value"] == "cs_score":
@@ -231,6 +240,7 @@ def main():
                         output_checkpoint = os.path.join(save_path, f"cs_best.tar")
                         torch.save(checkpoint_dict, output_checkpoint)
                         best_cs = cs_bt_scores[-1]
+                        logger.info(f"Monitoring CS-4 score, best: {best_cs} | current: {cs_bt_scores[-1]}")
                 else:
                     raise ValueError
 
