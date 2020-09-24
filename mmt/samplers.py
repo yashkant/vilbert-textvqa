@@ -122,9 +122,7 @@ class ContrastiveSampler(Sampler):
         total_answers = len(self.qid_ans_dict[entry_map_key])
 
         for (ans_label, freq) in self.qid_ans_dict[entry_map_key]:
-            if freq >= self.freq_ans_threshold and not (
-                total_answers == 2 and freq in [4, 5, 6] and registry.remove_ambiguous
-            ):
+            if freq >= self.freq_ans_threshold:
 
                 if ans_label in self.answer_map:
                     self.answer_map[ans_label].append((entry_map_key, freq))

@@ -63,4 +63,4 @@ workers: 16
 revqa_eval: true
 two_norm: false
 freeze_textbert_and_mmt: false
-
+hard_stop: 1000000  # do not use hard stop

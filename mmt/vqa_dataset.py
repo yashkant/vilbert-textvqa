@@ -184,8 +184,8 @@ def load_entries(name):
     logger.info(f"Loading Split: {name}")
     if name == "train" or name == "val":
         questions, answers = load_qa(name)
-        if registry.debug:
-            questions, answers = questions[:40000], answers[:40000]
+        # if registry.debug:
+        #     questions, answers = questions[:40000], answers[:40000]
 
     elif name in ["train_aug", "val_aug", "trainval_aug"]:
         questions, answers = load_qa(name, sort=False, use_filter=True, set_dict=True)
@@ -373,8 +373,8 @@ class VQAClassificationDataset(Dataset):
 
         return_list = [item_dict]
 
-        if registry.debug:
-            return return_list
+        # if registry.debug:
+        #     return return_list
 
         # don't use while evaluation loop
         if self.extra_args.get("contrastive", None) in [

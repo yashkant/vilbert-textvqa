@@ -123,8 +123,8 @@ def run_model(batch, model, device):
 
 def forward_train(device, dataloaders, model, train_type):
 
-    if registry.debug:
-        train_type = "ce"
+    # if registry.debug:
+    #     train_type = "ce"
 
     if train_type == "ce":
         batch_dicts = get_batch(dataloaders, "train_ce")
@@ -159,8 +159,6 @@ def load_dataset(task_cfg):
 
     # one train split and multiple evaluation splits
     load_splits = [task_cfg["train_split"]] + task_cfg["val_split"]
-    if registry.debug:
-        load_splits = ["train"]
 
     logger.info(f"Splits to load: {load_splits}")
 

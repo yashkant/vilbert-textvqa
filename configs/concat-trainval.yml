@@ -63,6 +63,7 @@ workers: 16
 revqa_eval: true
 two_norm: false
 freeze_textbert_and_mmt: false
+hard_stop: 50000
 
 # contrastive sampling
 num_positives: 1 # num of positives per sample

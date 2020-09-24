@@ -28,24 +28,13 @@ logger = logging.getLogger(__name__)
 
 
 def get_config():
+    """ Set default and command line arguments. """
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--hard_stop",
-        type=int,
-        default=25000,
-    )
     parser.add_argument(
         "--task_file", default="sweeps/vqa_task.yml", type=str, help="joint config file"
     )
 
     parser.add_argument("--tag", required=True, type=str, help="tag for the experiment")
-
-    parser.add_argument(
-        "--model_type",
-        default=None,
-        type=str,
-        help="Type of model 22 or 31 or 22nf or 22lf",
-    )
 
     args = parser.parse_args()
     with open(args.task_file, "r") as f:
@@ -63,6 +52,7 @@ def get_config():
 
 
 def set_seeds(task_cfg):
+    """ Set seeds for reproducibility """
     seed = task_cfg["seed"]
     random.seed(seed)
     np.random.seed(seed)
@@ -95,6 +85,7 @@ def set_device_folder(task_cfg, args):
 def build_checkpoint(
     model, optimizer, warmup_scheduler, global_step, vqa_score, cs_scores, cs_bt_scores
 ):
+    """ Generate a storable checkpoint from model"""
     model_to_save = model.module if hasattr(model, "module") else model
     checkpoint_dict = {
         "model_state_dict": model_to_save.state_dict(),
@@ -109,7 +100,7 @@ def build_checkpoint(
 
 
 def main():
-
+    """ Trains a model and evaluates it."""
     task_cfg, args = get_config()
 
     from mmt.mmt import MMT, BertConfig
@@ -160,15 +151,15 @@ def main():
     # train loop
     num_iters = len(dataloaders["train_ce"])
 
-    if registry.debug:
-        num_iters = 1000
+    # if registry.debug:
+    #     num_iters = 100
 
     for epochId in tqdm(range(start_epoch, task_cfg["num_epoch"]), desc="Epoch"):
         model.train()
         for step in tqdm(range(num_iters), desc="Iters"):
 
-            if global_step > args.hard_stop:
-                logger.info(f"Breaking w/ hard-stop at {args.hard_stop}")
+            if global_step > registry.hard_stop:
+                logger.info(f"Breaking w/ hard-stop at {registry.hard_stop}")
                 break
 
             iterId = step + (epochId * num_iters)
@@ -210,7 +201,7 @@ def main():
                 loss_hist, score_hist = [], []
 
             if (iterId != 0 and iterId % eval_iter_factor == 0) or (
-                global_step == args.hard_stop
+                global_step == registry.hard_stop
             ):
                 logger.info("Starting Validation Run....")
                 curr_val_score, curr_val_loss, cs_scores, cs_bt_scores = run_evaluation(
@@ -243,15 +234,12 @@ def main():
                 else:
                     raise ValueError
 
+
         # break at hard-stop
-        if global_step > args.hard_stop:
+        if global_step > registry.hard_stop:
             break
 
-    import pdb
-
-    pdb.set_trace()
-
-    # Run final-evaluation, generates the EvalAI file.
+    # Run final-evaluation and generate the EvalAI files.
     for split in ["test", "val"]:
         final_evaluate(
             evaluate_rephrasings, device, model, dataloaders, save_path, split
@@ -259,7 +247,7 @@ def main():
 
 
 def reset_evaluation_bins():
-    # reset revqa_bins for each evaluation!
+    """ Reset rephrasing bins for each evaluation """
     if registry.revqa_eval:
         from easydict import EasyDict
 
@@ -274,15 +262,13 @@ def reset_evaluation_bins():
 
 
 def evaluate_rephrasings(dataloaders, model, device):
+    """ Run evaluation on human and back-translated rephrasings """
     from mmt.task_utils import forward_eval
 
     reset_evaluation_bins()
     for batch in tqdm(dataloaders["revqa"], desc="Evaluate (Human Rephrasings)"):
         with torch.no_grad():  # turn off autograd engine
             forward_eval(device, batch, model, revqa_eval=True, revqa_split="revqa")
-            import pdb
-
-            pdb.set_trace()
     # collect consensus results
     human_cs_scores = get_consistency_score(bins_key="revqa_bins")
 
@@ -307,6 +293,7 @@ def run_evaluation(
     device,
     model,
 ):
+    """ Run evaluation on minival (VQA-score) and rephrasings (Consensus Scores) """
     from mmt.task_utils import forward_eval
 
     model.eval()  # turn off dropout/batch-norm
@@ -325,8 +312,6 @@ def run_evaluation(
             val_scores.append(score * batch_size)
             val_losses.append(loss * batch_size)
             batch_sizes.append(batch_size)
-        if i == 2:
-            break
 
     # run consensus evaluation on human and back-translated rephrasings
     if registry.revqa_eval:
