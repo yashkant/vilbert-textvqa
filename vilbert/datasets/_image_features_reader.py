@@ -209,7 +209,7 @@ class ImageFeaturesH5Reader(object):
                 features = item["features"].reshape(-1, 2048)
                 boxes = item["boxes"].reshape(-1, 4)
 
-                num_boxes = features.shape[0]
+                num_boxes = features.shape[0] if features.shape[0] > 0 else 1
                 g_feat = np.sum(features, axis=0) / num_boxes
                 num_boxes = num_boxes + 1
                 features = np.concatenate(

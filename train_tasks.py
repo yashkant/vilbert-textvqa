@@ -21,8 +21,8 @@ from vilbert.task_utils import (
     forward
 )
 
-import wandb
-wandb.init(project="spat")
+# import wandb
+# wandb.init(project="spat")
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -271,11 +271,11 @@ def main():
             score_values.append(score)
 
             # log to wandb
-            wandb.log({
-                'train_accuracy': float(score),
-                'train_loss': float(loss),
-                'learning_rate': float(optimizer.param_groups[0]["lr"])
-            })
+            # wandb.log({
+            #     'train_accuracy': float(score),
+            #     'train_loss': float(loss),
+            #     'learning_rate': float(optimizer.param_groups[0]["lr"])
+            # })
 
             loss.backward()
             if task_cfg["grad_clip_mode"] == "all":
@@ -353,10 +353,11 @@ def evaluate(
     val_accuracy = sum(total_score) / sum(total_batch_size)
 
     # log to wandb
-    wandb.log({
-        'val_accuracy': val_accuracy,
-        'val_loss': sum(total_loss) / sum(total_batch_size)
-    })
+    # wandb.log({
+    #     'val_accuracy': val_accuracy,
+    #     'val_loss': sum(total_loss) / sum(total_batch_size)
+    # })
+
 
     model.train()
     return val_accuracy

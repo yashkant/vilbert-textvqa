@@ -163,6 +163,9 @@ class TextVQADataset(Dataset):
 
         logger.info(f"Cache Name:  {cache_path}")
 
+        # import pdb
+        # pdb.set_trace()
+
         if (not os.path.exists(cache_path) or self.debug):
             # initialize processors (only once)
             if "processors" not in registry:

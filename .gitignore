@@ -50,3 +50,4 @@ checkpoints/
 
 .vscode/
 wandb
+datasets

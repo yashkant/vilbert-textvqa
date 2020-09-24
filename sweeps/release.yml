@@ -9,7 +9,7 @@ task_id: 19
 tvqa_dataroot: datasets/textvqa
 tvqa_obj_features: "/srv/share/ykant3/vilbert-mt/features/obj/{}_obj.lmdb"
 tvqa_ocr_features: "/srv/share/ykant3/vilbert-mt/features/ocr/{}_ocr.lmdb"
-tvqa_imdb: "/nethome/ykant3/pythia/data/imdb/textvqa_0.5/textvqa_{}.npy"
+tvqa_imdb: "/srv/testing/ykant3/pythia/imdb/textvqa_0.5/textvqa_{}.npy"
 
 # ST-VQA holders and folders
 stvqa_dataroot: datasets/stvqa

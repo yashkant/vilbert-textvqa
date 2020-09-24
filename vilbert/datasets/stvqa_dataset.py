@@ -115,6 +115,7 @@ class STVQADataset(TextVQADataset):
         # Just initialize the grand-parent classs
         Dataset.__init__(self)
 
+        self.clean_answers = None
         self.split = split
         self._max_seq_length = task_cfg["max_seq_length"]
         self._set_attrs(task_cfg)
