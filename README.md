@@ -59,8 +59,8 @@ We share result files from above runs which could be submitted to the EvalAI cha
   Method  |  val   |  test-dev   |  test-std  |
  ------- | ------ | ------ | ------ |
 Baseline (train)  | 66.31 | - | - |
-ConCAT (train)  | **53.99** | - | - |
-ConCAT (trainval)  | - | 69.51 | 69.22 |
-Baseline (trainval)  | - | **69.80** | **70.00** |
+ConCAT (train)  | **66.98** | - | - |
+Baseline (trainval)  | - | 69.51 | 69.22 |
+ConCAT (trainval)  | - | **69.80** | **70.00** |
 
 These files are placed under `results/<experiment-name>`. 
