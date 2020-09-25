@@ -1,6 +1,7 @@
 import logging
 from bisect import bisect
 
+import time
 import torch
 import torch.nn as nn
 from pytorch_transformers.tokenization_bert import BertTokenizer
@@ -126,6 +127,8 @@ def forward_train(device, dataloaders, model, train_type):
     # if registry.debug:
     #     train_type = "ce"
 
+    time_start = time.time()
+
     if train_type == "ce":
         batch_dicts = get_batch(dataloaders, "train_ce")
         # throw away rephrasings batch
@@ -133,15 +136,22 @@ def forward_train(device, dataloaders, model, train_type):
     else:
         batch_dicts = get_batch(dataloaders, "train_scl")
 
+    time_batch = time.time()
+
     for batch in batch_dicts:
         results_dict = run_model(batch, model, device)
         batch.update(results_dict)
+
+    time_model = time.time()
 
     if train_type == "scl":
         loss, batch_score = LossMap["SCLLoss"](batch_dicts)
     else:
         loss, batch_score = ce_loss(batch_dicts, device)
 
+    time_loss = time.time()
+
+    print(f"Batch: {time_batch - time_start} | Model: {time_model - time_batch} | Loss: {time_loss - time_model}")
     del batch_dicts
     return loss, float(batch_score)
 
@@ -158,7 +168,8 @@ def load_dataset(task_cfg):
     dataloaders = {}
 
     # one train split and multiple evaluation splits
-    load_splits = [task_cfg["train_split"]] + task_cfg["val_split"]
+    # load_splits = [task_cfg["train_split"]] + task_cfg["val_split"]
+    load_splits = [task_cfg["train_split"]]
 
     logger.info(f"Splits to load: {load_splits}")
 

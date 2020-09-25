@@ -8,6 +8,7 @@ from collections import defaultdict
 from io import open
 
 import numpy as np
+import time
 import torch
 import yaml
 from easydict import EasyDict as edict
@@ -163,17 +164,27 @@ def main():
                 logger.info(f"Breaking w/ hard-stop at {registry.hard_stop}")
                 break
 
-            iterId = step + (epochId * num_iters)
+            iter_id = step + (epochId * num_iters)
+
+            import pdb
+            pdb.set_trace()
 
             # set run-type ("scl" vs "ce")
-            if registry.alt_train and iterId % registry.ce_freq == 1:
+            if registry.alt_train and iter_id % registry.ce_freq == 1:
                 train_type = "scl"
             else:
                 train_type = "ce"
 
+            time_start = time.time()
+
             loss, score = forward_train(device, dataloaders, model, train_type)
 
+            time_forward = time.time()
+
             loss.backward()
+
+            time_backward = time.time()
+
 
             if task_cfg["grad_clip_mode"] == "all":
                 clip_gradients(
@@ -184,6 +195,7 @@ def main():
             warmup_scheduler.step()
             model.zero_grad()
             optimizer.zero_grad()
+            global_step += 1
 
             if train_type == "ce" or (not registry.alt_train):
                 loss_hist.append(float(loss))
@@ -196,12 +208,16 @@ def main():
                 logger.info(
                     f"Score: {sum(score_hist)/len(score_hist)}, Loss: {sum(loss_hist)/len(loss_hist)}"
                 )
-                logger.info(
-                    f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}"
-                )
                 loss_hist, score_hist = [], []
 
-            if (iterId != 0 and iterId % eval_iter_factor == 0) or (
+            time_rest = time.time()
+
+            print(f"Forward: {time_forward - time_start} "
+                  f"| Backward: {time_backward - time_forward} "
+                  f"| Rest: {time_rest - time_backward} "
+                  f"| Type: {train_type}")
+
+            if (iter_id != 0 and iter_id % eval_iter_factor == 0) or (
                 global_step == registry.hard_stop
             ):
                 logger.info("Starting Validation Run....")
