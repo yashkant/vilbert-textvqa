@@ -731,6 +731,7 @@ def main():
         elif lr_scheduler_config == "mannul":
             lr_scheduler.step()
 
+
     tbLogger.txt_close()
     del model
     print(f"Best Validation Score: {best_val_score}, Best Validation Epoch: {best_val_epoch}")

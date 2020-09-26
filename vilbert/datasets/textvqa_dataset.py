@@ -507,8 +507,8 @@ class TextVQADataset(Dataset):
                     entry["spatial_loss_mask"] = entry["spatial_ocr_relations"] = None
                 else:
                     entry["spatial_adj_matrices"] = {}
-                    entry["gauss_bias_matrices"] = {}
-                    entry["bins_matrices"] = {}
+                    # entry["gauss_bias_matrices"] = {}
+                    # entry["bins_matrices"] = {}
 
                     build_map = {
                         "3": ["1", "31", "32"],
@@ -526,17 +526,17 @@ class TextVQADataset(Dataset):
                         (torch.from_numpy(entry["spatial_adj_matrix_shared"]["1"]) != 0).int()
 
 
-                    if self.use_gauss_bias:
-                        entry["gauss_bias_matrices"]["1"] = torch_broadcast_gauss_bias(
-                                torch.from_numpy(entry["spatial_adj_matrix_shared"]["1"]),
-                                torch.from_numpy(entry["spatial_gauss_bias_shared"]["1"])
-                            )
-
-                    if self.use_attention_bins:
-                        entry["bins_matrices"]["1"] = torch_broadcast_bins(
-                                torch.from_numpy(entry["spatial_adj_matrix_shared"]["1"]),
-                                1
-                            )
+                    # if self.use_gauss_bias:
+                    #     entry["gauss_bias_matrices"]["1"] = torch_broadcast_gauss_bias(
+                    #             torch.from_numpy(entry["spatial_adj_matrix_shared"]["1"]),
+                    #             torch.from_numpy(entry["spatial_gauss_bias_shared"]["1"])
+                    #         )
+                    #
+                    # if self.use_attention_bins:
+                    #     entry["bins_matrices"]["1"] = torch_broadcast_bins(
+                    #             torch.from_numpy(entry["spatial_adj_matrix_shared"]["1"]),
+                    #             1
+                    #         )
 
 
                     for head_type in self.head_types:
@@ -555,34 +555,34 @@ class TextVQADataset(Dataset):
                         init_matrix = torch.max(init_matrix, second_matrix)
                         entry["spatial_adj_matrices"][head_type] = init_matrix
 
-                        if self.use_gauss_bias:
-                            assert use_matrix_types[0] in entry["spatial_gauss_bias_shared"]
-                            gauss_init_matrix = entry["gauss_bias_matrices"][use_matrix_types[0]]
-                            gauss_first_matrix = torch_broadcast_gauss_bias(
-                                torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[1]]),
-                                torch.from_numpy(entry["spatial_gauss_bias_shared"][use_matrix_types[1]]),
-                            )
-                            gauss_second_matrix = torch_broadcast_gauss_bias(
-                                torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[2]]),
-                                torch.from_numpy(entry["spatial_gauss_bias_shared"][use_matrix_types[2]]),
-                            )
-                            gauss_init_matrix = torch.max(gauss_init_matrix, gauss_first_matrix)
-                            gauss_init_matrix = torch.max(gauss_init_matrix, gauss_second_matrix)
-                            entry["gauss_bias_matrices"][head_type] = gauss_init_matrix
-
-                        if self.use_attention_bins:
-                            bins_init_matrix = entry["bins_matrices"][use_matrix_types[0]]
-                            bins_first_matrix = torch_broadcast_bins(
-                                torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[1]]),
-                                (int(use_matrix_types[1][0]) + 1)/2
-                            )
-                            bins_second_matrix = torch_broadcast_bins(
-                                torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[2]]),
-                                (int(use_matrix_types[2][0]) + 1)/2
-                            )
-                            bins_init_matrix = torch.max(bins_init_matrix, bins_first_matrix)
-                            bins_init_matrix = torch.max(bins_init_matrix, bins_second_matrix)
-                            entry["bins_matrices"][head_type] = bins_init_matrix
+                        # if self.use_gauss_bias:
+                        #     assert use_matrix_types[0] in entry["spatial_gauss_bias_shared"]
+                        #     gauss_init_matrix = entry["gauss_bias_matrices"][use_matrix_types[0]]
+                        #     gauss_first_matrix = torch_broadcast_gauss_bias(
+                        #         torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[1]]),
+                        #         torch.from_numpy(entry["spatial_gauss_bias_shared"][use_matrix_types[1]]),
+                        #     )
+                        #     gauss_second_matrix = torch_broadcast_gauss_bias(
+                        #         torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[2]]),
+                        #         torch.from_numpy(entry["spatial_gauss_bias_shared"][use_matrix_types[2]]),
+                        #     )
+                        #     gauss_init_matrix = torch.max(gauss_init_matrix, gauss_first_matrix)
+                        #     gauss_init_matrix = torch.max(gauss_init_matrix, gauss_second_matrix)
+                        #     entry["gauss_bias_matrices"][head_type] = gauss_init_matrix
+                        #
+                        # if self.use_attention_bins:
+                        #     bins_init_matrix = entry["bins_matrices"][use_matrix_types[0]]
+                        #     bins_first_matrix = torch_broadcast_bins(
+                        #         torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[1]]),
+                        #         (int(use_matrix_types[1][0]) + 1)/2
+                        #     )
+                        #     bins_second_matrix = torch_broadcast_bins(
+                        #         torch.from_numpy(entry["spatial_adj_matrix_shared"][use_matrix_types[2]]),
+                        #         (int(use_matrix_types[2][0]) + 1)/2
+                        #     )
+                        #     bins_init_matrix = torch.max(bins_init_matrix, bins_first_matrix)
+                        #     bins_init_matrix = torch.max(bins_init_matrix, bins_second_matrix)
+                        #     entry["bins_matrices"][head_type] = bins_init_matrix
 
         item.update(entry)
 

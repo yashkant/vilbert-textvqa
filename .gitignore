@@ -49,3 +49,5 @@ checkpoints/
 .ipynb_checkpoints
 
 .vscode/
+datasets
+wandb
