@@ -8,7 +8,6 @@ from collections import defaultdict
 from io import open
 
 import numpy as np
-import time
 import torch
 import yaml
 from easydict import EasyDict as edict
@@ -166,25 +165,15 @@ def main():
 
             iter_id = step + (epochId * num_iters)
 
-            import pdb
-            pdb.set_trace()
-
             # set run-type ("scl" vs "ce")
             if registry.alt_train and iter_id % registry.ce_freq == 1:
                 train_type = "scl"
             else:
                 train_type = "ce"
 
-            time_start = time.time()
-
             loss, score = forward_train(device, dataloaders, model, train_type)
 
-            time_forward = time.time()
-
             loss.backward()
-
-            time_backward = time.time()
-
 
             if task_cfg["grad_clip_mode"] == "all":
                 clip_gradients(
@@ -210,13 +199,6 @@ def main():
                 )
                 loss_hist, score_hist = [], []
 
-            time_rest = time.time()
-
-            print(f"Forward: {time_forward - time_start} "
-                  f"| Backward: {time_backward - time_forward} "
-                  f"| Rest: {time_rest - time_backward} "
-                  f"| Type: {train_type}")
-
             if (iter_id != 0 and iter_id % eval_iter_factor == 0) or (
                 global_step == registry.hard_stop
             ):
@@ -226,9 +208,9 @@ def main():
                 )
 
                 # log current results
-                ckpt_string = f"Iter: {global_step} | VQA: {curr_val_loss} | CS: {cs_scores} | CS-BT: {cs_bt_scores}"
+                ckpt_string = f"Iter: {global_step} | VQA: {curr_val_score} | CS: {cs_scores} | CS-BT: {cs_bt_scores}"
                 with open(eval_ckpts_file, "a") as f:
-                    f.write(ckpt_string)
+                    f.write(ckpt_string + "\n")
                 logger.info(ckpt_string)
 
                 # build dict for storing the checkpoint

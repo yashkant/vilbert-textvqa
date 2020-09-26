@@ -60,12 +60,14 @@ def final_evaluate(
     evaluate_rephrasings, device, model, dataloaders, save_path, eval_split
 ):
     if registry["monitor_value"] == "cs_score":
-        resume_file = save_path + "/cs_best.tar"
+        resume_file = os.path.join(save_path, "cs_best.tar")
     else:
-        resume_file = save_path + "/vqa_best.tar"
+        resume_file = os.path.join(save_path, "vqa_best.tar")
 
     if not os.path.exists(resume_file):
-        raise ValueError("Couldn't find the checkpoint")
+        import pdb
+        pdb.set_trace()
+        # raise ValueError("Couldn't find the checkpoint")
 
     # set model for evaluation
     model = set_model(model, resume_file)

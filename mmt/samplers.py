@@ -102,15 +102,14 @@ class ContrastiveSampler(Sampler):
         self.entries = data_source.entries
         # map from question-id -> entry-idx
         self.question_map = data_source.question_map
-        logger.info("Loading Hard Negatives")
         self.load_hard_negatives()
 
     def load_hard_negatives(self):
         """Load negatives of type `Image` and `Question` """
-        negs_path = "datasets/VQA/back-translate/fil_{}_question_negs.pkl".format(
+        negs_path = "data-release/negative-files/fil_{}_question_negs.pkl".format(
             self.split
         )
-        logger.info(f"Negatives path: {negs_path}")
+        logger.info(f"Loading Negatives from: {negs_path}")
         assert os.path.exists(negs_path)
         self.negs_data = cPickle.load(open(negs_path, "rb"))
         self.negs_index_dict = {}
