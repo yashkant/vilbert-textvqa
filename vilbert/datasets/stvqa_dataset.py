@@ -199,8 +199,9 @@ class STVQADataset(TextVQADataset):
 
             if self.heads_type != "none":
                 self.process_spatial_extras()
-            if not self.debug:
+            if not self.debug and False:
                 cPickle.dump(self.entries, open(cache_path, "wb"))
+                logger.info(f"Cache dumped at: {cache_path}")
         else:
             if "processors_only_registry" not in registry:
                 self.processors = Processors(
@@ -214,4 +215,4 @@ class STVQADataset(TextVQADataset):
 
             # otherwise load cache!
             logger.info("Loading from %s" % cache_path)
-            self.entries = cPickle.load(open(cache_path, "rb"))
+            self.entries = cPickle.load(open(cache_path, "rb"))        

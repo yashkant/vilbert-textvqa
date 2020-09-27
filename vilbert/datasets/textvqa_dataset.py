@@ -176,6 +176,7 @@ class TextVQADataset(Dataset):
         logger.info(f"Cache Name:  {cache_path}")
 
         if not os.path.exists(cache_path) or self.debug:
+            logger.info("Not loading from cache")
             # Initialize Processors
 
             if "processors" not in registry:
@@ -195,8 +196,9 @@ class TextVQADataset(Dataset):
 
             if self.heads_type != "none":
                 self.process_spatial_extras()
-            if not self.debug:
+            if not self.debug and False:
                 cPickle.dump(self.entries, open(cache_path, "wb"))
+                logger.info(f"Cache dumped at: {cache_path}")
         else:
             if "processors_only_registry" not in registry:
                 self.processors = Processors(
@@ -280,9 +282,11 @@ class TextVQADataset(Dataset):
             pad_obj_ocr_bboxes_list.append(np.concatenate([pad_obj_bboxes[:, :-1], pad_ocr_bboxes[:, :-1]], axis=0))
 
         logger.info(f"Processsing Spatial Relations with {self.processing_threads} threads")
+
         pool = mp.Pool(self.processing_threads)
         # map is synchronous (ordered)
-        results = pool.map(SpatialProcessor, pad_obj_ocr_bboxes_list)
+        results = list(tqdm(pool.imap(SpatialProcessor, pad_obj_ocr_bboxes_list), total=len(pad_obj_ocr_bboxes_list)))
+        # results = pool.map(SpatialProcessor, pad_obj_ocr_bboxes_list)
         pool.close()
         pool.join()
         assert len(results) == len(self.entries)
@@ -527,22 +531,22 @@ class TextVQADataset(Dataset):
                     entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix_share3"],
                                                                    spatial_adj_matrix_share3_2)
 
-                    if registry.args["use_share2"]:
+                    if registry.get("args", {"use_share2": False})["use_share2"]:
                         entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"],
                                                                        spatial_adj_matrix_share3_2)
 
-                    spatial_adj_matrix_share5_1 = torch_broadcast_adj_matrix(
-                        torch.from_numpy(entry["spatial_adj_matrix_share5_1"]),
-                        label_num=12
-                    )
-                    spatial_adj_matrix_share5_2 = torch_broadcast_adj_matrix(
-                        torch.from_numpy(entry["spatial_adj_matrix_share5_2"]),
-                        label_num=12
-                    )
-                    entry["spatial_adj_matrix_share5"] = torch.max(entry["spatial_adj_matrix_share3"],
-                                                                   spatial_adj_matrix_share5_1)
-                    entry["spatial_adj_matrix_share5"] = torch.max(entry["spatial_adj_matrix_share5"],
-                                                                   spatial_adj_matrix_share5_2)
+                    # spatial_adj_matrix_share5_1 = torch_broadcast_adj_matrix(
+                    #     torch.from_numpy(entry["spatial_adj_matrix_share5_1"]),
+                    #     label_num=12
+                    # )
+                    # spatial_adj_matrix_share5_2 = torch_broadcast_adj_matrix(
+                    #     torch.from_numpy(entry["spatial_adj_matrix_share5_2"]),
+                    #     label_num=12
+                    # )
+                    # entry["spatial_adj_matrix_share5"] = torch.max(entry["spatial_adj_matrix_share3"],
+                    #                                                spatial_adj_matrix_share5_1)
+                    # entry["spatial_adj_matrix_share5"] = torch.max(entry["spatial_adj_matrix_share5"],
+                    #                                                spatial_adj_matrix_share5_2)
             else:
                 try:
                     assert len(entry["spatial_adj_matrix"].shape) == 3
@@ -687,3 +691,4 @@ class ImageDatabase(torch.utils.data.Dataset):
     def _sort(self):
         sorted_data = sorted(self.data[self.start_idx:], key=lambda x: x["question_id"])
         self.data[self.start_idx:] = sorted_data
+                                                                                               
