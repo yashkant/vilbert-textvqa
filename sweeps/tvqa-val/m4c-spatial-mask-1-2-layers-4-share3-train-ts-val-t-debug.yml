@@ -5,19 +5,26 @@ TASK19:
   process: normal
   task_id: 19
 
-  # TextVQA
+  # remove later
   dataroot: datasets/textvqa
-  features_h5path1: "/srv/share/ykant3/vilbert-mt/features/obj/trainval_obj.lmdb" # obj-features (use holder to different splits)
-  features_h5path2: "/srv/share/ykant3/vilbert-mt/features/ocr/trainval_ocr.lmdb" # ocr-features
+  stvqa_dataroot: datasets/stvqa
+
+  # TextVQA
+  textvqa_obj: "/srv/share/ykant3/tvqa-release/textvqa/tvqa_{}_obj.lmdb"
+  textvqa_ocr: "/srv/share/ykant3/tvqa-release/textvqa/tvqa_{}_ocr.lmdb"
+  textvqa_spatial_cache: "/srv/share/ykant3/tvqa-release/textvqa/tvqa_{}_spat_cache.pkl"
+  textvqa_imdb: "/srv/share/ykant3/tvqa-release/textvqa/tvqa_{}_imdb.npy"
+
 
   # STVQA
-  stvqa_dataroot: datasets/stvqa
-  stvqa_features_h5path1: "/srv/share/ykant3/scene-text/features/obj/lmdbs/train_task_fixed.lmdb" # object features
-  stvqa_features_h5path2: "/srv/share/ykant3/scene-text/features/ocr/lmdbs/train_task_fixed.lmdb" # ocr features
+  stvqa_obj: "/srv/share/ykant3/tvqa-release/stvqa/stvqa_{}_obj.lmdb"
+  stvqa_ocr: "/srv/share/ykant3/tvqa-release/stvqa/stvqa_{}_ocr.lmdb"
+  stvqa_spatial_cache: "/srv/share/ykant3/tvqa-release/stvqa/stvqa_{}_spat_cache.pkl"
+  stvqa_imdb: "/srv/share/ykant3/tvqa-release/stvqa/stvqa_{}_imdb.npy"
 
   max_seq_length: 20
   max_obj_num: 100 # object features + avg feature
-  max_resnet_num: 100 # grid features + avg feature
+#  max_resnet_num: 100 # grid features + avg feature
   max_ocr_num: 50 # ocr tokens + avg feature
   batch_size: 96
   train_split: train

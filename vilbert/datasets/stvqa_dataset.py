@@ -92,24 +92,12 @@ class STVQADataset(TextVQADataset):
         # Just initialize the grand-parent classs
         Dataset.__init__(self)
 
-        dataroot = extra_args["stvqa_dataroot"]
         self.split = split
         self._max_seq_length = max_seq_length
 
-        if self.split == "test":
-            self.obj_features_reader = ImageFeaturesH5Reader(
-                features_path="/srv/share/ykant3/scene-text/features/obj/lmdbs/test_task3_fixed.lmdb", in_memory=True
-            )
-            self.ocr_features_reader = ImageFeaturesH5Reader(
-                features_path="/srv/share/ykant3/scene-text/features/ocr/lmdbs/test_task3_fixed.lmdb", in_memory=True
-            )
-        else:
-            self.obj_features_reader = ImageFeaturesH5Reader(
-                features_path=extra_args["stvqa_features_h5path1"], in_memory=True
-            )
-            self.ocr_features_reader = ImageFeaturesH5Reader(
-                features_path=extra_args["stvqa_features_h5path2"], in_memory=True
-            )
+        features_split = "trainval" if "test" not in self.split else "test"
+        self.obj_features_reader = ImageFeaturesH5Reader(features_path=extra_args["stvqa_obj"].format(features_split))
+        self.ocr_features_reader = ImageFeaturesH5Reader(features_path=extra_args["stvqa_ocr"].format(features_split))
 
         self._tokenizer = tokenizer
         self._padding_index = padding_index
@@ -117,7 +105,6 @@ class STVQADataset(TextVQADataset):
         self.max_ocr_num = extra_args["max_ocr_num"]
         assert self.max_obj_num == 100
         assert self.max_ocr_num == 50
-        self.max_resnet_num = extra_args["max_resnet_num"]
         self.debug = extra_args.get("debug", False)
         self.vocab_type = extra_args.get("vocab_type", "4k")
         self.dynamic_sampling = extra_args.get("dynamic_sampling", True)
@@ -141,42 +128,7 @@ class STVQADataset(TextVQADataset):
         if self.heads_type != "none":
             assert self.randomize <= 0
 
-        clean_train = ""
-
-        if "roberta" in bert_model:
-            cache_path = os.path.join(
-                dataroot,
-                "cache",
-                task
-                + "_"
-                + split
-                + "_"
-                + "roberta"
-                + "_"
-                + str(max_seq_length)
-                + clean_train
-                + ".pkl",
-            )
-        else:
-            cache_path = os.path.join(
-                dataroot,
-                "cache",
-                task + "_" + split + "_" + str(max_seq_length) + clean_train + f"_vocab_type{self.vocab_type}"
-                + f"_dynamic_{self.dynamic_sampling}" + ".pkl",
-            )
-
-        if self.distance_threshold != 0.5:
-            cache_path = cache_path.split(".")[0]
-            cache_path = cache_path + f"_threshold_{self.distance_threshold}" + ".pkl"
-
-        if self.heads_type != "none":
-            cache_path = cache_path.split(".")[0]
-            cache_path = cache_path + f"_heads_new" + ".pkl"
-
-        if self.randomize > 0:
-            cache_path = cache_path.split(".")[0]
-            cache_path = cache_path + f"_randomize_{self.randomize}" + ".pkl"
-
+        cache_path = extra_args["stvqa_spatial_cache"].format(self.split)
         logger.info(f"Cache Name:  {cache_path}")
 
         if not os.path.exists(cache_path) or self.debug:
@@ -191,11 +143,7 @@ class STVQADataset(TextVQADataset):
             self.entries, _ = _load_dataset(split, self.debug)
             # convert questions to tokens, create masks, segment_ids
             self.process()
-
-            if self.randomize > 0:
-                self.process_random_spatials()
-            else:
-                self.process_spatials()
+            self.process_spatials()
 
             if self.heads_type != "none":
                 self.process_spatial_extras()
@@ -215,4 +163,4 @@ class STVQADataset(TextVQADataset):
 
             # otherwise load cache!
             logger.info("Loading from %s" % cache_path)
-            self.entries = cPickle.load(open(cache_path, "rb"))        
+            self.entries = cPickle.load(open(cache_path, "rb"))

@@ -93,27 +93,16 @@ class TextVQADataset(Dataset):
         self.split = split
         self._max_seq_length = max_seq_length
 
-        if self.split == "test":
-            self.obj_features_reader = ImageFeaturesH5Reader(
-                features_path="/srv/share/ykant3/vilbert-mt/features/obj/test_obj.lmdb", in_memory=True
-            )
-            self.ocr_features_reader = ImageFeaturesH5Reader(
-                features_path="/srv/share/ykant3/vilbert-mt/features/ocr/test_ocr.lmdb", in_memory=True
-            )
-        else:
-            self.obj_features_reader = ImageFeaturesH5Reader(
-                features_path=extra_args["features_h5path1"], in_memory=True
-            )
-            self.ocr_features_reader = ImageFeaturesH5Reader(
-                features_path=extra_args["features_h5path2"], in_memory=True
-            )
+        features_split = "trainval" if "test" not in self.split else "test"
+        self.obj_features_reader = ImageFeaturesH5Reader(features_path=extra_args["textvqa_obj"].format(features_split))
+        self.ocr_features_reader = ImageFeaturesH5Reader(features_path=extra_args["textvqa_ocr"].format(features_split))
+
         self._tokenizer = tokenizer
         self._padding_index = padding_index
         self.max_obj_num = extra_args["max_obj_num"]
         self.max_ocr_num = extra_args["max_ocr_num"]
         assert self.max_obj_num == 100
         assert self.max_ocr_num == 50
-        self.max_resnet_num = extra_args["max_resnet_num"]
         self.debug = extra_args.get("debug", False)
         self.vocab_type = extra_args.get("vocab_type", "4k")
         self.dynamic_sampling = extra_args.get("dynamic_sampling", True)
@@ -137,42 +126,7 @@ class TextVQADataset(Dataset):
         if self.heads_type != "none":
             assert self.randomize <= 0
 
-        clean_train = ""
-
-        if "roberta" in bert_model:
-            cache_path = os.path.join(
-                dataroot,
-                "cache",
-                task
-                + "_"
-                + split
-                + "_"
-                + "roberta"
-                + "_"
-                + str(max_seq_length)
-                + clean_train
-                + ".pkl",
-            )
-        else:
-            cache_path = os.path.join(
-                dataroot,
-                "cache",
-                task + "_" + split + "_" + str(max_seq_length) + clean_train + f"_vocab_type{self.vocab_type}"
-                + f"_dynamic_{self.dynamic_sampling}" + ".pkl",
-            )
-
-        if self.distance_threshold != 0.5:
-            cache_path = cache_path.split(".")[0]
-            cache_path = cache_path + f"_threshold_{self.distance_threshold}" + ".pkl"
-
-        if self.heads_type != "none":
-            cache_path = cache_path.split(".")[0]
-            cache_path = cache_path + f"_heads_new_share5" + ".pkl"
-
-        if self.randomize > 0:
-            cache_path = cache_path.split(".")[0]
-            cache_path = cache_path + f"_randomize_{self.randomize}" + ".pkl"
-
+        cache_path = extra_args["textvqa_spatial_cache"].format(self.split)
         logger.info(f"Cache Name:  {cache_path}")
 
         if not os.path.exists(cache_path) or self.debug:
@@ -188,11 +142,7 @@ class TextVQADataset(Dataset):
             self.entries, _ = _load_dataset(dataroot, split, self.debug)
             # convert questions to tokens, create masks, segment_ids
             self.process()
-
-            if self.randomize > 0:
-                self.process_random_spatials()
-            else:
-                self.process_spatials()
+            self.process_spatials()
 
             if self.heads_type != "none":
                 self.process_spatial_extras()
@@ -287,33 +237,6 @@ class TextVQADataset(Dataset):
         # map is synchronous (ordered)
         results = list(tqdm(pool.imap(SpatialProcessor, pad_obj_ocr_bboxes_list), total=len(pad_obj_ocr_bboxes_list)))
         # results = pool.map(SpatialProcessor, pad_obj_ocr_bboxes_list)
-        pool.close()
-        pool.join()
-        assert len(results) == len(self.entries)
-        for result, entry in zip(results, self.entries):
-            entry["spatial_adj_matrix"] = result
-
-    def process_random_spatials(self):
-        pad_obj_ocr_bboxes_list = []
-        for entry in tqdm(self.entries, desc="Reading Entries"):
-            # Adding spatial graph matrix
-            obj_features, obj_num_boxes, obj_bboxes, _ = self.obj_features_reader[entry["image_id"]]
-            obj_features, obj_num_boxes, obj_bboxes = obj_features[1:], obj_num_boxes - 1, obj_bboxes[1:]
-            _, _, pad_obj_bboxes = self._pad_features(
-                obj_features, obj_bboxes, obj_num_boxes, self.max_obj_num, tensorize=False
-            )
-            ocr_features, ocr_num_boxes, ocr_bboxes, _ = self.ocr_features_reader[entry["image_id"]]
-            ocr_features, ocr_num_boxes, ocr_bboxes = ocr_features[1:], ocr_num_boxes - 1, ocr_bboxes[1:]
-            _, _, pad_ocr_bboxes = self._pad_features(
-                ocr_features, ocr_bboxes, ocr_num_boxes, self.max_ocr_num, tensorize=False
-            )
-            # Append bboxes to the list
-            pad_obj_ocr_bboxes_list.append(np.concatenate([pad_obj_bboxes[:, :-1], pad_ocr_bboxes[:, :-1]], axis=0))
-
-        logger.info(f"Processsing Random Spatial Relations with {self.processing_threads} threads")
-        pool = mp.Pool(self.processing_threads)
-        # map is synchronous (ordered)
-        results = pool.map(RandomSpatialProcessor, pad_obj_ocr_bboxes_list)
         pool.close()
         pool.join()
         assert len(results) == len(self.entries)
@@ -691,4 +614,3 @@ class ImageDatabase(torch.utils.data.Dataset):
     def _sort(self):
         sorted_data = sorted(self.data[self.start_idx:], key=lambda x: x["question_id"])
         self.data[self.start_idx:] = sorted_data
-                                                                                               

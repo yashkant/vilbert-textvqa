@@ -274,47 +274,13 @@ def main():
     if args.baseline:
         from pytorch_transformers.modeling_bert import BertConfig
         from vilbert.basebert import BaseBertForVLTasks
-    elif model_type == "22":
-        from vilbert.vilbert import BertConfig
-        from vilbert.vilbert import VILBertForVLTasks
-    elif model_type == "31":
-        from vilbert.vilbert_3_1 import BertConfig
-        from vilbert.vilbert_3_1 import VILBertForVLTasks
-    elif model_type == "22lf":
-        from vilbert.vilbert_2_2_lf import BertConfig
-        from vilbert.vilbert_2_2_lf import VILBertForVLTasks
-    elif model_type == "22nf":
-        logger.info("Using 2-2 no-fusion model")
-        from vilbert.vilbert_2_2_nf import BertConfig
-        from vilbert.vilbert_2_2_nf import VILBertForVLTasks
     elif model_type == "m4c":
         logger.info("Using M4C model")
         from vilbert.m4c import BertConfig
         from vilbert.m4c import M4C
-    elif model_type == "m4c_rd":
-        logger.info("Using M4C-RD model")
-        from vilbert.m4c_decode_rd import BertConfig
-        from vilbert.m4c_decode_rd import M4C
-    elif model_type == "22ss":
-        from vilbert.vilbert_ss import BertConfig, VILBertForVLTasks
     elif model_type == "m4c_spatial":
         logger.info("Using M4C-Spatial model")
         from vilbert.m4c_spatial import BertConfig, M4C
-    elif model_type == "m4c_topk":
-        logger.info("Using M4C-Topk model")
-        from vilbert.m4c_topk import BertConfig, M4C
-    elif model_type == "m4c_topk_20x":
-        logger.info("Using M4C-Topk model")
-        from vilbert.m4c_topk_20x import BertConfig, M4C
-    elif model_type == "m4c_regat":
-        logger.info("Using M4C-Regat model")
-        from vilbert.m4c_regat import BertConfig, M4C
-    elif model_type == "m4c_regat_spatial":
-        logger.info("Using M4C-Regat_spatial model")
-        from vilbert.m4c_regat_spatial import BertConfig, M4C
-    elif model_type == "m4c_spatial_que_cond":
-        logger.info("Using M4C-Spatial Question Cond. model")
-        from vilbert.m4c_spatial_que_cond import BertConfig, M4C
     else:
         raise ValueError
 
@@ -582,6 +548,8 @@ def main():
     # This validation score is used for model-saving.
     best_val_score = 0
 
+    if task_cfg["TASK19"]["debug"]:
+        median_num_iter = 1000
 
     # TRAINING LOOP
     for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
