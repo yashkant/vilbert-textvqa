@@ -377,7 +377,7 @@ class tbLogger(object):
             if self.task_num_iters[task_id] > 0:
                 if self.task_step_tmp[task_id]:
                     lossInfo += (
-                        "[%s]: iter %d Ep: %.2f loss %.3f score %.3f lr %.6g "
+                        "[%s]: iter %d Ep: %.2f loss %.8f score %.8f lr %.6g "
                         % (
                             self.task_id2name[task_id],
                             self.task_step[task_id],
