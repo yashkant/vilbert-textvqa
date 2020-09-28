@@ -77,11 +77,8 @@ class STVQADataset(TextVQADataset):
         self,
         split,
         tokenizer,
-        bert_model,
-        task="STVQA",
         padding_index=0,
         max_seq_length=16,
-        max_region_num=101,
         processing_threads=32,
         extra_args=None
     ):

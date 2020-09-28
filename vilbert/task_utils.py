@@ -255,14 +255,9 @@ def LoadLosses(args, task_cfg, task_ids):
 
 
 def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val_bs=32, test_val_workers=2):
-    if "roberta" in args.bert_model:
-        tokenizer = RobertaTokenizer.from_pretrained(
-            args.bert_model, do_lower_case=args.do_lower_case
-        )
-    else:
-        tokenizer = BertTokenizer.from_pretrained(
-            args.bert_model, do_lower_case=args.do_lower_case
-        )
+    tokenizer = BertTokenizer.from_pretrained(
+        args.bert_model, do_lower_case=True
+    )
 
 
     task_datasets_train = {}
@@ -308,10 +303,8 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val
             dataset = DatasetMapTrain[key_map[entry]](
                 split="train",
                 tokenizer=tokenizer,
-                bert_model=args.bert_model,
                 padding_index=0,
                 max_seq_length=task_cfg[task]["max_seq_length"],
-                max_region_num=task_cfg[task]["max_region_num"],
                 extra_args=task_cfg[task]
             )
             train_datasets.append(dataset)
@@ -332,10 +325,8 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val
     task_datasets_val[task] = DatasetMapTrain[val_task_name](
         split="val",
         tokenizer=tokenizer,
-        bert_model=args.bert_model,
         padding_index=0,
         max_seq_length=task_cfg[task]["max_seq_length"],
-        max_region_num=task_cfg[task]["max_region_num"],
         extra_args=task_cfg[task]
     )
 
@@ -346,10 +337,8 @@ def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val
         task_datasets_test[task] = DatasetMapTrain[val_task_name](
             split="test",
             tokenizer=tokenizer,
-            bert_model=args.bert_model,
             padding_index=0,
             max_seq_length=task_cfg[task]["max_seq_length"],
-            max_region_num=task_cfg[task]["max_region_num"],
             extra_args=task_cfg[task]
         )
 
