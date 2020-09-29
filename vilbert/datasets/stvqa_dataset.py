@@ -1,24 +1,11 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
-
-# This source code is licensed under the MIT license found in the
-# LICENSE file in the root directory of this source tree.
-
-import os
-import json
 import _pickle as cPickle
 import logging
-from tools.registry import registry
-from tools.objects_to_byte_tensor import enc_obj2bytes, dec_bytes2obj
-import numpy as np
-import torch
+
 from torch.utils.data import Dataset
-from tqdm import tqdm
-from .textvqa_processors import *
-from easydict import EasyDict as edict
-from ._image_features_reader import ImageFeaturesH5Reader
-from vilbert.spatial_utils_regat import torch_broadcast_adj_matrix
-import multiprocessing as mp
+
 from vilbert.datasets.textvqa_dataset import TextVQADataset, Processors, ImageDatabase
+from ._image_features_reader import ImageFeaturesH5Reader
+from .processors import *
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
@@ -100,30 +87,21 @@ class STVQADataset(TextVQADataset):
         self._padding_index = padding_index
         self.max_obj_num = extra_args["max_obj_num"]
         self.max_ocr_num = extra_args["max_ocr_num"]
-        assert self.max_obj_num == 100
-        assert self.max_ocr_num == 50
         self.debug = extra_args.get("debug", False)
-        self.vocab_type = extra_args.get("vocab_type", "4k")
-        self.dynamic_sampling = extra_args.get("dynamic_sampling", True)
+        self.vocab_type = extra_args["vocab_type"]
+        self.dynamic_sampling = extra_args["dynamic_sampling"]
         self.distance_threshold = extra_args.get("distance_threshold", 0.5)
         self.processing_threads = processing_threads
-        self.heads_type = extra_args.get("heads_type", "none")
-        self.clean_answers = extra_args.get("clean_answers", True)
-        self.randomize = extra_args.get("randomize", -1)
+        self.heads_type = extra_args["SA-M4C"]["heads_type"]
+        self.clean_answers = extra_args["clean_answers"]
 
         registry.vocab_type = self.vocab_type
         registry.distance_threshold = self.distance_threshold
-        registry.randomize = self.randomize
 
         logger.info(f"Dynamic Sampling is {self.dynamic_sampling}")
         logger.info(f"distance_threshold is {self.distance_threshold}")
         logger.info(f"heads_type: {self.heads_type}")
         logger.info(f"Clean Answers is {self.clean_answers}")
-        logger.info(f"Randomize is {self.randomize}")
-
-        # We only randomize the spatial-adj-matrix
-        if self.heads_type != "none":
-            assert self.randomize <= 0
 
         cache_path = extra_args["stvqa_spatial_cache"].format(self.split)
         logger.info(f"Cache Name:  {cache_path}")

@@ -1,17 +1,8 @@
-import copy
-import json
 import logging
 import math
-import sys
-from io import open
 
 import torch
-import torch.nn.functional as F
 from torch import nn
-from torch.nn import CrossEntropyLoss
-
-from tools.registry import registry
-from .utils import PreTrainedModel
 
 logger = logging.getLogger(__name__)
 

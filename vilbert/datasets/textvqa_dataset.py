@@ -3,21 +3,18 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-import os
-import json
 import _pickle as cPickle
 import logging
-from tools.registry import registry
-from tools.objects_to_byte_tensor import enc_obj2bytes, dec_bytes2obj
-import numpy as np
-import torch
+import multiprocessing as mp
+
+from easydict import EasyDict as edict
 from torch.utils.data import Dataset
 from tqdm import tqdm
-from .textvqa_processors import *
-from easydict import EasyDict as edict
-from ._image_features_reader import ImageFeaturesH5Reader
+
+from tools.objects_to_byte_tensor import enc_obj2bytes
 from vilbert.spatial_utils_regat import torch_broadcast_adj_matrix
-import multiprocessing as mp
+from ._image_features_reader import ImageFeaturesH5Reader
+from .processors import *
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
@@ -94,34 +91,25 @@ class TextVQADataset(Dataset):
         self.obj_features_reader = ImageFeaturesH5Reader(features_path=extra_args["textvqa_obj"].format(features_split))
         self.ocr_features_reader = ImageFeaturesH5Reader(features_path=extra_args["textvqa_ocr"].format(features_split))
 
-        self._tokenizer = tokenizer
-        self._padding_index = padding_index
+        self.tokenizer = tokenizer
+        self.processing_threads = processing_threads
+
         self.max_obj_num = extra_args["max_obj_num"]
         self.max_ocr_num = extra_args["max_ocr_num"]
-        assert self.max_obj_num == 100
-        assert self.max_ocr_num == 50
         self.debug = extra_args.get("debug", False)
-        self.vocab_type = extra_args.get("vocab_type", "4k")
-        self.dynamic_sampling = extra_args.get("dynamic_sampling", True)
+        self.vocab_type = extra_args["vocab_type"]
+        self.dynamic_sampling = extra_args["dynamic_sampling"]
         self.distance_threshold = extra_args.get("distance_threshold", 0.5)
-        self.processing_threads = processing_threads
-        self.heads_type = extra_args.get("heads_type", "none")
-        self.clean_answers = extra_args.get("clean_answers", True)
-        self.randomize = extra_args.get("randomize", -1)
+        self.heads_type = extra_args["SA-M4C"]["heads_type"]
+        self.clean_answers = extra_args["clean_answers"]
 
         registry.vocab_type = self.vocab_type
         registry.distance_threshold = self.distance_threshold
-        registry.randomize = self.randomize
 
         logger.info(f"Dynamic Sampling is {self.dynamic_sampling}")
         logger.info(f"distance_threshold is {self.distance_threshold}")
         logger.info(f"heads_type: {self.heads_type}")
         logger.info(f"Clean Answers is {self.clean_answers}")
-        logger.info(f"Randomize is {self.randomize}")
-
-        # We only randomize the spatial-adj-matrix
-        if self.heads_type != "none":
-            assert self.randomize <= 0
 
         cache_path = extra_args["textvqa_spatial_cache"].format(self.split)
         logger.info(f"Cache Name:  {cache_path}")
@@ -131,7 +119,7 @@ class TextVQADataset(Dataset):
             # Initialize Processors
 
             if "processors" not in registry:
-                self.processors = Processors(self._tokenizer, vocab_type=self.vocab_type)
+                self.processors = Processors(self.tokenizer, vocab_type=self.vocab_type)
                 registry.processors = self.processors
             else:
                 self.processors = registry.processors
@@ -149,7 +137,7 @@ class TextVQADataset(Dataset):
         else:
             if "processors_only_registry" not in registry:
                 self.processors = Processors(
-                    self._tokenizer,
+                    self.tokenizer,
                     only_registry=True,
                     vocab_type=self.vocab_type
                 )  # only initialize the M4C processor (for registry)
@@ -377,65 +365,51 @@ class TextVQADataset(Dataset):
             # Empty placeholder
             entry["train_prev_inds"] = torch.zeros(12, dtype=torch.long)
 
-        if self.heads_type in ["mix", "share3", "quad4"] or self.randomize > 0 or "spatial_adj_matrix" in entry:
+        if self.heads_type in ["mix", "share3", "quad4"] or "spatial_adj_matrix" in entry:
             # In the first iteration expand all the spatial relation matrices
             if not isinstance(entry["spatial_adj_matrix"], torch.Tensor):
-                if self.randomize > 0:
-                    rows, cols, slices = entry["spatial_adj_matrix"].shape
-                    assert slices == self.randomize
-                    adj_matrices = []
+                # if self.randomize > 0:
+                #     rows, cols, slices = entry["spatial_adj_matrix"].shape
+                #     assert slices == self.randomize
+                #     adj_matrices = []
+                #
+                #     # Expand each slice
+                #     for slice_idx in range(slices):
+                #         adj_matrix_slice = torch_broadcast_adj_matrix(
+                #             torch.from_numpy(entry["spatial_adj_matrix"][:, :, slice_idx]),
+                #             label_num=12
+                #         )
+                #         adj_matrices.append(adj_matrix_slice)
+                #
+                #     # Aggregate each slice
+                #     entry["spatial_adj_matrix"] = adj_matrices[0]
+                #     for matrix_slice in adj_matrices[1:]:
+                #         entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], matrix_slice)
+                #
+                #     entry["spatial_loss_mask"] = entry["spatial_ocr_relations"] = None
+                # else:
+                #     # entry["spatial_loss_mask"] = torch.from_numpy((entry["spatial_adj_matrix"] != 0).astype(np.float))
+                #     # entry["spatial_ocr_relations"] = torch.from_numpy(
+                #     #     entry["spatial_adj_matrix"][-self.max_ocr_num:, -self.max_ocr_num:].astype(np.float)
+                #     # )
+                #     # label_num = 12 classifies self-relationship as label=12
+                #     entry["spatial_adj_matrix"] = torch_broadcast_adj_matrix(
+                #         torch.from_numpy(entry["spatial_adj_matrix"]),
+                #         label_num=12
+                #     )
 
-                    # Expand each slice
-                    for slice_idx in range(slices):
-                        adj_matrix_slice = torch_broadcast_adj_matrix(
-                            torch.from_numpy(entry["spatial_adj_matrix"][:, :, slice_idx]),
-                            label_num=12
-                        )
-                        adj_matrices.append(adj_matrix_slice)
-
-                    # Aggregate each slice
-                    entry["spatial_adj_matrix"] = adj_matrices[0]
-                    for matrix_slice in adj_matrices[1:]:
-                        entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], matrix_slice)
-
-                    entry["spatial_loss_mask"] = entry["spatial_ocr_relations"] = None
-                else:
-                    entry["spatial_loss_mask"] = torch.from_numpy((entry["spatial_adj_matrix"] != 0).astype(np.float))
-                    entry["spatial_ocr_relations"] = torch.from_numpy(
-                        entry["spatial_adj_matrix"][-self.max_ocr_num:, -self.max_ocr_num:].astype(np.float)
-                    )
+                if self.heads_type == "mix":
                     # label_num = 12 classifies self-relationship as label=12
                     entry["spatial_adj_matrix"] = torch_broadcast_adj_matrix(
                         torch.from_numpy(entry["spatial_adj_matrix"]),
                         label_num=12
                     )
 
-                # if self.heads_type == "quad4":
-                #     spatial_adj_matrix_quad4 = torch_broadcast_adj_matrix(
-                #         torch.from_numpy(entry["spatial_adj_matrix_quad4"]),
-                #         label_num=12
-                #     )
-                #     entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_quad4)
-                #
-                # if self.heads_type == "share3":
-                #     spatial_adj_matrix_share3_1 = torch_broadcast_adj_matrix(
-                #         torch.from_numpy(entry["spatial_adj_matrix_share3_1"]),
-                #         label_num=12
-                #     )
-                #
-                #     spatial_adj_matrix_share3_2 = torch_broadcast_adj_matrix(
-                #         torch.from_numpy(entry["spatial_adj_matrix_share3_2"]),
-                #         label_num=12
-                #     )
-                #     entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_1)
-                #     entry["spatial_adj_matrix"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_share3_2)
-
-                if self.heads_type == "mix":
-                    spatial_adj_matrix_quad4 = torch_broadcast_adj_matrix(
-                        torch.from_numpy(entry["spatial_adj_matrix_quad4"]),
-                        label_num=12
-                    )
-                    entry["spatial_adj_matrix_quad4"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_quad4)
+                    # spatial_adj_matrix_quad4 = torch_broadcast_adj_matrix(
+                    #     torch.from_numpy(entry["spatial_adj_matrix_quad4"]),
+                    #     label_num=12
+                    # )
+                    # entry["spatial_adj_matrix_quad4"] = torch.max(entry["spatial_adj_matrix"], spatial_adj_matrix_quad4)
 
                     spatial_adj_matrix_share3_1 = torch_broadcast_adj_matrix(
                         torch.from_numpy(entry["spatial_adj_matrix_share3_1"]),
@@ -451,10 +425,10 @@ class TextVQADataset(Dataset):
                     entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix_share3"],
                                                                    spatial_adj_matrix_share3_2)
 
-                    if registry.get("args", {"use_share2": False})["use_share2"]:
-                        entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"],
-                                                                       spatial_adj_matrix_share3_2)
-
+                    # if registry.get("args", {"use_share2": False})["use_share2"]:
+                    #     entry["spatial_adj_matrix_share3"] = torch.max(entry["spatial_adj_matrix"],
+                    #                                                    spatial_adj_matrix_share3_2)
+                    #
                     # spatial_adj_matrix_share5_1 = torch_broadcast_adj_matrix(
                     #     torch.from_numpy(entry["spatial_adj_matrix_share5_1"]),
                     #     label_num=12
@@ -470,8 +444,8 @@ class TextVQADataset(Dataset):
             else:
                 try:
                     assert len(entry["spatial_adj_matrix"].shape) == 3
-                    assert "spatial_loss_mask" in entry
-                    assert "spatial_ocr_relations" in entry
+                    # assert "spatial_loss_mask" in entry
+                    # assert "spatial_ocr_relations" in entry
                 except:
                     import pdb
                     pdb.set_trace()
@@ -484,10 +458,8 @@ class TextVQADataset(Dataset):
                          'spatial_adj_matrix_share5_2',
                          'cleaned_ocr_tokens',
                          'image_id',
+                         "spatial_adj_matrix_quad4",
                          'image_path']
-
-        if self.heads_type == "share3":
-            unwanted_keys.append("spatial_adj_matrix_quad4")
 
         for key in unwanted_keys:
             if key in item:

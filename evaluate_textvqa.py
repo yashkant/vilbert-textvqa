@@ -1,34 +1,23 @@
 import argparse
-import sys
-import os
 import json
-import random
-import pdb
 import logging
-import torch
+import os
+import sys
+
 import numpy as np
 import pandas as pd
-import torch.nn.functional as F
-import torch.nn as nn
-import torch.distributed as dist
+import torch
 import yaml
-
-from tqdm import tqdm
-from bisect import bisect
 from easydict import EasyDict as edict
-from tools.registry import registry
+from tqdm import tqdm
+from vilbert.datasets.metrics import TextVQAAccuracyEvaluator, STVQAANLSEvaluator
 
-import vilbert.utils as utils
+from tools.registry import registry
 from vilbert.task_utils import (
     LoadDatasets,
-    LoadLosses,
-    ForwardModelsTrain,
-    ForwardModelsVal,
-    clip_gradients,
-    get_optim_scheduler
+    load_losses,
+    forward_val
 )
-
-from vilbert.datasets.textvqa_metrics import TextVQAAccuracyEvaluator, EvalAIAnswerProcessor, STVQAANLSEvaluator
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -156,7 +145,7 @@ def load_model():
         from vilbert.m4c_decode_rd import BertConfig
         from vilbert.m4c_decode_rd import M4C
     elif model_type == "22ss":
-        from vilbert.vilbert_ss import BertConfig, VILBertForVLTasks
+        from vilbert.vilbert_ss import BertConfig
     elif model_type == "m4c_spatial":
         logger.info("Using M4C-Spatial model")
         from vilbert.m4c_spatial import BertConfig, M4C
@@ -293,7 +282,7 @@ def evaluate(
         for i, batch in enumerate(task_dataloader_val[task_id]):
 
             # Don't bother for loss (beam-search changes output)
-            ForwardModelsVal(
+            forward_val(
                 args, task_cfg, device, task_id, batch, model, task_losses,
             )
 
@@ -514,7 +503,7 @@ def main():
             task_dataloader_val
         ) = return_tuple
 
-    task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
+    task_losses = load_losses(args, task_cfg, args.tasks.split("-"))
 
     # tvqa_eval_df = load_data_for_evaluation_tvqa()
     # tvqa_eval_df_test = load_data_for_evaluation_tvqa_test()

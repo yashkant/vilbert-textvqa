@@ -9,31 +9,20 @@ import logging
 import os
 import random
 from io import open
+
 import numpy as np
-import pprint
-from tensorboardX import SummaryWriter
-from torch.optim import Adam
-from tqdm import tqdm
-from bisect import bisect
+import torch
+import torch.distributed as dist
 import yaml
 from easydict import EasyDict as edict
-
-import pdb
-import sys
-import torch
-import torch.nn.functional as F
-import torch.nn as nn
+from tqdm import tqdm
 
 from vilbert.task_utils import (
-    LoadDatasets,
-    LoadLosses,
-    ForwardModelsTrain,
-    ForwardModelsVal,
+    load_losses,
+    forward_train,
+    forward_val,
     clip_gradients,
-    get_optim_scheduler)
-
-import vilbert.utils as utils
-import torch.distributed as dist
+    get_optim_scheduler, load_datasets)
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -46,20 +35,6 @@ logger = logging.getLogger(__name__)
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument(
-        "--bert_model",
-        default="bert-base-uncased",
-        type=str,
-        help="Bert pre-trained model selected in the list: bert-base-uncased, "
-             "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.",
-    )
-    parser.add_argument(
-        "--from_pretrained",
-        default="bert-base-uncased",
-        type=str,
-        help="Bert pre-trained model selected in the list: bert-base-uncased, "
-             "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.",
-    )
     parser.add_argument(
         "--output_dir",
         default="save",
@@ -95,12 +70,6 @@ def main():
         "--seed", type=int, default=0, help="random seed for initialization"
     )
     parser.add_argument(
-        "--gradient_accumulation_steps",
-        type=int,
-        default=1,
-        help="Number of updates steps to accumualte before performing a backward/update pass.",
-    )
-    parser.add_argument(
         "--fp16",
         action="store_true",
         help="Whether to use 16-bit float precision instead of 32-bit",
@@ -123,15 +92,6 @@ def main():
         "--save_name", default="", type=str, help="save name for training."
     )
     parser.add_argument(
-        "--in_memory",
-        default=True,
-        type=bool,
-        help="whether use chunck for parallel training.",
-    )
-    parser.add_argument(
-        "--optim", default=None, type=str, help="what to use for the optimization."
-    )
-    parser.add_argument(
         "--tasks", default="", type=str, help="1-2-3... training task separate by -"
     )
     parser.add_argument(
@@ -139,12 +99,6 @@ def main():
         default=-1,
         type=int,
         help="till which layer of textual stream of vilbert need to fixed.",
-    )
-    parser.add_argument(
-        "--lr_scheduler",
-        default=None,
-        type=str,
-        help="whether use learning rate scheduler.",
     )
     parser.add_argument(
         "--resume_file", default="", type=str, help="Resume from checkpoint"
@@ -155,10 +109,6 @@ def main():
 
     parser.add_argument(
         "--tag", default="debug", type=str, help="tag for the experiment", required=True
-    )
-
-    parser.add_argument(
-        "--model_type", default=None, type=str, help="Type of model 22 or 31 or 22nf or 22lf"
     )
 
     parser.add_argument(
@@ -179,24 +129,24 @@ def main():
 
     logger.info("-"*20 + "Config Start" + "-"*20)
     print(vars(args))
-    print(task_cfg["TASK19"])
+    print(task_cfg)
     logger.info("-"*20 + "Config End" + "-"*20)
 
-    seed = task_cfg["TASK19"].get("seed", args.seed)
+    seed = task_cfg.get("seed", args.seed)
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     logger.info(f"Using seed: {seed}")
 
-    model_type = task_cfg["TASK19"]["model_type"] if args.model_type is None else args.model_type
+    model_type = task_cfg["model_type"]
 
     task_names = []
     task_lr = []
     for i, task_id in enumerate(args.tasks.split("-")):
         task = "TASK" + task_id
-        name = task_cfg[task]["name"]
+        name = task_cfg["name"]
         task_names.append(name)
-        task_lr.append(task_cfg[task]["lr"])
+        task_lr.append(task_cfg["lr"])
 
     if args.only_eval:
         if args.save_name:
@@ -210,167 +160,97 @@ def main():
                 + prefix
                 + f"-{args.tag}"
         )
-        savePath = os.path.join(args.output_dir, timeStamp)
-        output_checkpoint_path = os.path.join(savePath, "pytorch_ckpt_latest.tar")
+        save_path = os.path.join(args.output_dir, timeStamp)
+        output_checkpoint_path = os.path.join(save_path, "pytorch_ckpt_latest.tar")
         return args.task_file, output_checkpoint_path, args.use_share2
 
-    if model_type == "m4c":
-        logger.info("Using M4C model")
-        from vilbert.m4c import BertConfig
-        from vilbert.m4c import M4C
-    elif model_type == "m4c_spatial":
-        logger.info("Using M4C-Spatial model")
-        from vilbert.m4c_spatial import BertConfig, M4C
-    else:
-        raise ValueError
-
+    from vilbert.m4c_spatial import BertConfig, M4C
 
     base_lr = min(task_lr)
-    loss_scale = {}
-    for i, task_id in enumerate(args.tasks.split("-")):
-        task = "TASK" + task_id
-        loss_scale[task] = task_lr[i] / base_lr
-
-    if args.save_name:
-        prefix = "-" + args.save_name
-    else:
-        prefix = ""
-    timeStamp = (
-            "-".join(task_names)
-            + "_"
-            + args.config_file.split("/")[1].split(".")[0]
-            + prefix
-            + f"-{args.tag}"
-    )
-    savePath = os.path.join(args.output_dir, timeStamp)
-
-    # bert_weight_name = json.load(
-    #     open("config/" + args.bert_model + "_weight_name.json", "r")
-    # )
+    save_path = os.path.join(args.output_dir, args.tag)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     n_gpu = torch.cuda.device_count()
+    logger.info(f"Device: {device}, Numer of GPUs: {n_gpu}")
 
-    logger.info(
-        "device: {} n_gpu: {}, distributed training: {}, 16-bits training: {}".format(
-            device, n_gpu, bool(args.local_rank != -1), args.fp16
-        )
-    )
-
-    if task_cfg["TASK19"]["grad_clip_mode"] == "all":
-        logger.info(f"Using gradients clipping mode: {task_cfg['TASK19']['grad_clip_mode']}")
-
-    # (YK): default_gpu decides whether to log outputs
-    default_gpu = False
-    if dist.is_available() and args.local_rank != -1:
-        rank = dist.get_rank()
-        if rank == 0:
-            default_gpu = True
-    else:
-        default_gpu = True
-
-    if default_gpu:
-        if not os.path.exists(savePath):
-            os.makedirs(savePath)
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
 
     config = BertConfig.from_json_file(args.config_file)
-    if default_gpu:
-        # save all the hidden parameters.
-        with open(os.path.join(savePath, "command.txt"), "w") as f:
-            print(args, file=f)  # Python 3.x
-            print("\n", file=f)
-            print(config, file=f)
+    # save all the hidden parameters.
+    with open(os.path.join(save_path, "command.txt"), "w") as f:
+        print(args, file=f)  # Python 3.x
+        print("\n", file=f)
+        print(config, file=f)
 
-    # LOAD DATASETS
-    task_batch_size, task_num_iters, task_ids, task_datasets_train, task_datasets_val, task_dataloader_train, \
-    task_dataloader_val = LoadDatasets(args, task_cfg, args.tasks.split("-"), test_val_workers=16, test_val_bs=64)
+    dataloaders = load_datasets(task_cfg, ["train"])
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
-    task_ave_iter = {}
-    # task_stop_controller = {}
-    for task_id, num_iter in task_num_iters.items():
-        task_ave_iter[task_id] = int(
-            task_cfg[task]["num_epoch"]
-            * num_iter
-            / args.num_train_epochs
-        )
-
-    task_ave_iter_list = sorted(task_ave_iter.values())
-    median_num_iter = task_ave_iter_list[-1]
-    num_train_optimization_steps = (
-            median_num_iter * args.num_train_epochs // args.gradient_accumulation_steps
-    )
-
+    median_num_iter = len(dataloaders["train"])
+    # num_train_optimization_steps = (
+    #         median_num_iter * args.num_train_epochs
+    # )
     # LOAD PRETRAINED VILBERT
-    if args.from_scratch:
-        logger.info("Not Using Pre-trained weights")
-        if "m4c" not in model_type:
-            model = VILBertForVLTasks(
-                config=config,
-                num_labels=None,
-                default_gpu=default_gpu,
-            )
-        else:
-            if model_type in ["m4c_spatial", "m4c_topk", "m4c_regat", "m4c_regat_spatial"]:
-                if "m4c_spatial" in model_type:
-                    assert "attention_mask_quadrants" in task_cfg["TASK19"]
-                # assert "spatial_type" in task_cfg["TASK19"]
-                # Transfer keys from config to BertConfig
-                transfer_keys = ["attention_mask_quadrants",
-                                 "hidden_size",
-                                 "num_implicit_relations",
-                                 "spatial_type",
-                                 "num_hidden_layers",
-                                 "num_spatial_layers",
-                                 "layer_type_list",
-                                 "cond_type",
-                                 "use_bias",
-                                 "no_drop",
-                                 "mix_list"]
-            elif model_type == "m4c" or model_type == "m4c_rd":
-                # Transfer keys from config to BertConfig
-                transfer_keys = ["num_hidden_layers"]
-            else:
-                raise ValueError
+    # if args.from_scratch:
+    #     if model_type in ["m4c_spatial", "m4c_topk", "m4c_regat", "m4c_regat_spatial"]:
+    #         if "m4c_spatial" in model_type:
+    #             assert "attention_mask_quadrants" in task_cfg
+    #         # assert "spatial_type" in task_cfg
+    #         # Transfer keys from config to BertConfig
+    #         transfer_keys = ["attention_mask_quadrants",
+    #                          "hidden_size",
+    #                          "num_implicit_relations",
+    #                          "spatial_type",
+    #                          "num_hidden_layers",
+    #                          "num_spatial_layers",
+    #                          "layer_type_list",
+    #                          "cond_type",
+    #                          "use_bias",
+    #                          "no_drop",
+    #                          "mix_list"]
+    #     elif model_type == "m4c" or model_type == "m4c_rd":
+    #         # Transfer keys from config to BertConfig
+    #         transfer_keys = ["num_hidden_layers"]
+    #     else:
+    #         raise ValueError
+    #
+    #     # Common keys
+    #     transfer_keys.extend(["aux_spatial_fusion", "use_aux_heads"])
+    #
+    #     # Load config-file M4C
+    #     with open(args.config_file, "r") as file:
+    #         config_dict = json.load(file)
+    #
+    #     # Adding blank keys that could be dynamically replaced later
+    #     config_dict["layer_type_list"] = None
+    #     config_dict["mix_list"] = None
+    #
+    #     # Always use beam-size 1 for training
+    #     config_dict["beam_size"] = 1
+    #
+    #     # Replace keys
+    #     for key in transfer_keys:
+    #         if key in task_cfg:
+    #             config_dict[key] = task_cfg[key]
+    #             logger.info(f"Transferring keys:  {key}, {config_dict[key]}")
+    #     mmt_config = BertConfig.from_dict(config_dict)
+    #     text_bert_config = BertConfig.from_json_file("config/m4c_textbert_textvqa.json")
 
-            # Common keys
-            transfer_keys.extend(["aux_spatial_fusion", "use_aux_heads"])
-
-            # Load config-file M4C
-            with open(args.config_file, "r") as file:
-                config_dict = json.load(file)
-
-            # Adding blank keys that could be dynamically replaced later
-            config_dict["layer_type_list"] = None
-            config_dict["mix_list"] = None
-
-            # Always use beam-size 1 for training
-            config_dict["beam_size"] = 1
-
-            # Replace keys
-            for key in transfer_keys:
-                if key in task_cfg["TASK19"]:
-                    config_dict[key] = task_cfg["TASK19"][key]
-                    logger.info(f"Transferring keys:  {key}, {config_dict[key]}")
-            mmt_config = BertConfig.from_dict(config_dict)
-
-            text_bert_config = BertConfig.from_json_file("config/m4c_textbert_textvqa.json")
-            model = M4C(mmt_config, text_bert_config)
+    mmt_config = BertConfig.from_dict(task_cfg["SA-M4C"])
+    text_bert_config = BertConfig.from_dict(task_cfg["TextBERT"])
+    model = M4C(mmt_config, text_bert_config)
 
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Training Parameters: {trainable_params}")
+
     # LOAD LOSSES
-    task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
+    # task_losses = load_losses(task_cfg, args.tasks.split("-"))
     optimizer_grouped_parameters = model.get_optimizer_parameters(base_lr)
+    print(len(list(model.named_parameters())), len(optimizer_grouped_parameters))
 
-    if default_gpu:
-        print(len(list(model.named_parameters())), len(optimizer_grouped_parameters))
-
-    optimizer, warmup_scheduler, lr_scheduler, lr_scheduler_config, warmpu_steps = get_optim_scheduler(
-        args, task_cfg, optimizer_grouped_parameters, num_train_optimization_steps, base_lr, median_num_iter
-    )
+    optimizer, warmup_scheduler = get_optim_scheduler(task_cfg, optimizer_grouped_parameters, base_lr)
 
     startIterID = 0
     global_step = 0
@@ -400,32 +280,10 @@ def main():
             if torch.is_tensor(v):
                 state[k] = v.cuda()
 
-    if args.local_rank != -1:
-        try:
-            from apex.parallel import DistributedDataParallel as DDP
-        except ImportError:
-            raise ImportError(
-                "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training."
-            )
-        model = DDP(model, delay_allreduce=True)
-
-    elif n_gpu > 1:
+    if n_gpu > 1:
         model = torch.nn.DataParallel(model)
 
-    if default_gpu:
-        print("***** Running training *****")
-        print("  Num Iters: ", task_num_iters)
-        print("  Batch size: ", task_batch_size)
-        print("  Num steps: %d" % num_train_optimization_steps)
-
-    task_iter_train = {name: None for name in task_ids}
-    task_count = {name: 0 for name in task_ids}
-
-    if start_epoch >= args.num_train_epochs:
-        logger.info("Resetting Train Epochs to 0")
-        start_epoch = 0
-
-    if task_cfg["TASK19"]["debug"]:
+    if task_cfg["debug"]:
         median_num_iter = 1000
 
     # This validation score is used for model-saving.
@@ -441,31 +299,25 @@ def main():
         for step in tqdm(range(median_num_iter), desc="Iters"):
             iterId = startIterID + step + (epochId * median_num_iter)
 
-            for task_id in task_ids:
-                loss, score = ForwardModelsTrain(
-                    args,
-                    task_cfg,
-                    device,
-                    task_id,
-                    task_count,
-                    task_iter_train,
-                    task_dataloader_train,
-                    model,
-                    task_losses,
-                )
-                loss_values.append(loss)
-                score_values.append(score)
-                loss.backward()
-                clip_gradients(model, task_cfg["TASK19"]["max_grad_norm"], task_cfg["TASK19"]["grad_clip_mode"])
-                optimizer.step()
-                warmup_scheduler.step()
-                model.zero_grad()
-                global_step += 1
+            loss, score = forward_train(
+                dataloaders,
+                task_cfg,
+                device,
+                "TASK19",
+                model,
+            )
+            loss_values.append(loss)
+            score_values.append(score)
+            loss.backward()
+            clip_gradients(model, task_cfg["max_grad_norm"])
+            optimizer.step()
+            warmup_scheduler.step()
+            model.zero_grad()
+            global_step += 1
 
             if (
                     step % 20 == 0
                     and step != 0
-                    and default_gpu
             ):
                 log_str = f"Batch: loss = {float(sum(loss_values)/len(loss_values))}; " \
                           f"accuracy  = {float(sum(score_values)/len(score_values))}; "
@@ -475,21 +327,17 @@ def main():
                 logger.info(log_str)
 
             # don't run validation during debug runs
-            if not task_cfg["TASK19"]["debug"] and (iterId != 0 and iterId % task_num_iters[task_id] == 0) or (
+            if not task_cfg["debug"] and (iterId != 0 and iterId % task_num_iters[task_id] == 0) or (
                     epochId == args.num_train_epochs - 1 and step == median_num_iter - 1
             ):
                 curr_val_score = evaluate(
                     args,
                     task_dataloader_val,
-                    None,
                     task_cfg,
                     device,
                     task_id,
                     model,
                     task_losses,
-                    epochId,
-                    default_gpu,
-                    None,
                 )
 
                 # Save a trained model
@@ -498,7 +346,7 @@ def main():
                     model.module if hasattr(model, "module") else model
                 )
                 if curr_val_score > best_val_score:
-                    output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
+                    output_checkpoint = os.path.join(save_path, "pytorch_ckpt_latest.tar")
                     logger.info(f"Saving Checkpoint: {output_checkpoint}")
                     logger.info(
                         f"Current Validation Score: {curr_val_score} | Previous Best Validation Score: {best_val_score}")
@@ -520,20 +368,16 @@ def main():
 def evaluate(
     args,
     task_dataloader_val,
-    task_stop_controller,
     task_cfg,
     device,
     task_id,
     model,
     task_losses,
-    epochId,
-    default_gpu,
-    tbLogger,
 ):
 
     model.eval()
     for batch in tqdm(task_dataloader_val[task_id], desc="Validation"):
-        loss, score, batch_size = ForwardModelsVal(
+        loss, score, batch_size = forward_val(
             args, task_cfg, device, task_id, batch, model, task_losses
         )
     model.train()

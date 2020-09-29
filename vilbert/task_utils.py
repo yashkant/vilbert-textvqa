@@ -1,30 +1,19 @@
 import logging
 from bisect import bisect
-import numpy as np
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from pytorch_transformers.optimization import (
-    AdamW,
-    WarmupConstantSchedule,
-    WarmupLinearSchedule,
-)
 from pytorch_transformers.tokenization_bert import BertTokenizer
-from pytorch_transformers.tokenization_roberta import RobertaTokenizer
 from torch.optim import Adam
 from torch.optim.lr_scheduler import (
     LambdaLR,
-    ReduceLROnPlateau,
-    CosineAnnealingLR,
-    CosineAnnealingWarmRestarts,
 )
 from torch.utils.data import DataLoader, RandomSampler, ConcatDataset
-from torch.utils.data.distributed import DistributedSampler
 
 from tools.registry import registry
 from vilbert.datasets import DatasetMapTrain
-from vilbert.datasets.textvqa_metrics import TextVQAAccuracy, STVQAAccuracy
-from vilbert.optimization import RAdam
+from vilbert.datasets.metrics import TextVQAAccuracy, STVQAAccuracy
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +22,8 @@ class M4CDecodingBCEWithMaskLoss(nn.Module):
     def __init__(self):
         super().__init__()
         self.one = torch.Tensor([1.])
-        self.debug_count = 0
 
     def forward(self, scores, targets, loss_mask):
-        # self.debug_count += 1
         assert scores.dim() == 3 and loss_mask.dim() == 2
         losses = F.binary_cross_entropy_with_logits(scores, targets, reduction="none")
         losses *= loss_mask.unsqueeze(-1)
@@ -45,109 +32,34 @@ class M4CDecodingBCEWithMaskLoss(nn.Module):
         return loss
 
 
-def clip_gradients(model, max_grad_l2_norm, clip_norm_mode):
-    # TODO: Fix question model retrieval
-    # Todo: Add tensorboard logger
+def clip_gradients(model, max_grad_l2_norm):
+    norm = nn.utils.clip_grad_norm_(model.parameters(), max_grad_l2_norm)
 
-    if max_grad_l2_norm is not None:
-        if clip_norm_mode == "all":
-            norm = nn.utils.clip_grad_norm_(model.parameters(), max_grad_l2_norm)
-            # import pdb
-            # pdb.set_trace()
-            # print("Grad norm:", norm)
-            # writer.add_scalars({"grad_norm": norm}, i_iter)
 
-        elif clip_norm_mode == "question":
-            question_embedding = model.module.question_embedding_module
-            norm = nn.utils.clip_grad_norm(
-                question_embedding.parameters(), max_grad_l2_norm
-            )
+def get_optim_scheduler(
+    task_cfg,
+    optimizer_grouped_parameters,
+    base_lr,
+):
+    optimizer = Adam(optimizer_grouped_parameters, lr=base_lr)
+    warmup_iters = task_cfg["warmup_iters"]
+    warmup_factor = task_cfg["warmup_factor"]
+    lr_decay_iters = task_cfg["lr_decay_iters"]
+    lr_decay = task_cfg["lr_decay"]
 
-            # writer.add_scalars({"question_grad_norm": norm}, i_iter)
+    def lr_update(_iter):
+        if _iter <= warmup_iters:
+            alpha = float(_iter) / float(warmup_iters)
+            return warmup_factor * (1.0 - alpha) + alpha
         else:
-            raise NotImplementedError(
-                "Clip norm mode %s not implemented" % clip_norm_mode
-            )
+            idx = bisect(lr_decay_iters, _iter)
+            return pow(lr_decay, idx)
 
-
-def get_optim_scheduler(args,
-                        config,
-                        optimizer_grouped_parameters,
-                        num_train_optimization_steps,
-                        base_lr,
-                        median_num_iter,
-                        no_warmup=False
-                        ):
-    optim_config = config["TASK19"]["optim"] if args.optim is None else args.optim
-    scheduler_config = config["TASK19"]["lr_scheduler"] if args.lr_scheduler is None else args.lr_scheduler
-
-    if optim_config == "AdamW":
-        optimizer = AdamW(optimizer_grouped_parameters, lr=base_lr, correct_bias=False)
-    elif optim_config == "RAdam":
-        optimizer = RAdam(optimizer_grouped_parameters, lr=base_lr)
-    elif optim_config == "Adam":
-        optimizer = Adam(optimizer_grouped_parameters, lr=base_lr)
-    else:
-        raise ValueError
-
-    warmpu_steps = args.warmup_proportion * num_train_optimization_steps
-    lr_reduce_list = np.array(config["TASK19"].get("lr_decay_steps", [-1]))
-
-    if not no_warmup:
-        if scheduler_config == "warmup_linear":
-            warmup_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=warmpu_steps,
-                                                    t_total=num_train_optimization_steps)
-        elif scheduler_config == "pythia_warmup_decay":
-            warmup_iters = config["TASK19"].get("warmup_iters", 1000)
-            lr_decay_iters = config["TASK19"].get("lr_decay_iters", [14000, 19000])
-            warmup_factor = config["TASK19"].get("warmup_factor", 0.1)
-            # total_iters = int(np.ceil(34602/config["TASK19"]["batch_size"])*num_train_optimization_steps)
-
-            def pythia_lr_update(_iter):
-                if _iter <= warmup_iters:
-                    alpha = float(_iter) / float(warmup_iters)
-                    return warmup_factor * (1.0 - alpha) + alpha
-                else:
-                    idx = bisect(lr_decay_iters, _iter)
-                    return pow(config["TASK19"].get("lr_decay", 0.2), idx)
-
-            warmup_scheduler = LambdaLR(optimizer, lr_lambda=pythia_lr_update)
-            warmpu_steps = -1
-        else:
-            warmup_scheduler = WarmupConstantSchedule(optimizer, warmup_steps=warmpu_steps)
-        logger.info(f"Warmup Scheduler: {str(warmup_scheduler)}")
-    else:
-        warmup_scheduler = None
-        logger.info(f"Not using Warmup Scheduler")
-
-    if scheduler_config == "automatic":
-        lr_scheduler = ReduceLROnPlateau(
-            optimizer, mode="max", factor=0.2, patience=1, cooldown=1, threshold=0.001
-        )
-    elif scheduler_config == "cosine":
-        lr_scheduler = CosineAnnealingLR(
-            optimizer, T_max=median_num_iter * args.num_train_epochs
-        )
-    elif scheduler_config == "cosine_warm":
-        lr_scheduler = CosineAnnealingWarmRestarts(
-            optimizer, T_0=median_num_iter * args.num_train_epochs
-        )
-    elif scheduler_config == "mannul":
-        def lr_lambda_fun(epoch):
-            return pow(config["TASK19"].get("lr_decay", 0.2), np.sum(lr_reduce_list <= epoch))
-
-        lr_scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda_fun)
-    else:
-        logger.info(f"Didn't recognize lr_scheduler: {scheduler_config}")
-        lr_scheduler = None
-
-    logger.info(f"LR Scheduler: {str(lr_scheduler)}")
-    return optimizer, warmup_scheduler, lr_scheduler, scheduler_config, warmpu_steps
+    warmup_scheduler = LambdaLR(optimizer, lr_lambda=lr_update)
+    return optimizer, warmup_scheduler
 
 
 LossMap = {
-    "BCEWithLogitLoss": nn.BCEWithLogitsLoss(reduction="mean"),
-    "CrossEntropyLoss": nn.CrossEntropyLoss(),
     "TextVQALoss": M4CDecodingBCEWithMaskLoss(),
 }
 
@@ -157,14 +69,35 @@ MetricsMap = {
 }
 
 
-def ForwardModelsVal(args,
-                     task_cfg,
-                     device,
-                     task_id,
-                     batch_dict,
-                     model,
-                     task_losses,
-                     return_batch=False):
+def get_batch(dataloaders, key):
+    ikey = f"{key}_iter"
+    load_epoch = ikey not in dataloaders
+
+    # add iterator
+    if not load_epoch:
+        batch_dict = next(dataloaders[ikey], None)
+
+        # iterator exhausted
+        if batch_dict is None:
+            load_epoch = True
+
+    # reload iterator
+    if load_epoch:
+        dataloaders[ikey] = iter(dataloaders[key])
+        batch_dict = next(dataloaders[ikey], None)
+        assert batch_dict is not None
+
+    return batch_dict
+
+
+def forward_val(args,
+                task_cfg,
+                device,
+                task_id,
+                batch_dict,
+                model,
+                task_losses,
+                return_batch=False):
     for key, value in batch_dict.items():
         if isinstance(value, torch.Tensor):
             batch_dict[key] = value.cuda(device=device, non_blocking=True)
@@ -180,13 +113,13 @@ def ForwardModelsVal(args,
     if registry.get("is_running_validation", False):
         return None, None, None
 
-    if task_cfg[task_id]["loss"] == "TextVQAandSpatialLoss":
+    if task_cfg["loss"] == "TextVQAandSpatialLoss":
         loss = task_losses[task_id](batch_dict)
     else:
         loss = task_losses[task_id](batch_dict["textvqa_scores"], batch_dict["targets"], batch_dict["train_loss_mask"])
 
-    if "metric" in task_cfg[task_id]:
-        textvqa_metric = MetricsMap[task_cfg[task_id]["metric"]]
+    if "metric" in task_cfg:
+        textvqa_metric = MetricsMap[task_cfg["metric"]]
     else:
         textvqa_metric = MetricsMap["TextVQA"]
 
@@ -198,25 +131,14 @@ def ForwardModelsVal(args,
     return float(loss), float(batch_acc), batch_size
 
 
-def ForwardModelsTrain(
-        args,
+def forward_train(
+        dataloaders,
         task_cfg,
         device,
         task_id,
-        task_count,
-        task_iter_train,
-        task_dataloader_train,
         model,
-        task_losses,
 ):
-
-    # reset the task iteration when needed.
-    if task_count[task_id] % len(task_dataloader_train[task_id]) == 0:
-        task_iter_train[task_id] = iter(task_dataloader_train[task_id])
-
-    task_count[task_id] += 1
-    batch_dict = task_iter_train[task_id].next()
-
+    batch_dict = get_batch(dataloaders, "train")
     for key, value in batch_dict.items():
         if isinstance(value, torch.Tensor):
             batch_dict[key] = value.cuda(device=device, non_blocking=True)
@@ -226,193 +148,24 @@ def ForwardModelsTrain(
 
     results_dict = model(batch_dict)
     batch_dict.update(results_dict)
-    if task_cfg[task_id]["loss"] == "TextVQAandSpatialLoss":
-        loss = task_losses[task_id](batch_dict)
-    else:
-        loss = task_losses[task_id](batch_dict["textvqa_scores"], batch_dict["targets"], batch_dict["train_loss_mask"])
-
-    if "metric" in task_cfg[task_id]:
-        textvqa_metric = MetricsMap[task_cfg[task_id]["metric"]]
-    else:
-        textvqa_metric = MetricsMap["TextVQA"]
+    loss = LossMap["TextVQALoss"](batch_dict["textvqa_scores"], batch_dict["targets"], batch_dict["train_loss_mask"])
+    textvqa_metric = MetricsMap[task_cfg["metric"]]
     batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, batch_dict["textvqa_scores"])
 
     return loss, batch_acc
 
 
-def LoadLosses(args, task_cfg, task_ids):
+def load_losses(task_cfg, task_ids):
     losses = {}
     task_types = []
-    num_labels = 0
     for i, task_id in enumerate(task_ids):
         task = "TASK" + task_id
-        model_type = task_cfg[task]["type"]
+        model_type = task_cfg["type"]
         if model_type not in task_types:
             task_types.append(model_type)
-        losses[task] = LossMap[task_cfg[task]["loss"]]
+        losses[task] = LossMap[task_cfg["loss"]]
 
     return losses
-
-
-def LoadDatasets(args, task_cfg, ids, split="trainval", only_val=False, test_val_bs=32, test_val_workers=2):
-    tokenizer = BertTokenizer.from_pretrained(
-        args.bert_model, do_lower_case=True
-    )
-
-
-    task_datasets_train = {}
-    task_datasets_val = {}
-    task_datasets_test = {}
-    task_dataloader_train = {}
-    task_dataloader_val = {}
-    task_dataloader_test = {}
-    task_ids = []
-    task_batch_size = {}
-    task_num_iters = {}
-
-    task_id = "19"
-    task = "TASK" + task_id
-    task_ids.append(task)
-    batch_size = task_cfg[task]["batch_size"] // args.gradient_accumulation_steps
-    num_workers = task_cfg[task].get("num_workers", 0)
-    # if args.local_rank != -1:
-    #     batch_size = int(batch_size / dist.get_world_size())
-    #     num_workers = int(num_workers / dist.get_world_size())
-
-    if "use_datasets" not in task_cfg[task]:
-        task_cfg[task]['use_datasets'] = ["textvqa"]
-        logger.info("Did not find `use_datasets` key in task configuration, generating it!")
-
-
-    key_map = {
-        "textvqa": "TextVQA",
-        "rev_textvqa": "RevTextVQA",
-        "stvqa": "STVQA",
-        "ocrvqa": "OCRVQA"
-    }
-
-
-    if not only_val:
-
-        logger.info(
-            f"Loading Train Dataset(s) {task_cfg[task]['use_datasets']}  with batch size {batch_size}"
-        )
-
-        train_datasets = []
-        for entry in task_cfg[task]["use_datasets"]:
-            dataset = DatasetMapTrain[key_map[entry]](
-                split="train",
-                tokenizer=tokenizer,
-                padding_index=0,
-                max_seq_length=task_cfg[task]["max_seq_length"],
-                extra_args=task_cfg[task]
-            )
-            train_datasets.append(dataset)
-
-        task_datasets_train["separate_datasets"] = train_datasets
-        task_datasets_train[task] = ConcatDataset(train_datasets)
-
-
-    if "val_on" not in task_cfg[task]:
-        task_cfg[task]['val_on'] = ["textvqa"]
-        logger.info("Did not find `val_on` key in task configuration, generating it!")
-
-    assert len(task_cfg[task]['val_on']) == 1
-    logger.info(
-        f"Loading Val Dataset {task_cfg[task]['val_on']}  with batch size {batch_size}"
-    )
-    val_task_name = key_map[task_cfg[task]['val_on'][0]]
-    task_datasets_val[task] = DatasetMapTrain[val_task_name](
-        split="val",
-        tokenizer=tokenizer,
-        padding_index=0,
-        max_seq_length=task_cfg[task]["max_seq_length"],
-        extra_args=task_cfg[task]
-    )
-
-    if "test" in split:
-        logger.info(
-            f"Loading Test Dataset(s) {task_cfg[task]['val_on']}  with batch size {batch_size}"
-        )
-        task_datasets_test[task] = DatasetMapTrain[val_task_name](
-            split="test",
-            tokenizer=tokenizer,
-            padding_index=0,
-            max_seq_length=task_cfg[task]["max_seq_length"],
-            extra_args=task_cfg[task]
-        )
-
-    # Make sure we are using correct-vocabs
-    if val_task_name == "TextVQA":
-        assert task_cfg[task]["vocab_type"] != "5k_stvqa"
-    elif val_task_name == "RevTextVQA":
-        assert task_cfg[task]["vocab_type"] != "5k_stvqa"
-    elif val_task_name == "STVQA":
-        assert task_cfg[task]["vocab_type"] == "5k_stvqa"
-    elif val_task_name == "OCRVQA":
-        assert task_cfg[task]["vocab_type"] == "ocrvqa"
-    else:
-        raise ValueError
-
-    task_num_iters[task] = 0
-    task_batch_size[task] = 0
-    if "train" in split and not only_val:
-        if args.local_rank == -1:
-            train_sampler = RandomSampler(task_datasets_train[task])
-        else:
-            # TODO: check if this works with current data generator from disk that relies on next(file)
-            # (it doesn't return item back by index)
-            train_sampler = DistributedSampler(task_datasets_train[task])
-
-        task_dataloader_train[task] = DataLoader(
-            task_datasets_train[task],
-            sampler=train_sampler,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            pin_memory=True,
-        )
-
-        task_num_iters[task] = len(task_dataloader_train[task])
-        task_batch_size[task] = batch_size
-
-    if "val" in split:
-        task_dataloader_val[task] = DataLoader(
-            task_datasets_val[task],
-            shuffle=False,
-            batch_size=test_val_bs,
-            num_workers=test_val_workers,
-            pin_memory=True,
-        )
-
-    if "test" in split:
-        task_dataloader_test[task] = DataLoader(
-            task_datasets_test[task],
-            shuffle=False,
-            batch_size=test_val_bs,
-            num_workers=test_val_workers,
-            pin_memory=True,
-        )
-        return (
-            task_batch_size,
-            task_num_iters,
-            task_ids,
-            task_datasets_train,
-            task_datasets_val,
-            task_datasets_test,
-            task_dataloader_train,
-            task_dataloader_val,
-            task_dataloader_test,
-        )
-
-    return (
-        task_batch_size,
-        task_num_iters,
-        task_ids,
-        task_datasets_train,
-        task_datasets_val,
-        task_dataloader_train,
-        task_dataloader_val,
-    )
 
 
 def compute_score_with_logits(logits, labels):
@@ -423,3 +176,41 @@ def compute_score_with_logits(logits, labels):
     return scores
 
 
+def get_loader(task_cfg, tokenizer, split):
+
+    dataset_names = task_cfg[f"{split}_on"]
+    assert isinstance(dataset_names, list)
+
+    datasets = []
+    for dset in dataset_names:
+        _dataset = DatasetMapTrain[dset](
+            split=split,
+            tokenizer=tokenizer,
+            extra_args=task_cfg
+        )
+        datasets.append(_dataset)
+
+    if len(datasets) > 1:
+        dataset_instance = ConcatDataset(datasets)
+    else:
+        dataset_instance = datasets[0]
+
+    random_sampler = RandomSampler(dataset_instance)
+    loader = DataLoader(
+            dataset_instance,
+            sampler=random_sampler if split == "train" else None,
+            batch_size=task_cfg["batch_size"],
+            num_workers=task_cfg["num_workers"],
+            pin_memory=True,
+            shuffle=False,
+            drop_last=False,
+        )
+    return loader
+
+
+def load_datasets(task_cfg, splits):
+    tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
+    loaders = {}
+    for split in splits:
+        loaders[split] = get_loader(task_cfg, tokenizer, split)
+    return loaders
