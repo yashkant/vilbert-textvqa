@@ -17,24 +17,16 @@ from vilbert.textvqa_encoders import ImageEncoder
 
 logger = logging.getLogger(__name__)
 
-class M4C(nn.Module):
+
+class SAM4C(nn.Module):
     """
-    M4C has two transfomers MMT and TextBert.
+    SAM4C has two transfomers MMT and TextBert.
     """
     def __init__(self, mmt_config, text_bert_config):
         super().__init__()
-        # self.mmt_config = BertConfig(**self.config.mmt)
         self.mmt_config = mmt_config
         self.text_bert_config = text_bert_config
-        # self._datasets = registry.get("config").datasets.split(",")
-
-        if self.mmt_config.finetune_ocr_obj:
-            logger.info("Finetuning object and ocr FRCN layer")
-            self.frcn_encoder_type = "finetune_faster_rcnn_fpn_fc7"
-        else:
-            logger.info("Not finetuning object and ocr FRCN layer")
-            self.frcn_encoder_type = "default"
-
+        self.frcn_encoder_type = "default"
         if not self.mmt_config.use_phoc_fasttext:
             logger.info("Not using Fasttext and PHOC features for OCR")
 
@@ -115,9 +107,6 @@ class M4C(nn.Module):
         self.obj_faster_rcnn_fc7 = ImageEncoder(
             encoder_type=self.frcn_encoder_type,
             in_dim=2048,
-            weights_file='detectron/fc6/fc7_w.pkl',
-            bias_file='detectron/fc6/fc7_b.pkl',
-            model_data_dir=None
         )
         # apply smaller lr to pretrained Faster R-CNN fc7
         # self.finetune_modules.append({
@@ -657,25 +646,7 @@ class BertSpatialEncoder(nn.Module):
         self.output_attentions = config.output_attentions
         self.output_hidden_states = config.output_hidden_states
         from pytorch_transformers.modeling_bert import BertLayer
-
-
-        # backward compatibility
-        if config.layer_type_list is None:
-            logger.info("layer_type_list not passed, generating it!")
-            self.layer_type_list = ["n"]*config.num_hidden_layers
-
-            if hasattr(config, "num_implicit_relations") and config.num_implicit_relations != 0:
-                spatial_type = ["i"]
-            else:
-                spatial_type = ["s"]
-
-            if config.spatial_type == "bottom":
-                self.layer_type_list = spatial_type*config.num_spatial_layers + self.layer_type_list
-            if config.spatial_type == "top":
-                self.layer_type_list = self.layer_type_list + spatial_type*config.num_spatial_layers
-        else:
-            self.layer_type_list = config.layer_type_list
-
+        self.layer_type_list = registry.layer_type_list
         logger.info(f"Layers type list is: {self.layer_type_list}")
         counter = Counter(self.layer_type_list)
 
@@ -693,6 +664,13 @@ class BertSpatialEncoder(nn.Module):
             self.mix_list = config.mix_list
         assert len(self.mix_list) == len(self.layer_type_list)
         logger.info(f"Mix list: {self.mix_list}")
+        self.matrix_type_map = {
+            "none": "1",
+            "share3": "3",
+            "share5": "5",
+            "share7": "7",
+            "share9": "9",
+        }
 
         self.normal_layers = nn.ModuleList([BertLayer(config) for _ in range(self.num_normal_layers)])
         self.spatial_layers = nn.ModuleList([SpatialBertLayer(config) for _ in range(self.num_spatial_layers)])
@@ -714,25 +692,8 @@ class BertSpatialEncoder(nn.Module):
                 layer_outputs = layer_module(hidden_states, attention_mask)
             elif layer_type == "s":
                 layer_module = next(spatial_iter)
-                if mix_type == "share3":
-                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_share3"]
-                elif mix_type == "quad4":
-                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_quad4"]
-                elif mix_type == "share5":
-                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_share5"]
-                else:
-                    spatial_adj_matrix = batch_dict["spatial_adj_matrix"]
-                layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
-            elif layer_type == "i":
-                layer_module = next(implicit_iter)
-                if mix_type == "share3":
-                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_share3"]
-                elif mix_type == "share5":
-                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_share5"]
-                elif mix_type == "quad4":
-                    spatial_adj_matrix = batch_dict["spatial_adj_matrix_quad4"]
-                else:
-                    spatial_adj_matrix = batch_dict["spatial_adj_matrix"]
+                matrix_type = self.matrix_type_map[mix_type]
+                spatial_adj_matrix = batch_dict["spatial_adj_matrices"][matrix_type]
                 layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
             else:
                 raise ValueError
@@ -743,31 +704,6 @@ class BertSpatialEncoder(nn.Module):
         assert next(normal_iter, None) is None
         assert next(spatial_iter, None) is None
         assert next(implicit_iter, None) is None
-
-        # # re-arrange spatial-layers if needed
-        # layers = [("normal", self.layer), ("spatial", self.spatial_layer)]
-        # if self.spatial_type == "bottom":
-        #     layers = [layers[1], layers[0]]
-        # else:
-        #     assert self.spatial_type == "top"
-        #
-        # # Run through layers
-        # for layer_type, layers_set in layers:
-        #     for i, layer_module in enumerate(layers_set):
-        #         if self.output_hidden_states:
-        #             all_hidden_states = all_hidden_states + (hidden_states,)
-        #
-        #         if layer_type == "normal":
-        #             layer_outputs = layer_module(hidden_states, attention_mask, head_mask[i])
-        #         elif layer_type == "spatial":
-        #             layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
-        #         else:
-        #             raise ValueError
-        #
-        #         hidden_states = layer_outputs[0]
-        #
-        #         if self.output_attentions:
-        #             all_attentions = all_attentions + (layer_outputs[1],)
 
         # Add last layer
         if self.output_hidden_states:

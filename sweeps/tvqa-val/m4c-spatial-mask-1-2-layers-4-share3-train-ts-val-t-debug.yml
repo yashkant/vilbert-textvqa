@@ -44,6 +44,10 @@ clean_answers: true
 dynamic_sampling: true
 train_on: ["STVQA", "TextVQA"]
 val_on: ["TextVQA"]
+test_on: ["TextVQA"]
+distance_threshold: 0.5
+mix_list: [none, none, share3, share3, share3, share3]
+
 
 SA-M4C:
   num_hidden_layers: 2

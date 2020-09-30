@@ -68,17 +68,22 @@ Example::
             text = [t.strip() for t in text.split(" ")]
             return {"text": text}
 """
-import multiprocessing
-import os
+import logging
 import warnings
-from collections import Counter, defaultdict
+from collections import defaultdict
+
 import numpy as np
 import torch
+
 from tools.registry import registry
-from pytorch_transformers.tokenization_bert import BertTokenizer
+# from vilbert.spatial_utils_regat import build_graph_using_normalized_boxes
+from vilbert.spatial_utils import build_graph_using_normalized_boxes
+
 from .textvqa_vocab import VocabDict
 from ..phoc import build_phoc
-from vilbert.spatial_utils_regat import build_graph_using_normalized_boxes
+
+logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
+from easydict import EasyDict as edict
 
 
 def _pad_tokens(tokens, PAD_TOKEN, max_length):
@@ -445,8 +450,8 @@ class CopyProcessor(BaseProcessor):
 
 
 def SpatialProcessor(pad_obj_ocr_bboxes):
-    adj_matrix = build_graph_using_normalized_boxes(pad_obj_ocr_bboxes,
-                                                    distance_threshold=registry.distance_threshold).astype(np.int8)
+    adj_matrix = build_graph_using_normalized_boxes(
+        pad_obj_ocr_bboxes, distance_threshold=registry.distance_threshold)
     return adj_matrix
 
 
@@ -482,7 +487,7 @@ class BertTokenizerProcessor:
 
 class M4CAnswerProcessor:
     """
-    Process a TextVQA answer for iterative decoding in M4C.
+    Process a TextVQA answer for iterative decoding in SAM4C.
     # (YK): Modified to activate logits of the same word in ocr/vocabulary in targets.
     """
     def __init__(self, config, *args, **kwargs):
@@ -702,4 +707,53 @@ class M4CAnswerProcessor:
             return_indices.extend(ocr_indices)
 
         return return_indices
+
+
+class Processors:
+    """
+    Contains static-processors used for processing question/ocr-tokens, image/ocr features,
+        decoding answer.
+    """
+
+    def __init__(self, bert_tokenizer, vocab_type="4k", only_registry=False):
+        logger.info("Loading Processors")
+        logger.info(f"Vocab Type: {vocab_type}")
+        # decode-answers
+        answer_config = edict()
+        answer_config.max_copy_steps = 12
+        answer_config.num_answers = 10
+        answer_config.max_ocr_tokens = 50
+        answer_config.vocab_type = vocab_type
+        self.answer_processor = M4CAnswerProcessor(answer_config)
+        self.only_registry = only_registry
+
+        # Attach bert-tokenizer
+        registry["bert_tokenizer"] = bert_tokenizer
+
+        if only_registry:
+            logger.info("Only registry processor initialized")
+            return
+
+        # question
+        question_config = edict()
+        question_config.max_length = 20
+        self.bert_processor = BertTokenizerProcessor(question_config, bert_tokenizer)
+
+        # ocr-tokens
+        ocr_config = edict()
+        ocr_config.max_length = 50
+        self.fasttext_processor = FastTextProcessor(ocr_config)
+        self.phoc_processor = PhocProcessor(ocr_config)
+
+    @staticmethod
+    def word_cleaner(word):
+        word = word.lower()
+        word = word.replace(",", "").replace("?", "").replace("'s", " 's")
+        return word.strip()
+
+    @staticmethod
+    def word_cleaner_lower(word):
+        word = word.lower()
+        return word.strip()
+
 

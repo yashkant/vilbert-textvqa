@@ -4,7 +4,6 @@
 # LICENSE file in the root directory of this source tree.
 
 import argparse
-import json
 import logging
 import os
 import random
@@ -12,13 +11,12 @@ from io import open
 
 import numpy as np
 import torch
-import torch.distributed as dist
 import yaml
 from easydict import EasyDict as edict
 from tqdm import tqdm
+from tools.registry import registry
 
 from vilbert.task_utils import (
-    load_losses,
     forward_train,
     forward_val,
     clip_gradients,
@@ -127,6 +125,9 @@ def main():
     with open(args.task_file, "r") as f:
         task_cfg = edict(yaml.safe_load(f))
 
+    registry["debug"] = task_cfg["debug"]
+    registry["layer_type_list"] = task_cfg["SA-M4C"]["layer_type_list"]
+
     logger.info("-"*20 + "Config Start" + "-"*20)
     print(vars(args))
     print(task_cfg)
@@ -137,8 +138,6 @@ def main():
     np.random.seed(seed)
     torch.manual_seed(seed)
     logger.info(f"Using seed: {seed}")
-
-    model_type = task_cfg["model_type"]
 
     task_names = []
     task_lr = []
@@ -164,7 +163,7 @@ def main():
         output_checkpoint_path = os.path.join(save_path, "pytorch_ckpt_latest.tar")
         return args.task_file, output_checkpoint_path, args.use_share2
 
-    from vilbert.m4c_spatial import BertConfig, M4C
+    from vilbert.m4c_spatial import BertConfig, SAM4C
 
     base_lr = min(task_lr)
     save_path = os.path.join(args.output_dir, args.tag)
@@ -176,12 +175,10 @@ def main():
     if not os.path.exists(save_path):
         os.makedirs(save_path)
 
-    config = BertConfig.from_json_file(args.config_file)
     # save all the hidden parameters.
     with open(os.path.join(save_path, "command.txt"), "w") as f:
         print(args, file=f)  # Python 3.x
         print("\n", file=f)
-        print(config, file=f)
 
     dataloaders = load_datasets(task_cfg, ["train"])
 
@@ -219,7 +216,7 @@ def main():
     #     # Common keys
     #     transfer_keys.extend(["aux_spatial_fusion", "use_aux_heads"])
     #
-    #     # Load config-file M4C
+    #     # Load config-file SAM4C
     #     with open(args.config_file, "r") as file:
     #         config_dict = json.load(file)
     #
@@ -240,7 +237,7 @@ def main():
 
     mmt_config = BertConfig.from_dict(task_cfg["SA-M4C"])
     text_bert_config = BertConfig.from_dict(task_cfg["TextBERT"])
-    model = M4C(mmt_config, text_bert_config)
+    model = SAM4C(mmt_config, text_bert_config)
 
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Training Parameters: {trainable_params}")
@@ -295,8 +292,8 @@ def main():
     # Train loop
     model.train()
     for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
-        assert model.training
         for step in tqdm(range(median_num_iter), desc="Iters"):
+            assert model.training
             iterId = startIterID + step + (epochId * median_num_iter)
 
             loss, score = forward_train(

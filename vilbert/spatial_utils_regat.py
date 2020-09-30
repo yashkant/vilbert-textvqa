@@ -1,13 +1,3 @@
-"""
-Copyright (c) Microsoft Corporation.
-Licensed under the MIT license.
-
-Relation-aware Graph Attention Network for Visual Question Answering
-Linjie Li, Zhe Gan, Yu Cheng, Jingjing Liu
-https://arxiv.org/abs/1903.12314
-
-This code is written by Linjie Li.
-"""
 import numpy as np
 import math
 import torch
@@ -150,41 +140,42 @@ def torch_broadcast_adj_matrix(adj_matrix, label_num=11,
     result = torch.cat(result, dim=-1)
     return result
 
+
 def _build_replace_dict():
     share_replace_dict = {
-    "31": {},
-    "32": {},
-    "51": {},
-    "52": {},
-    "71": {},
-    "72": {},
-    "91": {},
-    "92": {},
+        "31": {},
+        "32": {},
+        "51": {},
+        "52": {},
+        "71": {},
+        "72": {},
+        "91": {},
+        "92": {},
 
     }
-    
+
     for quad in [4, 5, 6, 7, 8, 9, 10, 11]:
         share_replace_dict["31"][quad] = quad + 1
         share_replace_dict["32"][quad] = quad - 1
-        
+
         share_replace_dict["51"][quad] = quad + 2
         share_replace_dict["52"][quad] = quad - 2
-        
+
         share_replace_dict["71"][quad] = quad + 3
         share_replace_dict["72"][quad] = quad - 3
-        
+
         share_replace_dict["91"][quad] = quad + 4
         share_replace_dict["92"][quad] = quad - 4
-    
+
     adjust_sectors = {
-        0:8,
-        1:9,
-        2:10,
-        3:11,
-        12:4,
-        13:5,
-        14:6,
-        15:7
+        0: 8,
+        1: 9,
+        2: 10,
+        3: 11,
+        12: 4,
+        13: 5,
+        14: 6,
+        15: 7
     }
 
     for _, value in share_replace_dict.items():
@@ -195,7 +186,8 @@ def _build_replace_dict():
 
     return share_replace_dict
 
-def build_graph_using_normalized_boxes_new(bbox, label_num=11, distance_threshold=0.5, build_shared=[1,3,5,7,9]):
+
+def build_graph_using_normalized_boxes_new(bbox, label_num=11, distance_threshold=0.5, build_shared=[1, 3, 5, 7, 9]):
     """ Build spatial graph
     Args:
         bbox: [num_boxes, 4]
@@ -217,7 +209,7 @@ def build_graph_using_normalized_boxes_new(bbox, label_num=11, distance_threshol
 
     for key in share_replace_dict.keys():
         adj_matrix_shared[key] = np.zeros((num_box, num_box))
-        
+
     # adj_matrix_share3_1 = np.zeros((num_box, num_box))
     # adj_matrix_share3_2 = np.zeros((num_box, num_box))
 
@@ -288,14 +280,13 @@ def build_graph_using_normalized_boxes_new(bbox, label_num=11, distance_threshol
 
                         # fill in share spatial-matrices
                         for key in adj_matrix_shared.keys():
-                            adj_matrix_shared[key][i,j] = share_replace_dict[key].get(adj_matrix[i,j], 0)
-                            adj_matrix_shared[key][j,i] = share_replace_dict[key].get(adj_matrix[j,i], 0)
+                            adj_matrix_shared[key][i, j] = share_replace_dict[key].get(adj_matrix[i, j], 0)
+                            adj_matrix_shared[key][j, i] = share_replace_dict[key].get(adj_matrix[j, i], 0)
 
     for key in adj_matrix_shared.keys():
         adj_matrix_shared[key] = adj_matrix_shared[key].astype(np.int8)
-    
+
     return adj_matrix.astype(np.int8), adj_matrix_shared
-    
 
 
 def random_spatial_processor(pad_obj_ocr_bboxes):
@@ -321,7 +312,6 @@ def random_spatial_processor(pad_obj_ocr_bboxes):
     adj_matrix_random3[masked_inds] = 0
     adj_matrix_random3[:, masked_inds] = 0
     return adj_matrix_random1.astype(np.int8), adj_matrix_random3.astype(np.int8)
-
 
 
 def torch_extract_position_embedding(position_mat, feat_dim, wave_length=1000,

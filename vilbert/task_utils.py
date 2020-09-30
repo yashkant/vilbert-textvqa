@@ -186,7 +186,7 @@ def get_loader(task_cfg, tokenizer, split):
         _dataset = DatasetMapTrain[dset](
             split=split,
             tokenizer=tokenizer,
-            extra_args=task_cfg
+            task_cfg=task_cfg
         )
         datasets.append(_dataset)
 

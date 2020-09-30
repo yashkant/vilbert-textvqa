@@ -131,7 +131,7 @@ class STVQADataset(TextVQADataset):
                     self._tokenizer,
                     only_registry=True,
                     vocab_type=self.vocab_type
-                )  # only initialize the M4C processor (for registry)
+                )  # only initialize the SAM4C processor (for registry)
                 registry.processors_only_registry = self.processors
             else:
                 self.processors = registry.processors_only_registry

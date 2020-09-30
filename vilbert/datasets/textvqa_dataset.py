@@ -140,7 +140,7 @@ class TextVQADataset(Dataset):
                     self.tokenizer,
                     only_registry=True,
                     vocab_type=self.vocab_type
-                )  # only initialize the M4C processor (for registry)
+                )  # only initialize the SAM4C processor (for registry)
                 registry.processors_only_registry = self.processors
             else:
                 self.processors = registry.processors_only_registry
@@ -476,54 +476,6 @@ class TextVQADataset(Dataset):
                     pdb.set_trace()
 
         return item
-
-
-class Processors:
-    """
-    Contains static-processors used for processing question/ocr-tokens, image/ocr features,
-        decoding answer.
-    """
-
-    def __init__(self, bert_tokenizer, vocab_type="4k", only_registry=False):
-        logger.info("Loading Processors")
-        logger.info(f"Vocab Type: {vocab_type}")
-        # decode-answers
-        answer_config = edict()
-        answer_config.max_copy_steps = 12
-        answer_config.num_answers = 10
-        answer_config.max_ocr_tokens = 50
-        answer_config.vocab_type = vocab_type
-        self.answer_processor = M4CAnswerProcessor(answer_config)
-        self.only_registry = only_registry
-
-        # Attach bert-tokenizer
-        registry["bert_tokenizer"] = bert_tokenizer
-
-        if only_registry:
-            logger.info("Only registry processor initialized")
-            return
-
-        # question
-        question_config = edict()
-        question_config.max_length = 20
-        self.bert_processor = BertTokenizerProcessor(question_config, bert_tokenizer)
-
-        # ocr-tokens
-        ocr_config = edict()
-        ocr_config.max_length = 50
-        self.fasttext_processor = FastTextProcessor(ocr_config)
-        self.phoc_processor = PhocProcessor(ocr_config)
-
-    @staticmethod
-    def word_cleaner(word):
-        word = word.lower()
-        word = word.replace(",", "").replace("?", "").replace("'s", " 's")
-        return word.strip()
-
-    @staticmethod
-    def word_cleaner_lower(word):
-        word = word.lower()
-        return word.strip()
 
 
 class ImageDatabase(torch.utils.data.Dataset):

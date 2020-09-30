@@ -137,32 +137,32 @@ def load_model():
     model_type = task_config["TASK19"]["model_type"]
 
     if model_type == "m4c":
-        logger.info("Using M4C model")
+        logger.info("Using SAM4C model")
         from vilbert.m4c import BertConfig
         from vilbert.m4c import M4C
     elif model_type == "m4c_rd":
-        logger.info("Using M4C-RD model")
+        logger.info("Using SAM4C-RD model")
         from vilbert.m4c_decode_rd import BertConfig
         from vilbert.m4c_decode_rd import M4C
     elif model_type == "22ss":
         from vilbert.vilbert_ss import BertConfig
     elif model_type == "m4c_spatial":
-        logger.info("Using M4C-Spatial model")
-        from vilbert.m4c_spatial import BertConfig, M4C
+        logger.info("Using SAM4C-Spatial model")
+        from vilbert.m4c_spatial import BertConfig, SAM4C
     elif model_type == "m4c_topk":
-        logger.info("Using M4C-Topk model")
+        logger.info("Using SAM4C-Topk model")
         from vilbert.m4c_topk import BertConfig, M4C
     elif model_type == "m4c_topk_20x":
-        logger.info("Using M4C-Topk model")
+        logger.info("Using SAM4C-Topk model")
         from vilbert.m4c_topk_20x import BertConfig, M4C
     elif model_type == "m4c_regat":
-        logger.info("Using M4C-Regat model")
+        logger.info("Using SAM4C-Regat model")
         from vilbert.m4c_regat import BertConfig, M4C
     elif model_type == "m4c_regat_spatial":
-        logger.info("Using M4C-Regat_spatial model")
+        logger.info("Using SAM4C-Regat_spatial model")
         from vilbert.m4c_regat_spatial import BertConfig, M4C
     elif model_type == "m4c_spatial_que_cond":
-        logger.info("Using M4C-Spatial Question Cond. model")
+        logger.info("Using SAM4C-Spatial Question Cond. model")
         from vilbert.m4c_spatial_que_cond import BertConfig, M4C
     else:
         raise ValueError
@@ -198,7 +198,7 @@ def load_model():
     mmt_config = BertConfig.from_dict(config_dict)
 
     text_bert_config = BertConfig.from_json_file("config/m4c_textbert_textvqa.json")
-    model = M4C(mmt_config, text_bert_config)
+    model = SAM4C(mmt_config, text_bert_config)
 
     logger.info(f"Resuming from Checkpoint: {args.model_ckpt}")
     checkpoint = torch.load(args.model_ckpt, map_location="cpu")
