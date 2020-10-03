@@ -64,6 +64,8 @@ revqa_eval: true
 two_norm: false
 freeze_textbert_and_mmt: false
 hard_stop: 25000
+eval_iter_factor: 1500
+
 
 # contrastive sampling
 num_positives: 1 # num of positives per sample
@@ -82,4 +84,4 @@ temperature: 0.5
 loss: SCLLoss
 scl_formulation: "normal"
 debug: false
-
+sdebug: false

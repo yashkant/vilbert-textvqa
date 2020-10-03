@@ -63,4 +63,7 @@ workers: 16
 revqa_eval: true
 two_norm: false
 freeze_textbert_and_mmt: false
+eval_iter_factor: 1500
 hard_stop: 1000000  # do not use hard stop
+debug: false
+sdebug: false

@@ -35,7 +35,7 @@ test_features_path: data-release/image-features/COCO_test_resnext152_faster_rcnn
 # training and evaluation data
 # revqa: human rephrasings set ,revqa-bt: back-translated rephrasings set
 val_split: [minval, revqa, revqa_bt, val, test]
-train_split: trainval_aug
+train_split: train_aug
 aug_filter:  # rephrasings filter
   num_rephrasings: 4
   sim_threshold: 0.95
@@ -58,13 +58,14 @@ alt_train: true  # sets alternate training
 ce_freq: 4  # use 1 scl and 3 ce iterations
 seed: 0
 batch_size: 210
-monitor_value: vqa_score
+monitor_value: cs_score
 workers: 16
 revqa_eval: true
 two_norm: false
 freeze_textbert_and_mmt: false
-hard_stop: 50000
+hard_stop: 25000
 eval_iter_factor: 1500
+
 
 # contrastive sampling
 num_positives: 1 # num of positives per sample

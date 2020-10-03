@@ -30,10 +30,7 @@ logger = logging.getLogger(__name__)
 def get_config():
     """ Set default and command line arguments. """
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--task_file", default="sweeps/vqa_task.yml", type=str, help="joint config file"
-    )
-
+    parser.add_argument("--task_file", required=True, type=str, help="joint config file")
     parser.add_argument("--tag", required=True, type=str, help="tag for the experiment")
 
     args = parser.parse_args()
@@ -142,7 +139,7 @@ def main():
         model = torch.nn.DataParallel(model)
 
     # store best values
-    eval_iter_factor = task_cfg.get("eval_iter_factor", 1500)
+    eval_iter_factor = task_cfg["eval_iter_factor"]
     best_vqa, best_cs = -1, -1
     loss_hist, score_hist = [], []
     global_step = 0
@@ -151,14 +148,12 @@ def main():
 
     # train loop
     num_iters = len(dataloaders["train_scl"] if registry.alt_train else dataloaders["train_ce"])
-
-    # if registry.debug:
-    #     num_iters = 100
+    model.train()
 
     for epochId in tqdm(range(start_epoch, task_cfg["num_epoch"]), desc="Epoch"):
-        model.train()
         for step in tqdm(range(num_iters), desc="Iters"):
 
+            assert model.training
             if global_step > registry.hard_stop:
                 logger.info(f"Breaking w/ hard-stop at {registry.hard_stop}")
                 break
@@ -329,6 +324,8 @@ def run_evaluation(
 
     vqa_score = sum(val_scores) / sum(batch_sizes)
     vqa_loss = sum(val_losses) / sum(batch_sizes)
+
+    model.train()  # return to train state
 
     return vqa_score, vqa_loss, human_cs_scores, bt_cs_scores
 
