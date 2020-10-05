@@ -18,7 +18,9 @@ from spat.sa_m4c import BertConfig, SAM4C
 from spat.task_utils import (
     forward_model,
     clip_gradients,
-    get_optim_scheduler, load_datasets)
+    get_optim_scheduler,
+    load_datasets,
+)
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -40,9 +42,7 @@ def get_config():
     parser.add_argument(
         "--seed", type=int, default=0, help="random seed for initialization"
     )
-    parser.add_argument(
-        "--config", required=True, type=str, help="Config file"
-    )
+    parser.add_argument("--config", required=True, type=str, help="Config file")
 
     parser.add_argument(
         "--tag", default="debug", type=str, help="tag for the experiment", required=True
@@ -61,9 +61,9 @@ def get_config():
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    logger.info("-"*20 + "Command Line Config: " + "-"*20)
+    logger.info("-" * 20 + "Command Line Config: " + "-" * 20)
     print(pprint(vars(args)))
-    logger.info("-"*20 + "Task File Config: " + "-"*20)
+    logger.info("-" * 20 + "Task File Config: " + "-" * 20)
     print(pprint(task_cfg))
 
     # Build save path
@@ -104,7 +104,9 @@ def main():
     optimizer_grouped_parameters = model.get_optimizer_parameters(base_lr)
     print(len(list(model.named_parameters())), len(optimizer_grouped_parameters))
 
-    optimizer, warmup_scheduler = get_optim_scheduler(task_cfg, optimizer_grouped_parameters, base_lr)
+    optimizer, warmup_scheduler = get_optim_scheduler(
+        task_cfg, optimizer_grouped_parameters, base_lr
+    )
     start_iter_id, global_step, start_epoch = 0, 0, 0
     model.to(device)
     for state in optimizer.state.values():
@@ -120,7 +122,9 @@ def main():
 
     # When running only evaluation
     if args.pretrained_eval != "":
-        logger.info(f"Dumping Evaluation results at: {os.path.dirname(args.pretrained_eval)}")
+        logger.info(
+            f"Dumping Evaluation results at: {os.path.dirname(args.pretrained_eval)}"
+        )
         return args.pretrained_eval, model, dataloaders
 
     # This validation score is used for model-saving.
@@ -135,11 +139,7 @@ def main():
             iter_id = start_iter_id + step + (epoch_id * median_num_iter)
 
             loss, score, _ = forward_model(
-                task_cfg,
-                device,
-                model,
-                dataloaders,
-                "train"
+                task_cfg, device, model, dataloaders, "train"
             )
 
             # Compute gradients
@@ -159,7 +159,8 @@ def main():
             # Handle logging
             if step % 20 == 0 and step != 0:
                 loss_avg, score_avg = float(sum(loss_values) / len(loss_values)), float(
-                    sum(score_values) / len(score_values))
+                    sum(score_values) / len(score_values)
+                )
                 loss_values, score_values = [], []
                 log_str = f"Epoch: {epoch_id}: Iter: {iter_id};  loss = {loss_avg}; accuracy  = {score_avg}"
                 if step % 100 == 0:
@@ -173,7 +174,9 @@ def main():
             device,
             model,
         )
-        logger.info(f"[Validation] Current VQA: {curr_val_score} at {global_step} | Best VQA: {best_val_score} at {best_val_step}")
+        logger.info(
+            f"[Validation] Current VQA: {curr_val_score} at {global_step} | Best VQA: {best_val_score} at {best_val_step}"
+        )
 
         if curr_val_score > best_val_score:
             logger.info(f"Saving Checkpoint: {checkpoint_path}")
@@ -190,31 +193,30 @@ def main():
                 checkpoint_path,
             )
 
-    print(f"Best Validation Score: {best_val_score}, Best Validation Epoch: {best_val_step}")
+    print(
+        f"Best Validation Score: {best_val_score}, Best Validation Epoch: {best_val_step}"
+    )
     return checkpoint_path, model, dataloaders
 
 
 def evaluate(
-        dataloaders,
-        task_cfg,
-        device,
-        model,
+    dataloaders,
+    task_cfg,
+    device,
+    model,
 ):
     scores, batch_sizes = [], []
     model.eval()
     with torch.no_grad():
         for batch_dict in tqdm(dataloaders["val"], desc="Validation"):
             loss, score, batch_size = forward_model(
-                task_cfg,
-                device,
-                model,
-                batch_dict=batch_dict
+                task_cfg, device, model, batch_dict=batch_dict
             )
             scores.append(score * batch_size)
             batch_sizes.append(batch_size)
 
     model.train()
-    return sum(scores)/sum(batch_sizes)
+    return sum(scores) / sum(batch_sizes)
 
 
 if __name__ == "__main__":

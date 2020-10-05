@@ -40,11 +40,15 @@ class VocabDict:
         self.num_vocab = len(self.word_list)
 
         self.UNK_INDEX = (
-            self.word2idx_dict[self.UNK_TOKEN] if self.UNK_TOKEN in self.word2idx_dict else None
+            self.word2idx_dict[self.UNK_TOKEN]
+            if self.UNK_TOKEN in self.word2idx_dict
+            else None
         )
 
         self.PAD_INDEX = (
-            self.word2idx_dict[self.PAD_TOKEN] if self.PAD_TOKEN in self.word2idx_dict else None
+            self.word2idx_dict[self.PAD_TOKEN]
+            if self.PAD_TOKEN in self.word2idx_dict
+            else None
         )
 
     def idx2word(self, n_w):
@@ -68,7 +72,10 @@ class VocabDict:
         elif self.UNK_INDEX is not None:
             return self.UNK_INDEX
         else:
-            raise ValueError("word %s not in dictionary (while dictionary does not contain <unk>)" % w)
+            raise ValueError(
+                "word %s not in dictionary (while dictionary does not contain <unk>)"
+                % w
+            )
 
     def tokenize_and_index(self, sentence):
         inds = [self.word2idx(w) for w in tokenize(sentence)]

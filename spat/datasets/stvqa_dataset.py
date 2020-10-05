@@ -62,7 +62,6 @@ def _load_dataset(path_holder, name):
 
 
 class STVQADataset(TextVQADataset):
-
     def _set_attrs(self, task_cfg):
         keys = [
             ("max_seq_length", None),
@@ -77,7 +76,7 @@ class STVQADataset(TextVQADataset):
             ("dynamic_sampling", True),
             ("distance_threshold", 0.5),
             ("heads_type", "none"),
-            ("clean_answers", True)
+            ("clean_answers", True),
         ]
 
         for key, default in keys:
@@ -89,10 +88,7 @@ class STVQADataset(TextVQADataset):
                 print(f"Missing key: {key}")
                 # raise ValueError(f"Missing key: {key}")
 
-        registry_keys = [
-            ("vocab_type", None),
-            ("distance_threshold", None)
-        ]
+        registry_keys = [("vocab_type", None), ("distance_threshold", None)]
 
         for key, default in registry_keys:
             if key in task_cfg:
@@ -104,12 +100,7 @@ class STVQADataset(TextVQADataset):
                 # raise ValueError(f"Missing key: {key}")
 
     def __init__(
-        self,
-        split,
-        tokenizer,
-        padding_index=0,
-        processing_threads=32,
-        task_cfg=None
+        self, split, tokenizer, padding_index=0, processing_threads=32, task_cfg=None
     ):
         # Just initialize the grand-parent classs
         Dataset.__init__(self)
@@ -126,12 +117,10 @@ class STVQADataset(TextVQADataset):
             format_str = "test"
 
         self.obj_features_reader = ImageFeaturesH5Reader(
-            features_path=self.stvqa_obj.format(format_str),
-            in_memory=True
+            features_path=self.stvqa_obj.format(format_str), in_memory=True
         )
         self.ocr_features_reader = ImageFeaturesH5Reader(
-            features_path=self.stvqa_ocr.format(format_str),
-            in_memory=True
+            features_path=self.stvqa_ocr.format(format_str), in_memory=True
         )
 
         self._tokenizer = tokenizer
@@ -147,7 +136,7 @@ class STVQADataset(TextVQADataset):
         # check head types to process
         self.set_head_types(task_cfg)
         self.needs_spatial = len(self.head_types) > 0
-        self.path_holder = task_cfg['stvqa_imdb']
+        self.path_holder = task_cfg["stvqa_imdb"]
 
         registry.vocab_type = self.vocab_type
         registry.distance_threshold = self.distance_threshold
@@ -159,19 +148,20 @@ class STVQADataset(TextVQADataset):
         logger.info(f"Clean Answers is {self.clean_answers}")
         logger.info(f"needs_spatial is {self.needs_spatial}")
 
-
         cache_path = task_cfg["stvqa_spatial_cache"].format(self.split)
         logger.info(f"Cache Name:  {cache_path}")
 
         if not os.path.exists(cache_path) or self.debug:
             # Initialize Processors
             if "processors" not in registry:
-                self.processors = Processors(self._tokenizer, vocab_type=self.vocab_type)
+                self.processors = Processors(
+                    self._tokenizer, vocab_type=self.vocab_type
+                )
                 registry.processors = self.processors
             else:
                 self.processors = registry.processors
 
-            self.entries = _load_dataset(self.path_holder ,split)
+            self.entries = _load_dataset(self.path_holder, split)
             # convert questions to tokens, create masks, segment_ids
             self.process()
 
@@ -183,9 +173,7 @@ class STVQADataset(TextVQADataset):
         else:
             if "processors_only_registry" not in registry:
                 self.processors = Processors(
-                    self._tokenizer,
-                    only_registry=True,
-                    vocab_type=self.vocab_type
+                    self._tokenizer, only_registry=True, vocab_type=self.vocab_type
                 )  # only initialize the M4C processor (for registry)
                 registry.processors_only_registry = self.processors
             else:

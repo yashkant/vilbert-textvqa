@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class M4CDecodingBCEWithMaskLoss(nn.Module):
     def __init__(self):
         super().__init__()
-        self.one = torch.Tensor([1.])
+        self.one = torch.Tensor([1.0])
 
     def forward(self, scores, targets, loss_mask):
         assert scores.dim() == 3 and loss_mask.dim() == 2
@@ -99,13 +99,13 @@ def compute_score_with_logits(logits, labels):
 
 
 def forward_model(
-        task_cfg,
-        device,
-        model,
-        dataloaders=None,
-        split="train",
-        batch_dict=None,
-        beam_search=False
+    task_cfg,
+    device,
+    model,
+    dataloaders=None,
+    split="train",
+    batch_dict=None,
+    beam_search=False,
 ):
     """Can work with a dataloader [train] or batch_dict [eval] whichever is passed."""
     if batch_dict is None:
@@ -124,9 +124,15 @@ def forward_model(
     if beam_search:
         return
 
-    loss = LossMap[task_cfg["loss"]](batch_dict["textvqa_scores"], batch_dict["targets"], batch_dict["train_loss_mask"])
+    loss = LossMap[task_cfg["loss"]](
+        batch_dict["textvqa_scores"],
+        batch_dict["targets"],
+        batch_dict["train_loss_mask"],
+    )
     textvqa_metric = MetricsMap[task_cfg["metric"]]
-    batch_acc, batch_scores = textvqa_metric.calculate(batch_dict, batch_dict["textvqa_scores"])
+    batch_acc, batch_scores = textvqa_metric.calculate(
+        batch_dict, batch_dict["textvqa_scores"]
+    )
 
     return loss, batch_acc, batch_size
 
@@ -139,9 +145,7 @@ def get_loader(task_cfg, tokenizer, split):
     datasets = []
     for dset in dataset_names:
         _dataset = DatasetMapTrain[dset](
-            split=split,
-            tokenizer=tokenizer,
-            task_cfg=task_cfg
+            split=split, tokenizer=tokenizer, task_cfg=task_cfg
         )
         datasets.append(_dataset)
 
@@ -152,14 +156,14 @@ def get_loader(task_cfg, tokenizer, split):
 
     random_sampler = RandomSampler(dataset_instance)
     loader = DataLoader(
-            dataset_instance,
-            sampler=random_sampler if split == "train" else None,
-            batch_size=task_cfg["batch_size"],
-            num_workers=task_cfg["num_workers"],
-            pin_memory=True,
-            shuffle=False,
-            drop_last=False,
-        )
+        dataset_instance,
+        sampler=random_sampler if split == "train" else None,
+        batch_size=task_cfg["batch_size"],
+        num_workers=task_cfg["num_workers"],
+        pin_memory=True,
+        shuffle=False,
+        drop_last=False,
+    )
     return loader
 
 

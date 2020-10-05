@@ -6,8 +6,11 @@ from torch import nn
 import torch.nn.functional as F
 from collections import Counter
 from pytorch_transformers.modeling_bert import (
-    BertLayerNorm, BertEmbeddings, BertEncoder, BertConfig,
-    BertPreTrainedModel
+    BertLayerNorm,
+    BertEmbeddings,
+    BertEncoder,
+    BertConfig,
+    BertPreTrainedModel,
 )
 
 from spat.beam_search import BeamSearch
@@ -21,6 +24,7 @@ class SAM4C(nn.Module):
     """
     SAM4C has two transfomers MMT and TextBert.
     """
+
     def __init__(self, mmt_config, text_bert_config):
         super().__init__()
         self.mmt_config = mmt_config
@@ -54,7 +58,6 @@ class SAM4C(nn.Module):
         self.bsdecoder = BeamSearch(self.beam_size)
         logger.info(f"Using beam size: {self.beam_size}")
 
-
     def build(self):
         # modules requiring custom learning rates (usually for finetuning)
         self.finetune_modules = []
@@ -73,16 +76,18 @@ class SAM4C(nn.Module):
         # self.text_bert_config = BertConfig(**self.config.text_bert)
         if self.text_bert_config.text_bert_init_from_bert_base:
             self.text_bert = TextBert.from_pretrained(
-                'bert-base-uncased', config=self.text_bert_config
+                "bert-base-uncased", config=self.text_bert_config
             )
             # Use a smaller learning rate on text bert when initializing
             # from BERT_BASE
-            self.finetune_modules.append({
-                'module': self.text_bert,
-                'lr_scale': self.text_bert_config.lr_scale_text_bert,
-            })
+            self.finetune_modules.append(
+                {
+                    "module": self.text_bert,
+                    "lr_scale": self.text_bert_config.lr_scale_text_bert,
+                }
+            )
         else:
-            logger.info('NOT initializing text_bert from BERT_BASE')
+            logger.info("NOT initializing text_bert from BERT_BASE")
             self.text_bert = TextBert(self.text_bert_config)
 
         # if the text bert output dimension doesn't match the
@@ -90,7 +95,7 @@ class SAM4C(nn.Module):
         # add a linear projection layer between the two
         if self.mmt_config.hidden_size != TEXT_BERT_HIDDEN_SIZE:
             logger.info(
-                'Projecting text_bert output to {} dim'.format(
+                "Projecting text_bert output to {} dim".format(
                     self.mmt_config.hidden_size
                 )
             )
@@ -118,9 +123,7 @@ class SAM4C(nn.Module):
         )
 
         # object location feature: relative bounding box coordinates (4-dim)
-        self.linear_obj_bbox_to_mmt_in = nn.Linear(
-            4, self.mmt_config.hidden_size
-        )
+        self.linear_obj_bbox_to_mmt_in = nn.Linear(4, self.mmt_config.hidden_size)
 
         self.obj_feat_layer_norm = BertLayerNorm(self.mmt_config.hidden_size)
         self.obj_bbox_layer_norm = BertLayerNorm(self.mmt_config.hidden_size)
@@ -134,18 +137,16 @@ class SAM4C(nn.Module):
         self.ocr_faster_rcnn_fc7 = ImageEncoder(
             encoder_type=self.frcn_encoder_type,
             in_dim=2048,
-            weights_file='detectron/fc6/fc7_w.pkl',
-            bias_file='detectron/fc6/fc7_b.pkl',
-            model_data_dir=None
+            weights_file="detectron/fc6/fc7_w.pkl",
+            bias_file="detectron/fc6/fc7_b.pkl",
+            model_data_dir=None,
         )
         self.linear_ocr_feat_to_mmt_in = nn.Linear(
             self.mmt_config.ocr_feature_size, self.mmt_config.hidden_size
         )
 
         # OCR location feature: relative bounding box coordinates (4-dim)
-        self.linear_ocr_bbox_to_mmt_in = nn.Linear(
-            4, self.mmt_config.hidden_size
-        )
+        self.linear_ocr_bbox_to_mmt_in = nn.Linear(4, self.mmt_config.hidden_size)
 
         self.ocr_feat_layer_norm = BertLayerNorm(self.mmt_config.hidden_size)
         self.ocr_bbox_layer_norm = BertLayerNorm(self.mmt_config.hidden_size)
@@ -155,14 +156,19 @@ class SAM4C(nn.Module):
         self.mmt = MMT(self.mmt_config)
 
         # allow specifying a different/scaled lr for multimodal transformer
-        self.finetune_modules.append({
-            'module': self.mmt,
-            'lr_scale': self.mmt_config.lr_scale_mmt,
-        })
+        self.finetune_modules.append(
+            {
+                "module": self.mmt,
+                "lr_scale": self.mmt_config.lr_scale_mmt,
+            }
+        )
 
     def _build_output(self):
         # dynamic OCR-copying scores with pointer network
-        self.ocr_ptr_net = OcrPtrNet(hidden_size=self.mmt_config.hidden_size, query_key_size=self.mmt_config.ptr_query_size)
+        self.ocr_ptr_net = OcrPtrNet(
+            hidden_size=self.mmt_config.hidden_size,
+            query_key_size=self.mmt_config.ptr_query_size,
+        )
         num_outputs = len(registry.answer_vocab)
         logger.info(f"Answer vocab-size is: {num_outputs}")
         self.classifier = nn.Linear(self.mmt_config.hidden_size, num_outputs)
@@ -186,15 +192,15 @@ class SAM4C(nn.Module):
         if self.use_aux_heads:
             self._forward_aux(batch_dict)
 
-        results_dict={
+        results_dict = {
             "textvqa_scores": batch_dict["scores"],
             # "spatial_scores": None if not self.use_aux_heads else batch_dict["spatial_head_out"]
         }
 
-        if 'complete_seqs' in batch_dict:
-            results_dict['complete_seqs'] = batch_dict['complete_seqs'].squeeze()
-            results_dict['topkscores'] = batch_dict['topkscores'].squeeze()
-            results_dict['question_id'] = batch_dict['question_id'].squeeze()
+        if "complete_seqs" in batch_dict:
+            results_dict["complete_seqs"] = batch_dict["complete_seqs"].squeeze()
+            results_dict["topkscores"] = batch_dict["topkscores"].squeeze()
+            results_dict["question_id"] = batch_dict["question_id"].squeeze()
 
         return results_dict
 
@@ -209,15 +215,11 @@ class SAM4C(nn.Module):
 
         # remove bbox-area
         obj_bbox = batch_dict["pad_obj_bboxes"][:, :, :-1]
-        obj_mmt_in = (
-            self.obj_feat_layer_norm(
-                self.linear_obj_feat_to_mmt_in(obj_feat)
-            ) + self.obj_bbox_layer_norm(
-                self.linear_obj_bbox_to_mmt_in(obj_bbox)
-            )
-        )
+        obj_mmt_in = self.obj_feat_layer_norm(
+            self.linear_obj_feat_to_mmt_in(obj_feat)
+        ) + self.obj_bbox_layer_norm(self.linear_obj_bbox_to_mmt_in(obj_bbox))
         obj_mmt_in = self.obj_drop(obj_mmt_in)
-        batch_dict['obj_mmt_in'] = obj_mmt_in
+        batch_dict["obj_mmt_in"] = obj_mmt_in
 
     def _forward_ocr_encoding(self, batch_dict):
         # OCR FastText feature (300-dim)
@@ -244,31 +246,23 @@ class SAM4C(nn.Module):
 
         if self.mmt_config.use_phoc_fasttext:
             ocr_feat = torch.cat(
-                [ocr_fasttext, ocr_phoc, ocr_fc7, ocr_order_vectors],
-                dim=-1
+                [ocr_fasttext, ocr_phoc, ocr_fc7, ocr_order_vectors], dim=-1
             )
         else:
-            ocr_feat = torch.cat(
-                [ocr_fc7, ocr_order_vectors],
-                dim=-1
-            )
+            ocr_feat = torch.cat([ocr_fc7, ocr_order_vectors], dim=-1)
 
         # remove area
         ocr_bbox = batch_dict["pad_ocr_bboxes"][:, :, :-1]
-        ocr_mmt_in = (
-            self.ocr_feat_layer_norm(
-                self.linear_ocr_feat_to_mmt_in(ocr_feat)
-            ) + self.ocr_bbox_layer_norm(
-                self.linear_ocr_bbox_to_mmt_in(ocr_bbox)
-            )
-        )
+        ocr_mmt_in = self.ocr_feat_layer_norm(
+            self.linear_ocr_feat_to_mmt_in(ocr_feat)
+        ) + self.ocr_bbox_layer_norm(self.linear_ocr_bbox_to_mmt_in(ocr_bbox))
         ocr_mmt_in = self.ocr_drop(ocr_mmt_in)
-        batch_dict['ocr_mmt_in'] = ocr_mmt_in
+        batch_dict["ocr_mmt_in"] = ocr_mmt_in
 
     def _forward_mmt(self, batch_dict):
         # first forward the text BERT layers
         text_bert_out = self.text_bert(batch_dict)
-        batch_dict['text_bert_emb'] = self.text_bert_out_linear(text_bert_out)
+        batch_dict["text_bert_emb"] = self.text_bert_out_linear(text_bert_out)
 
         mmt_results = self.mmt(
             batch_dict,
@@ -277,16 +271,14 @@ class SAM4C(nn.Module):
         batch_dict.update(mmt_results)
 
     def _forward_output(self, batch_dict):
-        mmt_dec_output = batch_dict['mmt_dec_output']
-        mmt_ocr_output = batch_dict['mmt_ocr_output']
-        ocr_mask = batch_dict['pad_ocr_mask']
+        mmt_dec_output = batch_dict["mmt_dec_output"]
+        mmt_ocr_output = batch_dict["mmt_ocr_output"]
+        ocr_mask = batch_dict["pad_ocr_mask"]
 
         fixed_scores = self.classifier(mmt_dec_output)
-        dynamic_ocr_scores = self.ocr_ptr_net(
-            mmt_dec_output, mmt_ocr_output, ocr_mask
-        )
+        dynamic_ocr_scores = self.ocr_ptr_net(mmt_dec_output, mmt_ocr_output, ocr_mask)
         scores = torch.cat([fixed_scores, dynamic_ocr_scores], dim=-1)
-        batch_dict['scores'] = scores
+        batch_dict["scores"] = scores
 
     def _forward_mmt_and_output(self, batch_dict):
         if self.training:
@@ -296,10 +288,10 @@ class SAM4C(nn.Module):
         else:
             dec_step_num = batch_dict["train_prev_inds"].size(1)
             # fill prev_inds with BOS_IDX at index 0, and zeros elsewhere
-            batch_dict['train_prev_inds'] = torch.zeros_like(
+            batch_dict["train_prev_inds"] = torch.zeros_like(
                 batch_dict["train_prev_inds"]
             )
-            batch_dict['train_prev_inds'][:, 0] = registry.BOS_IDX
+            batch_dict["train_prev_inds"][:, 0] = registry.BOS_IDX
 
             # greedy decoding at test time
             for t in range(dec_step_num):
@@ -310,7 +302,7 @@ class SAM4C(nn.Module):
                 # or an OCR), and add it to prev_inds for auto-regressive
                 # decoding
                 argmax_inds = batch_dict["scores"].argmax(dim=-1)
-                batch_dict['train_prev_inds'][:, 1:] = argmax_inds[:, :-1]
+                batch_dict["train_prev_inds"][:, 1:] = argmax_inds[:, :-1]
 
     def _forward_beam_search(self, batch_dict):
         dec_step_num = batch_dict["train_prev_inds"].size(1)
@@ -329,17 +321,23 @@ class SAM4C(nn.Module):
         obj_max_num = batch_dict["pad_obj_mask"].size(-1)
         ocr_max_num = batch_dict["pad_ocr_mask"].size(-1)
         mmt_output = batch_dict["mmt_seq_output"]
-        obj_ocr_output = mmt_output[:, txt_max_num: txt_max_num + obj_max_num + ocr_max_num, :]
+        obj_ocr_output = mmt_output[
+            :, txt_max_num : txt_max_num + obj_max_num + ocr_max_num, :
+        ]
 
         # shape: (bs, obj_ocr_num, hid_dim)
         obj_ocr_origin_transform = self.origin_transform(obj_ocr_output)
         # shape: (bs, obj_ocr_num, obj_ocr_num, hid_dim)
-        obj_ocr_origin_transform = obj_ocr_origin_transform.unsqueeze(-2).repeat(1, 1, 150, 1)
+        obj_ocr_origin_transform = obj_ocr_origin_transform.unsqueeze(-2).repeat(
+            1, 1, 150, 1
+        )
 
         # shape: (bs, obj_ocr_num, hid_dim)
         obj_ocr_dest_transform = self.dest_transform(obj_ocr_output)
         # shape: (bs, obj_ocr_num, obj_ocr_num, hid_dim)
-        obj_ocr_dest_transform = obj_ocr_dest_transform.unsqueeze(-3).repeat(1, 150, 1, 1)
+        obj_ocr_dest_transform = obj_ocr_dest_transform.unsqueeze(-3).repeat(
+            1, 150, 1, 1
+        )
 
         # Add and average the features or Multiply
         if self.aux_spatial_fusion == "mul":
@@ -358,11 +356,13 @@ class SAM4C(nn.Module):
         # collect all the parameters that need different/scaled lr
         finetune_params_set = set()
         for m in self.finetune_modules:
-            optimizer_param_groups.append({
-                "params": list(m['module'].parameters()),
-                "lr": base_lr * m['lr_scale']
-            })
-            finetune_params_set.update(list(m['module'].parameters()))
+            optimizer_param_groups.append(
+                {
+                    "params": list(m["module"].parameters()),
+                    "lr": base_lr * m["lr_scale"],
+                }
+            )
+            finetune_params_set.update(list(m["module"].parameters()))
         # remaining_params are those parameters w/ default lr
         remaining_params = [
             p for p in self.parameters() if p not in finetune_params_set
@@ -392,9 +392,7 @@ class TextBert(BertPreTrainedModel):
         head_mask = [None] * self.config.num_hidden_layers
 
         encoder_outputs = self.encoder(
-            encoder_inputs,
-            extended_attention_mask,
-            head_mask=head_mask
+            encoder_inputs, extended_attention_mask, head_mask=head_mask
         )
         seq_output = encoder_outputs[0]
 
@@ -417,11 +415,11 @@ class SpatialBertSelfAttention(nn.Module):
             self.num_attention_heads += config.num_implicit_relations
             self.num_implicit_relations = config.num_implicit_relations
 
-
         if config.hidden_size % self.num_attention_heads != 0:
             raise ValueError(
                 "The hidden size (%d) is not a multiple of the number of attention "
-                "heads (%d)" % (config.hidden_size, self.num_attention_heads))
+                "heads (%d)" % (config.hidden_size, self.num_attention_heads)
+            )
 
         self.output_attentions = config.output_attentions
         self.max_seq_len = config.max_seq_length
@@ -448,11 +446,16 @@ class SpatialBertSelfAttention(nn.Module):
             self.biases = torch.nn.Embedding(1, config.hidden_size)
 
     def transpose_for_scores(self, x):
-        new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
+        new_x_shape = x.size()[:-1] + (
+            self.num_attention_heads,
+            self.attention_head_size,
+        )
         x = x.view(*new_x_shape)
         return x.permute(0, 2, 1, 3)
 
-    def forward(self, hidden_states, attention_mask, spatial_adj_matrix, head_mask=None):
+    def forward(
+        self, hidden_states, attention_mask, spatial_adj_matrix, head_mask=None
+    ):
         """
         spatial_adj_matrix: (bs, num_ocr + num_obj, num_ocr + num_obj, type_relations == num_heads)
         TODO: Is there way you can draw some connections across these heads? Like one-head using some
@@ -472,34 +475,79 @@ class SpatialBertSelfAttention(nn.Module):
         num_features = hidden_states.size(1)
 
         # Removing masking all quadrants
-        spatial_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, num_spatial_heads))
+        spatial_attention_mask = attention_mask.new_ones(
+            (batch_size, num_features, num_features, num_spatial_heads)
+        )
 
         # Add explicit mask
-        spatial_attention_mask[:, self.max_seq_len:self.max_seq_len + ocr_obj_num,
-        self.max_seq_len:self.max_seq_len + ocr_obj_num, :] = spatial_adj_matrix
+        spatial_attention_mask[
+            :,
+            self.max_seq_len : self.max_seq_len + ocr_obj_num,
+            self.max_seq_len : self.max_seq_len + ocr_obj_num,
+            :,
+        ] = spatial_adj_matrix
 
         # Add implicit mask
         if self.num_attention_heads != self.num_spatial_relations:
             assert hasattr(self, "num_implicit_relations")
-            implicit_attention_mask = attention_mask.new_ones((batch_size, num_features, num_features, self.num_implicit_relations))
-            spatial_attention_mask = torch.cat([spatial_attention_mask, implicit_attention_mask], dim=-1)
+            implicit_attention_mask = attention_mask.new_ones(
+                (batch_size, num_features, num_features, self.num_implicit_relations)
+            )
+            spatial_attention_mask = torch.cat(
+                [spatial_attention_mask, implicit_attention_mask], dim=-1
+            )
 
-        assert spatial_attention_mask.shape == (batch_size, num_features, num_features, self.num_attention_heads)
+        assert spatial_attention_mask.shape == (
+            batch_size,
+            num_features,
+            num_features,
+            self.num_attention_heads,
+        )
 
         # Mask attention-quadrants (spatial relations only)
         for quadrant in self.mask_quadrants:
             if quadrant == 1:
-                spatial_attention_mask[:, :self.max_seq_len, :self.max_seq_len, :self.num_spatial_relations] = 0
+                spatial_attention_mask[
+                    :,
+                    : self.max_seq_len,
+                    : self.max_seq_len,
+                    : self.num_spatial_relations,
+                ] = 0
             elif quadrant == 2:
-                spatial_attention_mask[:, :self.max_seq_len, self.max_seq_len:self.max_seq_len+ocr_obj_num, :self.num_spatial_relations] = 0
+                spatial_attention_mask[
+                    :,
+                    : self.max_seq_len,
+                    self.max_seq_len : self.max_seq_len + ocr_obj_num,
+                    : self.num_spatial_relations,
+                ] = 0
             elif quadrant == 4:
-                spatial_attention_mask[:, self.max_seq_len:self.max_seq_len+ocr_obj_num, :self.max_seq_len, :self.num_spatial_relations] = 0
+                spatial_attention_mask[
+                    :,
+                    self.max_seq_len : self.max_seq_len + ocr_obj_num,
+                    : self.max_seq_len,
+                    : self.num_spatial_relations,
+                ] = 0
             elif quadrant == 7:
-                spatial_attention_mask[:, self.max_seq_len+ocr_obj_num:, :self.max_seq_len, :self.num_spatial_relations] = 0
+                spatial_attention_mask[
+                    :,
+                    self.max_seq_len + ocr_obj_num :,
+                    : self.max_seq_len,
+                    : self.num_spatial_relations,
+                ] = 0
             elif quadrant == 8:
-                spatial_attention_mask[:, self.max_seq_len+ocr_obj_num:, self.max_seq_len:self.max_seq_len+ocr_obj_num, :self.num_spatial_relations] = 0
+                spatial_attention_mask[
+                    :,
+                    self.max_seq_len + ocr_obj_num :,
+                    self.max_seq_len : self.max_seq_len + ocr_obj_num,
+                    : self.num_spatial_relations,
+                ] = 0
             elif quadrant == 9:
-                spatial_attention_mask[:, self.max_seq_len+ocr_obj_num:, self.max_seq_len+ocr_obj_num:, :self.num_spatial_relations] = 0
+                spatial_attention_mask[
+                    :,
+                    self.max_seq_len + ocr_obj_num :,
+                    self.max_seq_len + ocr_obj_num :,
+                    : self.num_spatial_relations,
+                ] = 0
             else:
                 raise ValueError
 
@@ -526,7 +574,7 @@ class SpatialBertSelfAttention(nn.Module):
             print(f"am: {attention_mask.shape} | sm: {spatial_attention_mask.shape}")
 
         # for entities that are totally masked
-        entity_probs_mask = (combined_mask.max(dim=-1)[0] + 10000.0)/10000.0
+        entity_probs_mask = (combined_mask.max(dim=-1)[0] + 10000.0) / 10000.0
         entity_probs_mask = entity_probs_mask.unsqueeze(-1)
 
         # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
@@ -536,7 +584,7 @@ class SpatialBertSelfAttention(nn.Module):
         attention_probs = nn.Softmax(dim=-1)(attention_scores)
 
         # zero-out completely masked entities
-        attention_probs = attention_probs*entity_probs_mask
+        attention_probs = attention_probs * entity_probs_mask
 
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.
@@ -551,11 +599,17 @@ class SpatialBertSelfAttention(nn.Module):
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
         context_layer = context_layer.view(*new_context_layer_shape)
-        
-        if self.use_bias:
-            context_layer = context_layer + self.biases(context_layer.new_zeros(1).long())
 
-        outputs = (context_layer, attention_probs) if self.output_attentions else (context_layer,)
+        if self.use_bias:
+            context_layer = context_layer + self.biases(
+                context_layer.new_zeros(1).long()
+            )
+
+        outputs = (
+            (context_layer, attention_probs)
+            if self.output_attentions
+            else (context_layer,)
+        )
         return outputs
 
 
@@ -564,6 +618,7 @@ class SpatialBertAttention(nn.Module):
         super(SpatialBertAttention, self).__init__()
         self.self = SpatialBertSelfAttention(config, use_implicit)
         from pytorch_transformers.modeling_bert import BertSelfOutput
+
         self.output = BertSelfOutput(config)
         self.pruned_heads = set()
 
@@ -571,7 +626,9 @@ class SpatialBertAttention(nn.Module):
         if len(heads) == 0:
             return
         mask = torch.ones(self.self.num_attention_heads, self.self.attention_head_size)
-        heads = set(heads) - self.pruned_heads  # Convert to set and emove already pruned heads
+        heads = (
+            set(heads) - self.pruned_heads
+        )  # Convert to set and emove already pruned heads
         for head in heads:
             # Compute how many pruned heads are before the head and move the index accordingly
             head = head - sum(1 if h < head else 0 for h in self.pruned_heads)
@@ -587,13 +644,19 @@ class SpatialBertAttention(nn.Module):
 
         # Update hyper params and store pruned heads
         self.self.num_attention_heads = self.self.num_attention_heads - len(heads)
-        self.self.all_head_size = self.self.attention_head_size * self.self.num_attention_heads
+        self.self.all_head_size = (
+            self.self.attention_head_size * self.self.num_attention_heads
+        )
         self.pruned_heads = self.pruned_heads.union(heads)
 
     def forward(self, input_tensor, attention_mask, spatial_adj_matrix, head_mask=None):
-        self_outputs = self.self(input_tensor, attention_mask, spatial_adj_matrix, head_mask)
+        self_outputs = self.self(
+            input_tensor, attention_mask, spatial_adj_matrix, head_mask
+        )
         attention_output = self.output(self_outputs[0], input_tensor)
-        outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
+        outputs = (attention_output,) + self_outputs[
+            1:
+        ]  # add attentions if we output them
         return outputs
 
 
@@ -601,18 +664,25 @@ class SpatialBertLayer(nn.Module):
     def __init__(self, config, use_implicit=False):
         super(SpatialBertLayer, self).__init__()
         from pytorch_transformers.modeling_bert import BertIntermediate, BertOutput
+
         self.attention = SpatialBertAttention(config, use_implicit)
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
 
-    def forward(self, hidden_states, attention_mask, spatial_adj_matrix, head_mask=None):
-        attention_outputs = self.attention(hidden_states, attention_mask, spatial_adj_matrix, head_mask)
+    def forward(
+        self, hidden_states, attention_mask, spatial_adj_matrix, head_mask=None
+    ):
+        attention_outputs = self.attention(
+            hidden_states, attention_mask, spatial_adj_matrix, head_mask
+        )
         attention_output = attention_outputs[0]
         # Intermediate is dense + activation
         intermediate_output = self.intermediate(attention_output)
         # Output is dense + dropout + residual + layernorm
         layer_output = self.output(intermediate_output, attention_output)
-        outputs = (layer_output,) + attention_outputs[1:]  # add attentions if we output them
+        outputs = (layer_output,) + attention_outputs[
+            1:
+        ]  # add attentions if we output them
         return outputs
 
 
@@ -634,7 +704,7 @@ class BertSpatialEncoder(nn.Module):
         logger.info(f"Num Implicit Layers: {self.num_implicit_layers}")
 
         if not hasattr(config, "mix_list") or config.mix_list is None:
-            self.mix_list = ["none"]*len(self.layer_type_list)
+            self.mix_list = ["none"] * len(self.layer_type_list)
         else:
             self.mix_list = config.mix_list
         assert len(self.mix_list) == len(self.layer_type_list)
@@ -648,9 +718,16 @@ class BertSpatialEncoder(nn.Module):
         }
 
         from pytorch_transformers.modeling_bert import BertLayer
-        self.normal_layers = nn.ModuleList([BertLayer(config) for _ in range(self.num_normal_layers)])
-        self.spatial_layers = nn.ModuleList([SpatialBertLayer(config) for _ in range(self.num_spatial_layers)])
-        self.implicit_layers = nn.ModuleList([SpatialBertLayer(config, True) for _ in range(self.num_implicit_layers)])
+
+        self.normal_layers = nn.ModuleList(
+            [BertLayer(config) for _ in range(self.num_normal_layers)]
+        )
+        self.spatial_layers = nn.ModuleList(
+            [SpatialBertLayer(config) for _ in range(self.num_spatial_layers)]
+        )
+        self.implicit_layers = nn.ModuleList(
+            [SpatialBertLayer(config, True) for _ in range(self.num_implicit_layers)]
+        )
 
     def forward(self, hidden_states, attention_mask, batch_dict, head_mask=None):
         all_hidden_states = ()
@@ -670,7 +747,9 @@ class BertSpatialEncoder(nn.Module):
                 layer_module = next(spatial_iter)
                 matrix_type = self.matrix_type_map[mix_type]
                 spatial_adj_matrix = batch_dict["spatial_adj_matrices"][matrix_type]
-                layer_outputs = layer_module(hidden_states, attention_mask, spatial_adj_matrix)
+                layer_outputs = layer_module(
+                    hidden_states, attention_mask, spatial_adj_matrix
+                )
             else:
                 raise ValueError
             hidden_states = layer_outputs[0]
@@ -702,30 +781,37 @@ class MMT(BertPreTrainedModel):
         # self.apply(self.init_weights)  # old versions of pytorch_transformers
         self.init_weights()
 
-    def forward(self,
-                batch_dict,
-                fixed_ans_emb):
+    def forward(self, batch_dict, fixed_ans_emb):
         # build embeddings for predictions in previous decoding steps
         # fixed_ans_emb is an embedding lookup table for each fixed vocabulary
-        dec_emb = self.prev_pred_embeddings(fixed_ans_emb, batch_dict["ocr_mmt_in"], batch_dict["train_prev_inds"])
+        dec_emb = self.prev_pred_embeddings(
+            fixed_ans_emb, batch_dict["ocr_mmt_in"], batch_dict["train_prev_inds"]
+        )
 
         # a zero mask for decoding steps, so the encoding steps elements can't
         # attend to decoding steps.
         # A triangular causal mask will be filled for the decoding steps
         # later in extended_attention_mask
         dec_mask = torch.zeros(
-            dec_emb.size(0),
-            dec_emb.size(1),
-            dtype=torch.long,
-            device=dec_emb.device
+            dec_emb.size(0), dec_emb.size(1), dtype=torch.long, device=dec_emb.device
         )
         encoder_inputs = torch.cat(
-            [batch_dict["text_bert_emb"], batch_dict["obj_mmt_in"], batch_dict["ocr_mmt_in"], dec_emb],
-            dim=1
+            [
+                batch_dict["text_bert_emb"],
+                batch_dict["obj_mmt_in"],
+                batch_dict["ocr_mmt_in"],
+                dec_emb,
+            ],
+            dim=1,
         )
         attention_mask = torch.cat(
-            [batch_dict["question_mask"], batch_dict["pad_obj_mask"], batch_dict["pad_ocr_mask"], dec_mask],
-            dim=1
+            [
+                batch_dict["question_mask"],
+                batch_dict["pad_obj_mask"],
+                batch_dict["pad_ocr_mask"],
+                dec_mask,
+            ],
+            dim=1,
         )
 
         # offsets of each modality in the joint embedding space
@@ -752,8 +838,9 @@ class MMT(BertPreTrainedModel):
             1, 1, from_seq_length, 1
         )
         # decoding step elements can attend to themselves in a causal manner
-        extended_attention_mask[:, :, -dec_max_num:, -dec_max_num:] = \
-            _get_causal_mask(dec_max_num, encoder_inputs.device)
+        extended_attention_mask[:, :, -dec_max_num:, -dec_max_num:] = _get_causal_mask(
+            dec_max_num, encoder_inputs.device
+        )
 
         # flip the mask, so that invalid attention pairs have -10000.
         extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
@@ -761,10 +848,7 @@ class MMT(BertPreTrainedModel):
         head_mask = [None] * self.config.num_hidden_layers
 
         encoder_outputs = self.encoder(
-            encoder_inputs,
-            extended_attention_mask,
-            batch_dict,
-            head_mask=head_mask
+            encoder_inputs, extended_attention_mask, batch_dict, head_mask=head_mask
         )
 
         mmt_seq_output = encoder_outputs[0]
@@ -773,10 +857,10 @@ class MMT(BertPreTrainedModel):
         mmt_dec_output = mmt_seq_output[:, -dec_max_num:]
 
         results = {
-            'mmt_seq_output': mmt_seq_output,
-            'mmt_txt_output': mmt_txt_output,
-            'mmt_ocr_output': mmt_ocr_output,
-            'mmt_dec_output': mmt_dec_output,
+            "mmt_seq_output": mmt_seq_output,
+            "mmt_txt_output": mmt_txt_output,
+            "mmt_ocr_output": mmt_ocr_output,
+            "mmt_dec_output": mmt_dec_output,
         }
         return results
 
@@ -806,10 +890,7 @@ class OcrPtrNet(nn.Module):
             squeeze_result = False
         key_layer = self.key(key_inputs)
 
-        scores = torch.matmul(
-            query_layer,
-            key_layer.transpose(-1, -2)
-        )
+        scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
         scores = scores / math.sqrt(self.query_key_size)
         scores = scores + extended_attention_mask
         if squeeze_result:
@@ -855,11 +936,7 @@ class PrevPredEmbeddings(nn.Module):
         raw_dec_emb = _batch_gather(ans_ocr_emb_cat, prev_inds)
 
         # Add position and type embedding for previous predictions
-        position_ids = torch.arange(
-            seq_length,
-            dtype=torch.long,
-            device=ocr_emb.device
-        )
+        position_ids = torch.arange(seq_length, dtype=torch.long, device=ocr_emb.device)
         position_ids = position_ids.unsqueeze(0).expand(batch_size, seq_length)
         position_embeddings = self.position_embeddings(position_ids)
         # Token type ids: 0 -- vocab; 1 -- OCR
@@ -888,7 +965,7 @@ def _get_causal_mask(seq_length, device):
     mask = torch.zeros(seq_length, seq_length, device=device)
     for i in range(seq_length):
         for j in range(i + 1):
-            mask[i, j] = 1.
+            mask[i, j] = 1.0
     return mask
 
 
@@ -909,18 +986,18 @@ def _batch_gather(x, inds):
 
 def gelu(x):
     """Implementation of the gelu activation function.
-        For information: OpenAI GPT's gelu is slightly different (and gives slightly different results):
-        0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
-        Also see https://arxiv.org/abs/1606.08415
+    For information: OpenAI GPT's gelu is slightly different (and gives slightly different results):
+    0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
+    Also see https://arxiv.org/abs/1606.08415
     """
     return x * 0.5 * (1.0 + torch.erf(x / math.sqrt(2.0)))
 
 
 class GeLU(nn.Module):
     """Implementation of the gelu activation function.
-        For information: OpenAI GPT's gelu is slightly different (and gives slightly different results):
-        0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
-        Also see https://arxiv.org/abs/1606.08415
+    For information: OpenAI GPT's gelu is slightly different (and gives slightly different results):
+    0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
+    Also see https://arxiv.org/abs/1606.08415
     """
 
     def __init__(self):
@@ -939,8 +1016,7 @@ except ImportError:
 
     class BertLayerNorm(nn.Module):
         def __init__(self, hidden_size, eps=1e-12):
-            """Construct a layernorm module in the TF style (epsilon inside the square root).
-            """
+            """Construct a layernorm module in the TF style (epsilon inside the square root)."""
             super(BertLayerNorm, self).__init__()
             self.weight = nn.Parameter(torch.ones(hidden_size))
             self.bias = nn.Parameter(torch.zeros(hidden_size))
@@ -965,5 +1041,3 @@ class SimpleClassifier(nn.Module):
 
     def forward(self, hidden_states):
         return self.logit_fc(hidden_states)
-
-

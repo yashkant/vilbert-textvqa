@@ -46,16 +46,18 @@ class TextVQAAccuracy:
                     belongs_to.append("vocab")
                     answer_words.append(registry.answer_vocab.idx2word(answer_id))
 
-            answer = ' '.join(answer_words).replace(" 's", "'s")
+            answer = " ".join(answer_words).replace(" 's", "'s")
             gt_answers = dec_bytes2obj(gt_answers_enc[idx])
 
-            predictions.append({
-                "question_id": question_id.item(),
-                "gt_answers": gt_answers,
-                "pred_answer": answer,
-                "belongs_to": belongs_to,
-                "answer_words": answer_words
-            })
+            predictions.append(
+                {
+                    "question_id": question_id.item(),
+                    "gt_answers": gt_answers,
+                    "pred_answer": answer,
+                    "belongs_to": belongs_to,
+                    "answer_words": answer_words,
+                }
+            )
 
         accuracy, pred_scores = self.evaluator.eval_pred_list(predictions)
         accuracy = torch.tensor(accuracy).cuda()
@@ -75,6 +77,7 @@ class STVQAAccuracy(TextVQAAccuracy):
         self.name = "stvqa_accuracy"
         self.evaluator = STVQAAccuracyEvaluator()
         self.accuracies = []
+
 
 class OCRVQAAccuracy(STVQAAccuracy):
     def __init__(self):
@@ -314,9 +317,7 @@ class TextVQAAccuracyEvaluator:
         for unique_answer in unique_answers:
             accs = []
             for gt_answer in gt_answers:
-                other_answers = [
-                    item for item in gt_answers if item != gt_answer
-                ]
+                other_answers = [item for item in gt_answers if item != gt_answer]
                 matching_answers = [
                     item for item in other_answers if item[1] == unique_answer
                 ]
@@ -329,11 +330,9 @@ class TextVQAAccuracyEvaluator:
     def eval_pred_list(self, pred_list):
         pred_scores = []
         for entry in pred_list:
-            pred_answer = self.answer_processor(entry['pred_answer'])
-            unique_answer_scores = self._compute_answer_scores(
-                entry['gt_answers']
-            )
-            score = unique_answer_scores.get(pred_answer, 0.)
+            pred_answer = self.answer_processor(entry["pred_answer"])
+            unique_answer_scores = self._compute_answer_scores(entry["gt_answers"])
+            score = unique_answer_scores.get(pred_answer, 0.0)
             pred_scores.append(score)
 
         accuracy = sum(pred_scores) / len(pred_scores)
@@ -347,9 +346,9 @@ class STVQAAccuracyEvaluator:
     def eval_pred_list(self, pred_list):
         pred_scores = []
         for entry in pred_list:
-            pred_answer = self.answer_processor(entry['pred_answer'])
-            gts = [self.answer_processor(a) for a in entry['gt_answers']]
-            score = (1. if pred_answer in gts else 0.)
+            pred_answer = self.answer_processor(entry["pred_answer"])
+            gts = [self.answer_processor(a) for a in entry["gt_answers"]]
+            score = 1.0 if pred_answer in gts else 0.0
             pred_scores.append(score)
 
         accuracy = sum(pred_scores) / len(pred_scores)
@@ -359,21 +358,21 @@ class STVQAAccuracyEvaluator:
 class STVQAANLSEvaluator:
     def __init__(self):
         import editdistance  # install with `pip install editdistance`
+
         self.get_edit_distance = editdistance.eval
 
     def get_anls(self, s1, s2):
         s1 = s1.lower().strip()
         s2 = s2.lower().strip()
         iou = 1 - self.get_edit_distance(s1, s2) / max(len(s1), len(s2))
-        anls = iou if iou >= .5 else 0.
+        anls = iou if iou >= 0.5 else 0.0
         return anls
 
     def eval_pred_list(self, pred_list):
         pred_scores = []
         for entry in pred_list:
             anls = max(
-                self.get_anls(entry['pred_answer'], gt)
-                for gt in entry['gt_answers']
+                self.get_anls(entry["pred_answer"], gt) for gt in entry["gt_answers"]
             )
             pred_scores.append(anls)
 

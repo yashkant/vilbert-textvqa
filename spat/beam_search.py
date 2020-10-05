@@ -12,22 +12,21 @@ class BeamSearch:
         self._EOS_IDX = registry.EOS_IDX
         self.completed_ids = None
         self.batch_dict_keys = [
-            'pad_obj_features',
-            'pad_obj_bboxes',
-            'ocr_fasttext',
-            'ocr_phoc',
-            'pad_ocr_features',
-            'pad_ocr_bboxes',
-            'question_indices',
-            'question_mask',
-            'pad_obj_mask',
-            'pad_ocr_mask',
-            'spatial_adj_matrices',
-            'ocr_mmt_in',
-            'obj_mmt_in',
-            'question_id',
+            "pad_obj_features",
+            "pad_obj_bboxes",
+            "ocr_fasttext",
+            "ocr_phoc",
+            "pad_ocr_features",
+            "pad_ocr_bboxes",
+            "question_indices",
+            "question_mask",
+            "pad_obj_mask",
+            "pad_ocr_mask",
+            "spatial_adj_matrices",
+            "ocr_mmt_in",
+            "obj_mmt_in",
+            "question_id",
         ]
-
 
     def init_batch(self, batch_dict):
         self._complete_seqs = []
@@ -35,25 +34,34 @@ class BeamSearch:
         self._EOS_IDX = registry.EOS_IDX
         self.completed_ids = None
 
-        self._batch_size = batch_dict['train_prev_inds'].shape[0]
+        self._batch_size = batch_dict["train_prev_inds"].shape[0]
 
-        self._offset_mat = torch.arange(
-            0, self._batch_size
-        ).repeat_interleave(self._decode_size, dim=0) * self._decode_size
+        self._offset_mat = (
+            torch.arange(0, self._batch_size).repeat_interleave(
+                self._decode_size, dim=0
+            )
+            * self._decode_size
+        )
 
         setattr(
             self,
             "top_k_scores",
-            batch_dict['train_prev_inds'].new_zeros((self._batch_size * self._decode_size, 1), dtype=torch.float),
+            batch_dict["train_prev_inds"].new_zeros(
+                (self._batch_size * self._decode_size, 1), dtype=torch.float
+            ),
         )
 
-        self.seqs = batch_dict['train_prev_inds'].new_full(
-            (self._batch_size * self._decode_size, 1), registry.BOS_IDX, dtype=torch.long
+        self.seqs = batch_dict["train_prev_inds"].new_full(
+            (self._batch_size * self._decode_size, 1),
+            registry.BOS_IDX,
+            dtype=torch.long,
         )
 
-        batch_dict['topkscores'] = batch_dict['train_prev_inds'].new_full(
-            (self._batch_size * self._decode_size, 1), 0.0
-        ).detach()
+        batch_dict["topkscores"] = (
+            batch_dict["train_prev_inds"]
+            .new_full((self._batch_size * self._decode_size, 1), 0.0)
+            .detach()
+        )
         # Expand all the features
         # Make it [batch_size * beam_size] * ........
         # each element of batch is repeated beam_size number of time and interleaved.
@@ -63,68 +71,84 @@ class BeamSearch:
             if key in batch_dict:
                 if isinstance(batch_dict[key], dict):
                     for k, v in batch_dict[key].items():
-                        batch_dict[key][k] = batch_dict[key][k].repeat_interleave(self._decode_size, dim=0)
+                        batch_dict[key][k] = batch_dict[key][k].repeat_interleave(
+                            self._decode_size, dim=0
+                        )
                 else:
-                    batch_dict[key] = batch_dict[key].repeat_interleave(self._decode_size, dim=0)
+                    batch_dict[key] = batch_dict[key].repeat_interleave(
+                        self._decode_size, dim=0
+                    )
         return batch_dict
 
     def decode(self, batch_dict, t):
-        vocab_size = batch_dict['scores'].shape[-1]
+        vocab_size = batch_dict["scores"].shape[-1]
         current_scores = torch.log(torch.sigmoid(batch_dict["scores"][:, t, :]))
 
         if self.completed_ids is not None:
             current_scores[self.completed_ids, :] = -float("Inf")
-            current_scores[self.completed_ids, self._EOS_IDX] = 0  # make EOS probability highest.
+            current_scores[
+                self.completed_ids, self._EOS_IDX
+            ] = 0  # make EOS probability highest.
 
-        current_scores += batch_dict['topkscores'].expand_as(current_scores)
+        current_scores += batch_dict["topkscores"].expand_as(current_scores)
 
         # If time is zero, then need to look into only one beam for one image
         if t == 0:
             ignore_ids = (
-                    (torch.arange(0, self._batch_size) * self._decode_size).view(-1, 1) + \
-                    torch.arange(1, self._decode_size).view(1, -1)
+                (torch.arange(0, self._batch_size) * self._decode_size).view(-1, 1)
+                + torch.arange(1, self._decode_size).view(1, -1)
             ).view(-1)
 
             current_scores[ignore_ids, :] = -float("Inf")
 
         topkscores = current_scores.reshape(self._batch_size, -1)
-        value, indices = topkscores.topk(self._decode_size, dim=-1, largest=True, sorted=True)
+        value, indices = topkscores.topk(
+            self._decode_size, dim=-1, largest=True, sorted=True
+        )
 
         prev_position = indices / vocab_size
         new_position = indices % vocab_size
 
-        prev_position = prev_position.view(-1) + self._offset_mat.to(prev_position.device)
+        prev_position = prev_position.view(-1) + self._offset_mat.to(
+            prev_position.device
+        )
         new_position = new_position.view(-1)
 
         # New positions and prev_positions found!
         # Build input index:
-        batch_dict['train_prev_inds'] = self.add_next_word(
-            batch_dict['train_prev_inds'], prev_position, new_position, t
+        batch_dict["train_prev_inds"] = self.add_next_word(
+            batch_dict["train_prev_inds"], prev_position, new_position, t
         )
         # Need to store all the scores
-        batch_dict['topkscores'] = batch_dict['topkscores'][prev_position] + value.view(-1).unsqueeze(1)
+        batch_dict["topkscores"] = batch_dict["topkscores"][prev_position] + value.view(
+            -1
+        ).unsqueeze(1)
 
         # Build data for next round
         for key in self.batch_dict_keys:
             if isinstance(batch_dict[key], dict):
-                for k,v in batch_dict[key].items():
+                for k, v in batch_dict[key].items():
                     batch_dict[key][k] = batch_dict[key][k][prev_position]
             else:
                 batch_dict[key] = batch_dict[key][prev_position]
 
         # Find complete sequences for each image in the batch!
-        if t + 1 < batch_dict['train_prev_inds'].shape[1]:
-            self.completed_ids = self.find_complete_inds(batch_dict['train_prev_inds'], t + 1)
+        if t + 1 < batch_dict["train_prev_inds"].shape[1]:
+            self.completed_ids = self.find_complete_inds(
+                batch_dict["train_prev_inds"], t + 1
+            )
         else:
             # no beam got completed!
-            self.completed_ids = torch.arange(batch_dict['train_prev_inds'].shape[0])
+            self.completed_ids = torch.arange(batch_dict["train_prev_inds"].shape[0])
 
         finish = False
-        if (
-                len(self.completed_ids) == self._batch_size * self._decode_size
-        ) or (batch_dict['train_prev_inds'].shape[1] == t + 1):
+        if (len(self.completed_ids) == self._batch_size * self._decode_size) or (
+            batch_dict["train_prev_inds"].shape[1] == t + 1
+        ):
             # Save completed sequences!
-            batch_dict['complete_seqs'] = batch_dict['train_prev_inds'][self.completed_ids, :]
+            batch_dict["complete_seqs"] = batch_dict["train_prev_inds"][
+                self.completed_ids, :
+            ]
             finish = True
 
         return finish, batch_dict, 0

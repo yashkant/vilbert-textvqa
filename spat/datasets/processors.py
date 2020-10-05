@@ -192,9 +192,9 @@ class FastTextProcessor:
         self.PAD_INDEX = 0
         self.PAD_TOKEN = "<pad>"
 
-
     def _load_fasttext_model(self, model_file):
         from fasttext import load_model
+
         self.model = load_model(model_file)
         # String to Vector
         self.stov = WordToVectorDict(self.model)
@@ -219,7 +219,11 @@ class FastTextProcessor:
         indices = self._map_strings_to_indices(item["tokens"])
         # pad tokens
         tokens, length = _pad_tokens(item["tokens"], self.PAD_TOKEN, self.max_length)
-        return {"padded_token_indices": indices, "padded_tokens": tokens, "length": length}
+        return {
+            "padded_token_indices": indices,
+            "padded_tokens": tokens,
+            "length": length,
+        }
 
 
 class VQAAnswerProcessor(BaseProcessor):
@@ -395,7 +399,7 @@ class VQAAnswerProcessor(BaseProcessor):
 
     def _increase_to_ten(self, tokens):
         while len(tokens) < self.DEFAULT_NUM_ANSWERS:
-            tokens += tokens[:self.DEFAULT_NUM_ANSWERS - len(tokens)]
+            tokens += tokens[: self.DEFAULT_NUM_ANSWERS - len(tokens)]
 
         return tokens
 
@@ -404,12 +408,12 @@ class PhocProcessor:
     """
     Compute PHOC features from text tokens
     """
+
     def __init__(self, config, *args, **kwargs):
         self.max_length = config.max_length
         self.config = config
         self.PAD_INDEX = 0
         self.PAD_TOKEN = "<pad>"
-
 
     def _map_strings_to_indices(self, tokens):
         length = min(len(tokens), self.max_length)
@@ -430,27 +434,33 @@ class PhocProcessor:
     def __call__(self, item):
         indices = self._map_strings_to_indices(item["tokens"])
         tokens, length = _pad_tokens(item["tokens"], self.PAD_TOKEN, self.max_length)
-        return {"padded_phoc_features": indices, "padded_tokens": tokens, "length": length}
+        return {
+            "padded_phoc_features": indices,
+            "padded_tokens": tokens,
+            "length": length,
+        }
 
 
 class CopyProcessor(BaseProcessor):
     """
     Copy boxes from numpy array
     """
+
     def __init__(self, config, *args, **kwargs):
         self.max_length = config.max_length
 
     def __call__(self, item):
         blob = item["blob"]
         final_blob = np.zeros((self.max_length,) + blob.shape[1:], blob.dtype)
-        final_blob[:len(blob)] = blob[:len(final_blob)]
+        final_blob[: len(blob)] = blob[: len(final_blob)]
 
         return {"blob": torch.from_numpy(final_blob)}
 
 
 def SpatialProcessor(pad_obj_ocr_bboxes):
     adj_matrix = build_graph_using_normalized_boxes(
-        pad_obj_ocr_bboxes, distance_threshold=registry.distance_threshold)
+        pad_obj_ocr_bboxes, distance_threshold=registry.distance_threshold
+    )
     return adj_matrix
 
 
@@ -458,6 +468,7 @@ class BertTokenizerProcessor:
     """
     Tokenize a text string with BERT tokenizer, using Tokenizer passed to the dataset.
     """
+
     def __init__(self, config, tokenizer):
         self.max_length = config.max_length
         self.bert_tokenizer = tokenizer
@@ -471,16 +482,19 @@ class BertTokenizerProcessor:
         # [PAD] in self.bert_tokenizer is zero (as checked in assert above)
         token_inds = torch.zeros(self.max_length, dtype=torch.long)
 
-        indices = self.bert_tokenizer.encode(
-            item['question'], add_special_tokens=True)
-        indices = indices[:self.max_length]
-        token_inds[:len(indices)] = torch.tensor(indices)
+        indices = self.bert_tokenizer.encode(item["question"], add_special_tokens=True)
+        indices = indices[: self.max_length]
+        token_inds[: len(indices)] = torch.tensor(indices)
         token_num = torch.tensor(len(indices), dtype=torch.long)
 
         tokens_mask = torch.zeros(self.max_length, dtype=torch.long)
-        tokens_mask[:len(indices)] = 1
+        tokens_mask[: len(indices)] = 1
 
-        results = {'token_inds': token_inds, 'token_num': token_num, "tokens_mask": tokens_mask}
+        results = {
+            "token_inds": token_inds,
+            "token_num": token_num,
+            "tokens_mask": tokens_mask,
+        }
         return results
 
 
@@ -489,23 +503,28 @@ class M4CAnswerProcessor:
     Process a TextVQA answer for iterative decoding in SAM4C.
     # (YK): Modified to activate logits of the same word in ocr/vocabulary in targets.
     """
+
     def __init__(self, config, *args, **kwargs):
 
         if config.vocab_type == "5k":
-            self.answer_vocab = VocabDict(registry["Vocabs"]["vocab5k"], *args, **kwargs)
+            self.answer_vocab = VocabDict(
+                registry["Vocabs"]["vocab5k"], *args, **kwargs
+            )
         elif config.vocab_type == "5k_stvqa":
-            self.answer_vocab = VocabDict(registry["Vocabs"]["vocab5k_stvqa"], *args, **kwargs)
+            self.answer_vocab = VocabDict(
+                registry["Vocabs"]["vocab5k_stvqa"], *args, **kwargs
+            )
         else:
             raise ValueError
 
-        self.PAD_IDX = self.answer_vocab.word2idx('<pad>')
-        self.BOS_IDX = self.answer_vocab.word2idx('<s>')
-        self.EOS_IDX = self.answer_vocab.word2idx('</s>')
+        self.PAD_IDX = self.answer_vocab.word2idx("<pad>")
+        self.BOS_IDX = self.answer_vocab.word2idx("<s>")
+        self.EOS_IDX = self.answer_vocab.word2idx("</s>")
         self.UNK_IDX = self.answer_vocab.UNK_INDEX
 
-        registry.PAD_IDX = self.answer_vocab.word2idx('<pad>')
-        registry.BOS_IDX = self.answer_vocab.word2idx('<s>')
-        registry.EOS_IDX = self.answer_vocab.word2idx('</s>')
+        registry.PAD_IDX = self.answer_vocab.word2idx("<pad>")
+        registry.BOS_IDX = self.answer_vocab.word2idx("<s>")
+        registry.EOS_IDX = self.answer_vocab.word2idx("</s>")
         registry.UNK_IDX = self.answer_vocab.UNK_INDEX
         registry.answer_vocab = self.answer_vocab
 
@@ -540,9 +559,7 @@ class M4CAnswerProcessor:
             # match answer word to OCR
             # we put OCR after the fixed vocabulary in the answer index space
             # so add num_vocab offset to the OCR index
-            matched_inds.extend(
-                [num_vocab + idx for idx in ocr2inds_dict[word]]
-            )
+            matched_inds.extend([num_vocab + idx for idx in ocr2inds_dict[word]])
             if len(matched_inds) == 0:
                 return []
             answer_word_matches.append(matched_inds)
@@ -553,8 +570,7 @@ class M4CAnswerProcessor:
         idx_seq_list = [()]
         for matched_inds in answer_word_matches:
             idx_seq_list = [
-                seq + (idx,)
-                for seq in idx_seq_list for idx in matched_inds
+                seq + (idx,) for seq in idx_seq_list for idx in matched_inds
             ]
             if len(idx_seq_list) > max_match_num:
                 idx_seq_list = idx_seq_list[:max_match_num]
@@ -569,7 +585,7 @@ class M4CAnswerProcessor:
 
     def __call__(self, item):
         answers = item["answers"]
-        item["context_tokens"] = item["context_tokens"][:self.max_ocr_tokens]
+        item["context_tokens"] = item["context_tokens"][: self.max_ocr_tokens]
         assert len(answers) == self.num_answers
         assert len(self.answer_vocab) == len(self.answer_vocab.word2idx_dict)
 
@@ -580,9 +596,7 @@ class M4CAnswerProcessor:
         for idx, unique_answer in enumerate(unique_answers):
             accs = []
             for gt_answer in gt_answers:
-                other_answers = [
-                    item for item in gt_answers if item != gt_answer
-                ]
+                other_answers = [item for item in gt_answers if item != gt_answer]
                 matching_answers = [
                     item for item in other_answers if item[1] == unique_answer
                 ]
@@ -595,9 +609,7 @@ class M4CAnswerProcessor:
 
         # Step 2: fill the first step soft scores for tokens
         scores = torch.zeros(
-            self.max_copy_steps,
-            self.get_vocab_size(),
-            dtype=torch.float
+            self.max_copy_steps, self.get_vocab_size(), dtype=torch.float
         )
 
         # match answers to fixed vocabularies and OCR tokens.
@@ -607,7 +619,8 @@ class M4CAnswerProcessor:
         answer_dec_inds = [
             self.match_answer_to_vocab_ocr_seq(
                 a, self.answer_vocab.word2idx_dict, ocr2inds_dict
-            ) for a in answers
+            )
+            for a in answers
         ]
 
         # Collect all the valid decoding sequences for each answer.
@@ -629,6 +642,7 @@ class M4CAnswerProcessor:
                     scores[0, score_idx] = max(scores[0, score_idx], score)
                 except:
                     import pdb
+
                     pdb.set_trace()
 
         # train_prev_inds is the previous prediction indices in auto-regressive
@@ -641,13 +655,13 @@ class M4CAnswerProcessor:
         if len(all_idx_seq_list) > 0:
             # sample a random decoding answer sequence for teacher-forcing
             idx_seq = all_idx_seq_list[np.random.choice(len(all_idx_seq_list))]
-            dec_step_num = min(1+len(idx_seq), self.max_copy_steps)
-            train_loss_mask[:dec_step_num] = 1.
-            train_acc_mask[:dec_step_num-1] = 1.
+            dec_step_num = min(1 + len(idx_seq), self.max_copy_steps)
+            train_loss_mask[:dec_step_num] = 1.0
+            train_acc_mask[: dec_step_num - 1] = 1.0
 
             train_prev_inds[0] = self.BOS_IDX
             for t in range(1, dec_step_num):
-                train_prev_inds[t] = idx_seq[t-1]
+                train_prev_inds[t] = idx_seq[t - 1]
                 score_idx = idx_seq[t] if t < len(idx_seq) else self.EOS_IDX
                 # if item["question_id"] == 35909:
                 #     import pdb
@@ -655,23 +669,25 @@ class M4CAnswerProcessor:
                 # this means step 1:N have only one non-zero index
                 # this means there will be no case with EOS_IDX_SCORE and OTHER score non-zero together!
                 # gather indices from both ocr/vocabulary for the same word!
-                all_indices = self.get_all_indices(ocr2inds_dict, item["context_tokens"], score_idx)
+                all_indices = self.get_all_indices(
+                    ocr2inds_dict, item["context_tokens"], score_idx
+                )
                 assert self.UNK_IDX not in all_indices
 
                 for idx in all_indices:
-                    scores[t, idx] = 1.
+                    scores[t, idx] = 1.0
 
                 # scores[t, score_idx] = 1.
         else:
             idx_seq = ()
 
         answer_info = {
-            'answers': answers,
-            'targets': scores,
+            "answers": answers,
+            "targets": scores,
             # 'sampled_idx_seq': [train_prev_inds.new(idx_seq)],
-            'train_prev_inds': train_prev_inds,
-            'train_loss_mask': train_loss_mask,
-            'train_acc_mask': train_acc_mask,
+            "train_prev_inds": train_prev_inds,
+            "train_loss_mask": train_loss_mask,
+            "train_acc_mask": train_acc_mask,
         }
         return answer_info
 
@@ -685,7 +701,7 @@ class M4CAnswerProcessor:
                 return_indices.append(vocab_idx)
         else:
             word = self.answer_vocab.idx2word(score_idx)
-            ocr_indices = [x+len(self.answer_vocab) for x in ocr2indices[word]]
+            ocr_indices = [x + len(self.answer_vocab) for x in ocr2indices[word]]
             return_indices.extend(ocr_indices)
 
         return return_indices
@@ -737,5 +753,3 @@ class Processors:
     def word_cleaner_lower(word):
         word = word.lower()
         return word.strip()
-
-

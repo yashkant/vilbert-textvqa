@@ -11,9 +11,7 @@ from tqdm import tqdm
 from spat.datasets.metrics import TextVQAAccuracyEvaluator, STVQAANLSEvaluator
 
 from tools.registry import registry
-from spat.task_utils import (
-    forward_model
-)
+from spat.task_utils import forward_model
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -24,19 +22,11 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# eval_df_paths = {
-#     "textvqa_val": "data/evaluation/tvqa_eval_df.pkl",
-#     "textvqa_test": "data/evaluation/tvqa_eval_df_test.pkl",
-#     "stvqa_val": "data/evaluation/stvqa_eval_df.pkl",
-#     "stvqa_test": "data/evaluation/stvqa_eval_df_test.pkl",
-# }
-
 vqa_evaluator = TextVQAAccuracyEvaluator()
 anls_evaluator = STVQAANLSEvaluator()
 
 
 class Evaluator:
-
     def __init__(self, checkpoint_path, model, dataloaders, task):
         self.vocabs = {}
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -50,8 +40,10 @@ class Evaluator:
         self.load_vocabs()
 
     def load_vocabs(self):
-        for task, vocab_path in zip(["textvqa", "stvqa"],
-                        [registry["Vocabs"]["vocab5k"], registry["Vocabs"]["vocab5k_stvqa"]]):
+        for task, vocab_path in zip(
+            ["textvqa", "stvqa"],
+            [registry["Vocabs"]["vocab5k"], registry["Vocabs"]["vocab5k_stvqa"]],
+        ):
             vocab = []
             with open(vocab_path) as f:
                 for line in f.readlines():
@@ -63,50 +55,67 @@ class Evaluator:
         eval_df = pd.read_pickle(registry["Evaluation"][eval_df_key])
         logger.info(f"Processing split: {split}")
         predictions = self.run_model(beam_size, split, short_eval=True)
-        predictions['complete_seqs'] = np.concatenate( [x.reshape(-1, 12) for x in predictions['complete_seqs'][0].cpu()], axis=0).tolist()
-        predictions['topkscores'] = np.concatenate([predictions['topkscores'][0].cpu()], axis=0).tolist()
-        predictions['question_id'] = np.concatenate([predictions['question_id'][0].cpu()], axis=0).tolist()
+        predictions["complete_seqs"] = np.concatenate(
+            [x.reshape(-1, 12) for x in predictions["complete_seqs"][0].cpu()], axis=0
+        ).tolist()
+        predictions["topkscores"] = np.concatenate(
+            [predictions["topkscores"][0].cpu()], axis=0
+        ).tolist()
+        predictions["question_id"] = np.concatenate(
+            [predictions["question_id"][0].cpu()], axis=0
+        ).tolist()
 
-        if 'answers' not in eval_df:
+        if "answers" not in eval_df:
             eval_df["answers"] = [["none"] * 10] * len((eval_df["question_id"]))
 
         # Compute VQA and ANLS accuracies
-        results_df = pd.DataFrame.from_dict(predictions, orient='columns')
-        accuracies_vqa = evaluate_predictions(eval_df, results_df, self.vocabs[self.task], acc_type="vqa")
-        accuracies_anls = evaluate_predictions(eval_df, results_df, self.vocabs[self.task], acc_type="anls")
+        results_df = pd.DataFrame.from_dict(predictions, orient="columns")
+        accuracies_vqa = evaluate_predictions(
+            eval_df, results_df, self.vocabs[self.task], acc_type="vqa"
+        )
+        accuracies_anls = evaluate_predictions(
+            eval_df, results_df, self.vocabs[self.task], acc_type="anls"
+        )
 
         # Log results on validation set
         if "test" not in split:
             logger.info(
                 "{} Accuracy: {} for {} questions, split {}, dataset {}".format(
                     "vqa",
-                    accuracies_vqa['vqa_accuracy'],
-                    accuracies_vqa['accuracies_df'].shape,
+                    accuracies_vqa["vqa_accuracy"],
+                    accuracies_vqa["accuracies_df"].shape,
                     split,
-                    self.task)
+                    self.task,
+                )
             )
 
             logger.info(
                 "{} Accuracy: {} for {} questions, split {}, dataset {}".format(
                     "anls",
-                    accuracies_anls['vqa_accuracy'],
-                    accuracies_anls['accuracies_df'].shape,
+                    accuracies_anls["vqa_accuracy"],
+                    accuracies_anls["accuracies_df"].shape,
                     split,
-                    self.task)
+                    self.task,
+                )
             )
 
-        evalai_file = os.path.join(os.path.dirname(self.checkpoint_path), f'evalai_{split}_beam_{beam_size}.json')
+        evalai_file = os.path.join(
+            os.path.dirname(self.checkpoint_path),
+            f"evalai_{split}_beam_{beam_size}.json",
+        )
         # df_file_vqa = os.path.join(os.path.dirname(self.checkpoint_path), f'dataframe_vqa_{split}_beam_{beam_size}.df')
         # df_file_anls = os.path.join(os.path.dirname(self.checkpoint_path), f'dataframe_anls_{split}_beam_{beam_size}.df')
 
         # EvalAI/ST-VQA file
         answer_dict = []
-        for i, pred in accuracies_vqa['best_result_df'].iterrows():
-            answer_dict.append({
-                'question_id': pred['question_id'],
-                'answer': pred['pred_answer'].strip()
-            })
-        with open(evalai_file, 'w') as f:
+        for i, pred in accuracies_vqa["best_result_df"].iterrows():
+            answer_dict.append(
+                {
+                    "question_id": pred["question_id"],
+                    "answer": pred["pred_answer"].strip(),
+                }
+            )
+        with open(evalai_file, "w") as f:
             json.dump(answer_dict, f)
         print(f"Dumping file: {evalai_file}")
 
@@ -119,17 +128,19 @@ class Evaluator:
         self.model.module.set_beam_size(beam_size)
 
         predictions = {
-            'question_id': [],
-            'topkscores': [],
-            'complete_seqs': [],
+            "question_id": [],
+            "topkscores": [],
+            "complete_seqs": [],
             # 'ocr_tokens': []
         }
         self.model.eval()
         with torch.no_grad():
             for batch in tqdm(self.dataloaders[split], desc="Beam Search Evaluation"):
                 # Batch is updated inside the method, no outputs are needed
-                forward_model(None, self.device, self.model, batch_dict=batch, beam_search=True)
-                save_keys = ['question_id', 'topkscores', 'complete_seqs']
+                forward_model(
+                    None, self.device, self.model, batch_dict=batch, beam_search=True
+                )
+                save_keys = ["question_id", "topkscores", "complete_seqs"]
                 for key in save_keys:
                     predictions[key].append(batch[key])
                 break
@@ -148,15 +159,17 @@ class Evaluator:
                 checkpoint_dict[attr] = checkpoint["model_state_dict"][attr]
 
         checkpoint_epoch = int(checkpoint["epoch_id"]) + 1
-        logger.info(f"Restoring Checkpoint: {self.checkpoint_path}; Epoch: {checkpoint_epoch}")
+        logger.info(
+            f"Restoring Checkpoint: {self.checkpoint_path}; Epoch: {checkpoint_epoch}"
+        )
         self.model.load_state_dict(checkpoint_dict)
 
 
 def vqa_calculate(batch_dict, vocab):
-    pred_answers = batch_dict['pred_answers']
+    pred_answers = batch_dict["pred_answers"]
     ocr_tokens_enc = batch_dict["ocr_tokens"]
     gt_answers_enc = batch_dict["answers"]
-    topkscores = batch_dict['topkscores']
+    topkscores = batch_dict["topkscores"]
     answer_space_size = len(vocab)
 
     predictions = []
@@ -172,41 +185,43 @@ def vqa_calculate(batch_dict, vocab):
                 answer_id -= answer_space_size
                 answer_words.append(context_tokens[answer_id])
             else:
-                if answer_id == registry['EOS_IDX']:
+                if answer_id == registry["EOS_IDX"]:
                     belongs_to.append("vocab+eos")
                     break
                 belongs_to.append("vocab")
                 answer_words.append(vocab[answer_id])
 
-        answer = ' '.join(answer_words).replace(" 's", "'s")
+        answer = " ".join(answer_words).replace(" 's", "'s")
         gt_answers = gt_answers_enc[idx]
 
-        predictions.append({
-            "question_id": question_id,
-            "gt_answers": gt_answers,
-            "pred_answer": answer,
-            "belongs_to": belongs_to,
-            "answer_words": answer_words,
-            "topkscores": topkscores,
-            "pred_ids": pred_answers
-        })
+        predictions.append(
+            {
+                "question_id": question_id,
+                "gt_answers": gt_answers,
+                "pred_answer": answer,
+                "belongs_to": belongs_to,
+                "answer_words": answer_words,
+                "topkscores": topkscores,
+                "pred_ids": pred_answers,
+            }
+        )
 
     accuracy, pred_scores = vqa_evaluator.eval_pred_list(predictions)
     return {
-        'question_id': predictions[0]['question_id'],
-        'accuracy': accuracy,
-        'pred_answer': predictions[0]['pred_answer'],
-        'belongs_to': predictions[0]['belongs_to'],
-        'answer_words': predictions[0]['answer_words'],
-        'topkscores': predictions[0]['topkscores']
+        "question_id": predictions[0]["question_id"],
+        "accuracy": accuracy,
+        "pred_answer": predictions[0]["pred_answer"],
+        "belongs_to": predictions[0]["belongs_to"],
+        "answer_words": predictions[0]["answer_words"],
+        "topkscores": predictions[0]["topkscores"],
     }
 
 
 def anls_calculate(batch_dict, vocab):
-    pred_answers = batch_dict['pred_answers']
+    pred_answers = batch_dict["pred_answers"]
     ocr_tokens_enc = batch_dict["ocr_tokens"]
     gt_answers_enc = batch_dict["answers"]
-    topkscores = batch_dict['topkscores']
+    topkscores = batch_dict["topkscores"]
     answer_space_size = len(vocab)
 
     predictions = []
@@ -223,38 +238,41 @@ def anls_calculate(batch_dict, vocab):
                 answer_id -= answer_space_size
                 answer_words.append(context_tokens[answer_id])
             else:
-                if answer_id == registry['EOS_IDX']:
+                if answer_id == registry["EOS_IDX"]:
                     belongs_to.append("vocab+eos")
                     break
                 belongs_to.append("vocab")
                 answer_words.append(vocab[answer_id])
 
-        answer = ' '.join(answer_words).replace(" 's", "'s")
+        answer = " ".join(answer_words).replace(" 's", "'s")
         gt_answers = gt_answers_enc[idx]
 
-        predictions.append({
-            "question_id": question_id,
-            "gt_answers": gt_answers,
-            "pred_answer": answer,
-            "belongs_to": belongs_to,
-            "answer_words": answer_words,
-            "topkscores": topkscores,
-            "pred_ids": pred_answers
-        })
+        predictions.append(
+            {
+                "question_id": question_id,
+                "gt_answers": gt_answers,
+                "pred_answer": answer,
+                "belongs_to": belongs_to,
+                "answer_words": answer_words,
+                "topkscores": topkscores,
+                "pred_ids": pred_answers,
+            }
+        )
 
     try:
         accuracy, pred_scores = anls_evaluator.eval_pred_list(predictions)
     except:
         import pdb
+
         pdb.set_trace()
 
     return {
-        'question_id': predictions[0]['question_id'],
-        'accuracy': accuracy,
-        'pred_answer': predictions[0]['pred_answer'],
-        'belongs_to': predictions[0]['belongs_to'],
-        'answer_words': predictions[0]['answer_words'],
-        'topkscores': predictions[0]['topkscores']
+        "question_id": predictions[0]["question_id"],
+        "accuracy": accuracy,
+        "pred_answer": predictions[0]["pred_answer"],
+        "belongs_to": predictions[0]["belongs_to"],
+        "answer_words": predictions[0]["answer_words"],
+        "topkscores": predictions[0]["topkscores"],
     }
 
 
@@ -270,7 +288,7 @@ def evaluate_predictions(eval_df, results_df, vocab, acc_type="vqa", tokens_from
     for i in range(results_df.shape[0]):
         re = results_df.iloc[i]
         question_id = re.question_id
-        vd = eval_df[eval_df['question_id'] == question_id].iloc[0]
+        vd = eval_df[eval_df["question_id"] == question_id].iloc[0]
 
         tokens_key = "ocr_tokens_y"
         if tokens_key not in eval_df:
@@ -283,11 +301,11 @@ def evaluate_predictions(eval_df, results_df, vocab, acc_type="vqa", tokens_from
             tokens = vd[tokens_key]
 
         batch = {
-            'question_id': re.question_id,
-            'answers': [vd.answers],
-            'ocr_tokens': [tokens],
-            'topkscores': [re.topkscores],
-            'pred_answers': np.array([re.complete_seqs[1:]])
+            "question_id": re.question_id,
+            "answers": [vd.answers],
+            "ocr_tokens": [tokens],
+            "topkscores": [re.topkscores],
+            "pred_answers": np.array([re.complete_seqs[1:]]),
         }
 
         calculate_result = calculate(batch, vocab)
@@ -298,18 +316,16 @@ def evaluate_predictions(eval_df, results_df, vocab, acc_type="vqa", tokens_from
     accuracies_df = pd.DataFrame(predictions)
     best_result = []
     oracle_accuracies = 0.0
-    for qid, row in accuracies_df.groupby('question_id'):
+    for qid, row in accuracies_df.groupby("question_id"):
         idx = np.argmax(row.topkscores)
         # idx = np.random.randint(row.topkscores.shape[0])
         oracle_accuracies += row.accuracy.tolist()[idx]
         best_result.append(row.iloc[idx])
 
     best_result_df = pd.DataFrame(best_result)
-    mean_acc = oracle_accuracies / accuracies_df['question_id'].unique().shape[0]
+    mean_acc = oracle_accuracies / accuracies_df["question_id"].unique().shape[0]
     return {
         "vqa_accuracy": mean_acc,
         "accuracies_df": accuracies_df,
-        "best_result_df": best_result_df
+        "best_result_df": best_result_df,
     }
-
-

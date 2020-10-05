@@ -5,6 +5,7 @@ import pickle
 import torch
 from torch import nn
 
+
 class Identity(nn.Module):
     def __init__(self, **kwargs):
         super(Identity, self).__init__()

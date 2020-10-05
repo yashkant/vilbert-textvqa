@@ -31,7 +31,7 @@ def bb_intersection_over_union(boxA, boxB):
 
 
 def torch_broadcast_adj_matrix(adj_matrix):
-    """ broudcast spatial relation graph
+    """broudcast spatial relation graph
 
     # (YK): Changed to work on single-instance as well
 
@@ -46,9 +46,9 @@ def torch_broadcast_adj_matrix(adj_matrix):
 
     """
     result = torch.zeros_like(adj_matrix).unsqueeze(-1).repeat(1, 1, 12)
-    _indices = (adj_matrix-1)*(adj_matrix > 0)
+    _indices = (adj_matrix - 1) * (adj_matrix > 0)
     result.scatter_(2, _indices.long().unsqueeze(-1), 1)
-    result[:, :, 0] = result[:, :, 0]*(adj_matrix > 0)
+    result[:, :, 0] = result[:, :, 0] * (adj_matrix > 0)
     return result
 
 
@@ -63,7 +63,6 @@ def _build_replace_dict():
         "72": {},
         "91": {},
         "92": {},
-
     }
 
     for quad in [4, 5, 6, 7, 8, 9, 10, 11]:
@@ -79,16 +78,7 @@ def _build_replace_dict():
         share_replace_dict["91"][quad] = quad + 4
         share_replace_dict["92"][quad] = quad - 4
 
-    adjust_sectors = {
-        0: 8,
-        1: 9,
-        2: 10,
-        3: 11,
-        12: 4,
-        13: 5,
-        14: 6,
-        15: 7
-    }
+    adjust_sectors = {0: 8, 1: 9, 2: 10, 3: 11, 12: 4, 13: 5, 14: 6, 15: 7}
 
     for _, value in share_replace_dict.items():
         for key, val in value.items():
@@ -99,8 +89,10 @@ def _build_replace_dict():
     return share_replace_dict
 
 
-def build_graph_using_normalized_boxes(bbox, label_num=11, distance_threshold=0.5, build_gauss_bias=False):
-    """ Build spatial graph
+def build_graph_using_normalized_boxes(
+    bbox, label_num=11, distance_threshold=0.5, build_gauss_bias=False
+):
+    """Build spatial graph
     Args:
         bbox: [num_boxes, 4]
     Returns:
@@ -148,12 +140,21 @@ def build_graph_using_normalized_boxes(bbox, label_num=11, distance_threshold=0.
             if sum(bbB) == 0:
                 continue
             # class 1: inside (j inside i)
-            if xmin[i] < xmin[j] and xmax[i] > xmax[j] and ymin[i] < ymin[j] and ymax[i] > ymax[j]:
+            if (
+                xmin[i] < xmin[j]
+                and xmax[i] > xmax[j]
+                and ymin[i] < ymin[j]
+                and ymax[i] > ymax[j]
+            ):
                 adj_matrix_shared["1"][i, j] = 1  # covers
                 adj_matrix_shared["1"][j, i] = 2  # inside
             # class 2: cover (j covers i)
-            elif (xmin[j] < xmin[i] and xmax[j] > xmax[i] and
-                  ymin[j] < ymin[i] and ymax[j] > ymax[i]):
+            elif (
+                xmin[j] < xmin[i]
+                and xmax[j] > xmax[i]
+                and ymin[j] < ymin[i]
+                and ymax[j] > ymax[i]
+            ):
                 adj_matrix_shared["1"][i, j] = 2
                 adj_matrix_shared["1"][j, i] = 1
             else:
@@ -188,17 +189,24 @@ def build_graph_using_normalized_boxes(bbox, label_num=11, distance_threshold=0.
                             label_j = label_i - math.pi
                         # goes from [1-8] + 3 -> [4-11]
                         # if (adj_matrix_shared["1"][i, j] > 0):
-                        adj_matrix_shared["1"][i, j] = int(np.ceil(label_i / (math.pi / 4))) + 3
-                        adj_matrix_shared["1"][j, i] = int(np.ceil(label_j / (math.pi / 4))) + 3
+                        adj_matrix_shared["1"][i, j] = (
+                            int(np.ceil(label_i / (math.pi / 4))) + 3
+                        )
+                        adj_matrix_shared["1"][j, i] = (
+                            int(np.ceil(label_j / (math.pi / 4))) + 3
+                        )
 
                         # fill in share spatial-matrices
                         for key in adj_matrix_shared.keys():
                             if key != "1":
-                                adj_matrix_shared[key][i, j] = share_replace_dict[key].get(adj_matrix_shared["1"][i, j], 0)
-                                adj_matrix_shared[key][j, i] = share_replace_dict[key].get(adj_matrix_shared["1"][j, i], 0)
+                                adj_matrix_shared[key][i, j] = share_replace_dict[
+                                    key
+                                ].get(adj_matrix_shared["1"][i, j], 0)
+                                adj_matrix_shared[key][j, i] = share_replace_dict[
+                                    key
+                                ].get(adj_matrix_shared["1"][j, i], 0)
 
     for key in adj_matrix_shared.keys():
         adj_matrix_shared[key] = adj_matrix_shared[key].astype(np.int8)
 
     return adj_matrix_shared
-

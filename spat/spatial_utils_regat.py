@@ -31,7 +31,7 @@ def bb_intersection_over_union(boxA, boxB):
 
 
 def build_graph_using_normalized_boxes(bbox, label_num=11, distance_threshold=0.5):
-    """ Build spatial graph
+    """Build spatial graph
     Args:
         bbox: [num_boxes, 4]
     Returns:
@@ -69,12 +69,21 @@ def build_graph_using_normalized_boxes(bbox, label_num=11, distance_threshold=0.
             if sum(bbB) == 0:
                 continue
             # class 1: inside (j inside i)
-            if xmin[i] < xmin[j] and xmax[i] > xmax[j] and ymin[i] < ymin[j] and ymax[i] > ymax[j]:
+            if (
+                xmin[i] < xmin[j]
+                and xmax[i] > xmax[j]
+                and ymin[i] < ymin[j]
+                and ymax[i] > ymax[j]
+            ):
                 adj_matrix[i, j] = 1  # covers
                 adj_matrix[j, i] = 2  # inside
             # class 2: cover (j covers i)
-            elif (xmin[j] < xmin[i] and xmax[j] > xmax[i] and
-                  ymin[j] < ymin[i] and ymax[j] > ymax[i]):
+            elif (
+                xmin[j] < xmin[i]
+                and xmax[j] > xmax[i]
+                and ymin[j] < ymin[i]
+                and ymax[j] > ymax[i]
+            ):
                 adj_matrix[i, j] = 2
                 adj_matrix[j, i] = 1
             else:
@@ -114,9 +123,8 @@ def build_graph_using_normalized_boxes(bbox, label_num=11, distance_threshold=0.
     return adj_matrix
 
 
-def torch_broadcast_adj_matrix(adj_matrix, label_num=11,
-                               device=torch.device("cuda")):
-    """ broudcast spatial relation graph
+def torch_broadcast_adj_matrix(adj_matrix, label_num=11, device=torch.device("cuda")):
+    """broudcast spatial relation graph
 
     # (YK): Changed to work on single-instance as well
 
@@ -151,7 +159,6 @@ def _build_replace_dict():
         "72": {},
         "91": {},
         "92": {},
-
     }
 
     for quad in [4, 5, 6, 7, 8, 9, 10, 11]:
@@ -167,16 +174,7 @@ def _build_replace_dict():
         share_replace_dict["91"][quad] = quad + 4
         share_replace_dict["92"][quad] = quad - 4
 
-    adjust_sectors = {
-        0: 8,
-        1: 9,
-        2: 10,
-        3: 11,
-        12: 4,
-        13: 5,
-        14: 6,
-        15: 7
-    }
+    adjust_sectors = {0: 8, 1: 9, 2: 10, 3: 11, 12: 4, 13: 5, 14: 6, 15: 7}
 
     for _, value in share_replace_dict.items():
         for key, val in value.items():
@@ -187,8 +185,10 @@ def _build_replace_dict():
     return share_replace_dict
 
 
-def build_graph_using_normalized_boxes_new(bbox, label_num=11, distance_threshold=0.5, build_shared=[1, 3, 5, 7, 9]):
-    """ Build spatial graph
+def build_graph_using_normalized_boxes_new(
+    bbox, label_num=11, distance_threshold=0.5, build_shared=[1, 3, 5, 7, 9]
+):
+    """Build spatial graph
     Args:
         bbox: [num_boxes, 4]
     Returns:
@@ -235,12 +235,21 @@ def build_graph_using_normalized_boxes_new(bbox, label_num=11, distance_threshol
             if sum(bbB) == 0:
                 continue
             # class 1: inside (j inside i)
-            if xmin[i] < xmin[j] and xmax[i] > xmax[j] and ymin[i] < ymin[j] and ymax[i] > ymax[j]:
+            if (
+                xmin[i] < xmin[j]
+                and xmax[i] > xmax[j]
+                and ymin[i] < ymin[j]
+                and ymax[i] > ymax[j]
+            ):
                 adj_matrix[i, j] = 1  # covers
                 adj_matrix[j, i] = 2  # inside
             # class 2: cover (j covers i)
-            elif (xmin[j] < xmin[i] and xmax[j] > xmax[i] and
-                  ymin[j] < ymin[i] and ymax[j] > ymax[i]):
+            elif (
+                xmin[j] < xmin[i]
+                and xmax[j] > xmax[i]
+                and ymin[j] < ymin[i]
+                and ymax[j] > ymax[i]
+            ):
                 adj_matrix[i, j] = 2
                 adj_matrix[j, i] = 1
             else:
@@ -280,8 +289,12 @@ def build_graph_using_normalized_boxes_new(bbox, label_num=11, distance_threshol
 
                         # fill in share spatial-matrices
                         for key in adj_matrix_shared.keys():
-                            adj_matrix_shared[key][i, j] = share_replace_dict[key].get(adj_matrix[i, j], 0)
-                            adj_matrix_shared[key][j, i] = share_replace_dict[key].get(adj_matrix[j, i], 0)
+                            adj_matrix_shared[key][i, j] = share_replace_dict[key].get(
+                                adj_matrix[i, j], 0
+                            )
+                            adj_matrix_shared[key][j, i] = share_replace_dict[key].get(
+                                adj_matrix[j, i], 0
+                            )
 
     for key in adj_matrix_shared.keys():
         adj_matrix_shared[key] = adj_matrix_shared[key].astype(np.int8)
@@ -300,7 +313,9 @@ def random_spatial_processor(pad_obj_ocr_bboxes):
     for matrix, _randomize in zip([adj_matrix_random1, adj_matrix_random3], randomize):
         for row in range(matrix.shape[0]):
             for col in range(matrix.shape[1]):
-                random_indices = np.random.choice(spatial_relations_types, size=_randomize, replace=False)
+                random_indices = np.random.choice(
+                    spatial_relations_types, size=_randomize, replace=False
+                )
                 # remove none-edges
                 if 0 not in random_indices:
                     matrix[row][col] = random_indices
@@ -314,12 +329,12 @@ def random_spatial_processor(pad_obj_ocr_bboxes):
     return adj_matrix_random1.astype(np.int8), adj_matrix_random3.astype(np.int8)
 
 
-def torch_extract_position_embedding(position_mat, feat_dim, wave_length=1000,
-                                     device=torch.device("cuda")):
+def torch_extract_position_embedding(
+    position_mat, feat_dim, wave_length=1000, device=torch.device("cuda")
+):
     # position_mat, [batch_size,num_rois, nongt_dim, 4]
     feat_range = torch.arange(0, feat_dim / 8)
-    dim_mat = torch.pow(torch.ones((1,)) * wave_length,
-                        (8. / feat_dim) * feat_range)
+    dim_mat = torch.pow(torch.ones((1,)) * wave_length, (8.0 / feat_dim) * feat_range)
     dim_mat = dim_mat.view(1, 1, 1, -1).to(device)
     position_mat = torch.unsqueeze(100.0 * position_mat, dim=4)
     div_mat = torch.div(position_mat.to(device), dim_mat)
@@ -328,13 +343,14 @@ def torch_extract_position_embedding(position_mat, feat_dim, wave_length=1000,
     # embedding, [batch_size,num_rois, nongt_dim, 4, feat_dim/4]
     embedding = torch.cat([sin_mat, cos_mat], -1)
     # embedding, [batch_size,num_rois, nongt_dim, feat_dim]
-    embedding = embedding.view(embedding.shape[0], embedding.shape[1],
-                               embedding.shape[2], feat_dim)
+    embedding = embedding.view(
+        embedding.shape[0], embedding.shape[1], embedding.shape[2], feat_dim
+    )
     return embedding
 
 
 def torch_extract_position_matrix(bbox, nongt_dim=36):
-    """ Extract position matrix
+    """Extract position matrix
 
     Args:
         bbox: [batch_size, num_boxes, 4]
@@ -374,29 +390,41 @@ def torch_extract_position_matrix(bbox, nongt_dim=36):
     return position_matrix
 
 
-def prepare_graph_variables(relation_type, bb, sem_adj_matrix, spa_adj_matrix,
-                            num_objects, nongt_dim, pos_emb_dim, spa_label_num,
-                            sem_label_num, device):
+def prepare_graph_variables(
+    relation_type,
+    bb,
+    sem_adj_matrix,
+    spa_adj_matrix,
+    num_objects,
+    nongt_dim,
+    pos_emb_dim,
+    spa_label_num,
+    sem_label_num,
+    device,
+):
     pos_emb_var, sem_adj_matrix_var, spa_adj_matrix_var = None, None, None
     if relation_type == "spatial":
         assert spa_adj_matrix.dim() > 2, "Found spa_adj_matrix of wrong shape"
         spa_adj_matrix = spa_adj_matrix.to(device)
         spa_adj_matrix = spa_adj_matrix[:, :num_objects, :num_objects]
         spa_adj_matrix = torch_broadcast_adj_matrix(
-            spa_adj_matrix, label_num=spa_label_num, device=device)
+            spa_adj_matrix, label_num=spa_label_num, device=device
+        )
         spa_adj_matrix_var = Variable(spa_adj_matrix).to(device)
     if relation_type == "semantic":
         assert sem_adj_matrix.dim() > 2, "Found sem_adj_matrix of wrong shape"
         sem_adj_matrix = sem_adj_matrix.to(device)
         sem_adj_matrix = sem_adj_matrix[:, :num_objects, :num_objects]
         sem_adj_matrix = torch_broadcast_adj_matrix(
-            sem_adj_matrix, label_num=sem_label_num, device=device)
+            sem_adj_matrix, label_num=sem_label_num, device=device
+        )
         sem_adj_matrix_var = Variable(sem_adj_matrix).to(device)
     else:
         # (YK): Todo what's this here?
         bb = bb.to(device)
         pos_mat = torch_extract_position_matrix(bb, nongt_dim=nongt_dim)
         pos_emb = torch_extract_position_embedding(
-            pos_mat, feat_dim=pos_emb_dim, device=device)
+            pos_mat, feat_dim=pos_emb_dim, device=device
+        )
         pos_emb_var = Variable(pos_emb).to(device)
     return pos_emb_var, sem_adj_matrix_var, spa_adj_matrix_var
