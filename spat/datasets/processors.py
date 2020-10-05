@@ -75,11 +75,11 @@ from collections import defaultdict
 import numpy as np
 import torch
 
-from tools.registry import registry
 from spat.spatial_utils import build_graph_using_normalized_boxes
+from tools.registry import registry
 
-from .textvqa_vocab import VocabDict
 from ..phoc import build_phoc
+from .textvqa_vocab import VocabDict
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 from easydict import EasyDict as edict

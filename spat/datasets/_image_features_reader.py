@@ -2,17 +2,17 @@
 
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
-import os
-
-from typing import List
-import csv
-import h5py
-import numpy as np
-import copy
-import pickle
-import lmdb  # install lmdb by "pip install lmdb"
 import base64
+import copy
+import csv
+import os
 import pdb
+import pickle
+from typing import List
+
+import h5py
+import lmdb  # install lmdb by "pip install lmdb"
+import numpy as np
 
 
 def splitall(path):

@@ -6,14 +6,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from pytorch_transformers.tokenization_bert import BertTokenizer
 from torch.optim import Adam
-from torch.optim.lr_scheduler import (
-    LambdaLR,
-)
-from torch.utils.data import DataLoader, RandomSampler, ConcatDataset
+from torch.optim.lr_scheduler import LambdaLR
+from torch.utils.data import ConcatDataset, DataLoader, RandomSampler
 
-from tools.registry import registry
 from spat.datasets import DatasetMapTrain
-from spat.datasets.metrics import TextVQAAccuracy, STVQAAccuracy
+from spat.datasets.metrics import STVQAAccuracy, TextVQAAccuracy
+from tools.registry import registry
 
 logger = logging.getLogger(__name__)
 

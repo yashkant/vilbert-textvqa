@@ -2,6 +2,7 @@
 # https://github.com/pytorch/fairseq/blob/master/fairseq/distributed_utils.py
 
 import pickle
+
 import torch
 
 MAX_SIZE_LIMIT = 65533

@@ -12,15 +12,10 @@ from easydict import EasyDict as edict
 from tqdm import tqdm
 
 from evaluator import Evaluator
+from spat.sa_m4c import SAM4C, BertConfig
+from spat.task_utils import (clip_gradients, forward_model,
+                             get_optim_scheduler, load_datasets)
 from tools.registry import registry
-from spat.sa_m4c import BertConfig, SAM4C
-
-from spat.task_utils import (
-    forward_model,
-    clip_gradients,
-    get_optim_scheduler,
-    load_datasets,
-)
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",

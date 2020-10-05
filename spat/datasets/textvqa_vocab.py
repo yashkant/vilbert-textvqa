@@ -1,8 +1,9 @@
 import os
 import re
-import torch
-from itertools import chain
 from collections import Counter
+from itertools import chain
+
+import torch
 
 
 def load_str_list(fname):

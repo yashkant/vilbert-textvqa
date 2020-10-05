@@ -8,10 +8,9 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from spat.datasets.metrics import TextVQAAccuracyEvaluator, STVQAANLSEvaluator
-
-from tools.registry import registry
+from spat.datasets.metrics import STVQAANLSEvaluator, TextVQAAccuracyEvaluator
 from spat.task_utils import forward_model
+from tools.registry import registry
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",

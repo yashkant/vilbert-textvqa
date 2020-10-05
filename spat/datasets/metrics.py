@@ -1,9 +1,11 @@
-import torch
-from tools.registry import registry
-from tools.objects_to_byte_tensor import enc_obj2bytes, dec_bytes2obj
-import re
-import numpy as np
 import os
+import re
+
+import numpy as np
+import torch
+
+from tools.objects_to_byte_tensor import dec_bytes2obj, enc_obj2bytes
+from tools.registry import registry
 
 
 class TextVQAAccuracy:

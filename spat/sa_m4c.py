@@ -1,21 +1,18 @@
 import functools
-import math
-import torch
 import logging
-from torch import nn
-import torch.nn.functional as F
+import math
 from collections import Counter
-from pytorch_transformers.modeling_bert import (
-    BertLayerNorm,
-    BertEmbeddings,
-    BertEncoder,
-    BertConfig,
-    BertPreTrainedModel,
-)
+
+import torch
+import torch.nn.functional as F
+from pytorch_transformers.modeling_bert import (BertConfig, BertEmbeddings,
+                                                BertEncoder, BertLayerNorm,
+                                                BertPreTrainedModel)
+from torch import nn
 
 from spat.beam_search import BeamSearch
-from tools.registry import registry
 from spat.textvqa_encoders import ImageEncoder
+from tools.registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -663,7 +660,8 @@ class SpatialBertAttention(nn.Module):
 class SpatialBertLayer(nn.Module):
     def __init__(self, config, use_implicit=False):
         super(SpatialBertLayer, self).__init__()
-        from pytorch_transformers.modeling_bert import BertIntermediate, BertOutput
+        from pytorch_transformers.modeling_bert import (BertIntermediate,
+                                                        BertOutput)
 
         self.attention = SpatialBertAttention(config, use_implicit)
         self.intermediate = BertIntermediate(config)
@@ -1008,7 +1006,8 @@ class GeLU(nn.Module):
 
 
 try:
-    from apex.normalization.fused_layer_norm import FusedLayerNorm as BertLayerNorm
+    from apex.normalization.fused_layer_norm import \
+        FusedLayerNorm as BertLayerNorm
 except ImportError:
     logger.info(
         "Better speed can be achieved with apex installed from https://www.github.com/nvidia/apex ."
