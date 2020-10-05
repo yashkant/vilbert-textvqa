@@ -4,7 +4,10 @@ We propose a novel spatially aware self-attention layer such that each visual en
 <p align="center">
   <img src="tools/spat-textvqa-large.png">
 </p>
+
+Project Page: https://yashkant.github.io/projects/spat-textvqa.html
 Paper: https://arxiv.org/abs/2007.12146
+
 
 ## Repository Setup
 
