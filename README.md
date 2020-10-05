@@ -25,11 +25,8 @@ conda install pytorch torchvision cudatoolkit=10.0 -c pytorch
 Finally, install apex from: https://github.com/NVIDIA/apex
 
 ## Data Setup
-Download files from the dropbox link and place it in the ``data/`` folder.
-```
-cd data
-bash download.sh
-```
+Download files from the dropbox [link](https://www.dropbox.com/sh/dk6oubjlt2x7w0h/AAAKExm33IKnVe8mkC4tOzUKa) and place it in the ``data/`` folder.
+Ensure that data paths match the directory structure provided in ``data/README.md``
 
 ## Run Experiments
 From the below table pick the suitable configuration file:
