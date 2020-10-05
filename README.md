@@ -1,13 +1,22 @@
 Spatially Aware Multimodal Transformers for TextVQA
 ===================================================
+<h4>
+Yash Kant, Dhruv Batra, Peter Anderson, Alex Schwing, Devi Parikh, Jiasen Lu, Harsh Agrawal
+</br>
+<span style="font-size: 14pt; color: #555555">
+University of Michigan
+</span>
+</h4>
+<hr>
+
+**Paper:** https://arxiv.org/abs/2007.12146
+
+**Project Page:** [kdexd.github.io/virtex](https://kdexd.github.io/virtex)
+
 We propose a novel spatially aware self-attention layer such that each visual entity only looks at neighboring entities defined by a spatial graph and use it to solve TextVQA.
 <p align="center">
   <img src="tools/spat-textvqa-large.png">
 </p>
-
-Project Page: https://yashkant.github.io/projects/spat-textvqa.html 
-
-Paper: https://arxiv.org/abs/2007.12146
 
 
 ## Repository Setup
