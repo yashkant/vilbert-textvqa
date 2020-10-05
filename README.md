@@ -9,9 +9,9 @@ Published at ECCV, 2020
 </h4>
 <hr>
 
-**Paper:** https://arxiv.org/abs/2007.12146
+**Paper:** [arxiv.org/abs/2007.12146](https://arxiv.org/abs/2007.12146)
 
-**Project Page:** [kdexd.github.io/virtex](https://kdexd.github.io/virtex)
+**Project Page:** [yashkant.github.io/projects/spat-textvqa](https://yashkant.github.io/projects/spat-textvqa.html)
 
 We propose a novel spatially aware self-attention layer such that each visual entity only looks at neighboring entities defined by a spatial graph and use it to solve TextVQA.
 <p align="center">
