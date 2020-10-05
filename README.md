@@ -1,7 +1,9 @@
 Spatially Aware Multimodal Transformers for TextVQA
 ===================================================
 We propose a novel spatially aware self-attention layer such that each visual entity only looks at neighboring entities defined by a spatial graph and use it to solve TextVQA.
-
+<p align="center">
+  <img src="spat-textvqa-large.png">
+</p>
 Paper: https://arxiv.org/abs/2007.12146
 
 ## Repository Setup
