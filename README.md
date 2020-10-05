@@ -4,7 +4,7 @@ Spatially Aware Multimodal Transformers for TextVQA
 Yash Kant, Dhruv Batra, Peter Anderson, Alex Schwing, Devi Parikh, Jiasen Lu, Harsh Agrawal
 </br>
 <span style="font-size: 14pt; color: #555555">
-University of Michigan
+Published at ECCV, 2020
 </span>
 </h4>
 <hr>
