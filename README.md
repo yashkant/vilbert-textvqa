@@ -1,80 +1,65 @@
-# Multi-Task Vision and Language Representation Learning (ViLBERT-MT)
+Spatially Aware Multimodal Transformers for TextVQA
+===================================================
+Existing approaches to solve TextVQA are limited in their use of spatial relations and rely on fully-connected transformer-like architectures to implicitly learn the spatial structure of a scene. 
+Rather, we propose a novel spatially aware self-attention layer such that each visual entity only looks at neighboring entities defined by a spatial graph. 
+Each head in our multi-head self-attention layer focuses on a different subset of relations.
 
-Code and pre-trained models for [12-in-1: Multi-Task Vision and Language Representation Learning](https://arxiv.org/abs/1912.02315):
-
-```
-@article{lu201912,
-  title={12-in-1: Multi-Task Vision and Language Representation Learning},
-  author={Lu, Jiasen and Goswami, Vedanuj and Rohrbach, Marcus and Parikh, Devi and Lee, Stefan},
-  journal={arXiv preprint arXiv:1912.02315},
-  year={2019}
-}
-```
-
-and [ViLBERT: Pretraining Task-Agnostic Visiolinguistic Representations for Vision-and-Language Tasks](https://arxiv.org/abs/1908.02265):
-
-```
-@inproceedings{lu2019vilbert,
-  title={Vilbert: Pretraining task-agnostic visiolinguistic representations for vision-and-language tasks},
-  author={Lu, Jiasen and Batra, Dhruv and Parikh, Devi and Lee, Stefan},
-  booktitle={Advances in Neural Information Processing Systems},
-  pages={13--23},
-  year={2019}
-}
-```
 
 ## Repository Setup
 
-1. Create a fresh conda environment, and install all dependencies.
+Create a fresh conda environment, and install all dependencies.
 
 ```text
-conda create -n vilbert-mt python=3.6
-conda activate vilbert-mt
-git clone --recursive https://github.com/facebookresearch/vilbert-multi-task.git
-cd vilbert-multi-task
+conda create -n spat python=3.6
+conda activate spat
+cd spat-textvqa
 pip install -r requirements.txt
 ```
 
-2. Install pytorch
+Install pytorch
 ```
 conda install pytorch torchvision cudatoolkit=10.0 -c pytorch
 ```
 
-3. Install apex, follows https://github.com/NVIDIA/apex
-
-4. Install this codebase as a package in this environment.
-```text
-python setup.py develop
-```
+Finally, install apex from :https://github.com/NVIDIA/apex
 
 ## Data Setup
-
-Check `README.md` under `data` for more details.  
-
-## Visiolinguistic Pre-training and Multi Task Training
-
-### Pretraining on Conceptual Captions
-
+Run the download script to get features and dataset files.
 ```
-python train_concap.py --bert_model bert-base-uncased --config_file config/bert_base_6layer_6conect.json --train_batch_size 512 --objective 1 --file_path <path_to_extracted_cc_features>
-```
-[Download link](https://dl.fbaipublicfiles.com/vilbert-multi-task/pretrained_model.bin)
-
-### Multi-task Training
-
-```
-python train_tasks.py --bert_model bert-base-uncased --from_pretrained <pretrained_model_path> --config_file config/bert_base_6layer_6conect.json --tasks 1-2-4-7-8-9-10-11-12-13-15-17 --lr_scheduler 'warmup_linear' --train_iter_gap 4 --task_specific_tokens --save_name multi_task_model
+cd data
+bash download.sh
 ```
 
-[Download link](https://dl.fbaipublicfiles.com/vilbert-multi-task/multi_task_model.bin)
+## Run Experiments
+From the below table pick the suitable configuration file:
 
+ | Method  |  context (c)   |  Train splits   |  Evaluation Splits  | Config File|
+ | ------- | ------ | ------ | ------ | ------ |
+ | SA-M4C  | 3 | TextVQA | TextVQA | train-tvqa-eval-tvqa-c3.yml |
+ | SA-M4C  | 3 | TextVQA + STVQA | TextVQA | train-tvqa_stvqa-eval-tvqa-c3.yml |
+ | SA-M4C  | 3 | STVQA | STVQA | train-stvqa-eval-stvqa-c3.yml |
+ | SA-M4C  | 5 | TextVQA | TextVQA | train-tvqa-eval-tvqa-c5.yml |
 
-### Fine-tune from Multi-task trained model
-
+To run the experiments use:
 ```
-python train_tasks.py --bert_model bert-base-uncased --from_pretrained <multi_task_model_path> --config_file config/bert_base_6layer_6conect.json --tasks 1 --lr_scheduler 'warmup_linear' --train_iter_gap 4 --task_specific_tokens --save_name finetune_from_multi_task_model
+python train.py \
+--config config.yml \
+--tag experiment-name
 ```
- 
+
+## Citation
+Cite this work as:
+```
+@article{Kant2020SpatiallyAM,
+  title={Spatially Aware Multimodal Transformers for TextVQA},
+  author={Yash Kant and Dhruv Batra and Peter Anderson and A. Schwing and D. Parikh and Jiasen Lu and Harsh Agrawal},
+  journal={ArXiv},
+  year={2020},
+  volume={abs/2007.12146}
+}
+```
+
+
+
 ## License
-
-vilbert-multi-task is licensed under MIT license available in [LICENSE](LICENSE) file.
+BSD

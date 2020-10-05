@@ -38,16 +38,9 @@ MANIFEST
 # Datasets and preprocessed files
 data/
 save/
-logs/
-results/
-datasets/
-
-# Checkpoints directory
-checkpoints/
 
 # IPython Notebook
 .ipynb_checkpoints
 
 .vscode/
-datasets
 wandb
