@@ -1,9 +1,8 @@
 Spatially Aware Multimodal Transformers for TextVQA
 ===================================================
-Existing approaches to solve TextVQA are limited in their use of spatial relations and rely on fully-connected transformer-like architectures to implicitly learn the spatial structure of a scene. 
-Rather, we propose a novel spatially aware self-attention layer such that each visual entity only looks at neighboring entities defined by a spatial graph. 
-Each head in our multi-head self-attention layer focuses on a different subset of relations.
+We propose a novel spatially aware self-attention layer such that each visual entity only looks at neighboring entities defined by a spatial graph and use it to solve TextVQA.
 
+Paper: https://arxiv.org/abs/2007.12146
 
 ## Repository Setup
 
@@ -21,10 +20,10 @@ Install pytorch
 conda install pytorch torchvision cudatoolkit=10.0 -c pytorch
 ```
 
-Finally, install apex from :https://github.com/NVIDIA/apex
+Finally, install apex from: https://github.com/NVIDIA/apex
 
 ## Data Setup
-Run the download script to get features and dataset files.
+Download files from the dropbox link and place it in the ``data/`` folder.
 ```
 cd data
 bash download.sh
@@ -59,7 +58,16 @@ Cite this work as:
 }
 ```
 
+## Acknowledgements
+Parts of this codebase were borrowed from the following repositories:
+- [12-in-1: Multi-Task Vision and Language Representation Learning](https://github.com/facebookresearch/vilbert-multi-task): Training Setup
+- [MMF: A multimodal framework for vision and language research](https://github.com/facebookresearch/mmf/): Dataset processors and M4C model
+
+We thank <a href="https://abhishekdas.com/">Abhishek Das</a> and <a href="https://amoudgl.github.io/">Abhinav Moudgil</a> for their feedback. 
+The Georgia Tech effort was supported in part by NSF, AFRL, DARPA, ONR YIPs, ARO PECASE, Amazon. 
+The views and conclusions contained herein are those of the authors and should not be interpreted
+ as necessarily representing the official policies or endorsements, either expressed or implied, of the U.S. Government, or any sponsor.
 
 
 ## License
-BSD
+MIT

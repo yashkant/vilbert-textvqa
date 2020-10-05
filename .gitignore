@@ -1,13 +1,7 @@
-save
-save/
-jlogs/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
-*.so
 
 # Distribution / packaging
 .Python
@@ -36,11 +30,10 @@ MANIFEST
 .mypy_cache
 
 # Datasets and preprocessed files
-data/
 save/
+.vscode/
+wandb
 
 # IPython Notebook
 .ipynb_checkpoints
 
-.vscode/
-wandb

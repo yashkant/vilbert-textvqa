@@ -3,17 +3,17 @@ loss: textvqa
 
 
 # TextVQA
-textvqa_obj: "/srv/share/ykant3/tvqa-release/textvqa/tvqa_{}_obj.lmdb"
-textvqa_ocr: "/srv/share/ykant3/tvqa-release/textvqa/tvqa_{}_ocr.lmdb"
-textvqa_spatial_cache: "/srv/share/ykant3/tvqa-release/textvqa/tvqa_{}_spat_cache_reset.pkl"
-textvqa_imdb: "/srv/share/ykant3/tvqa-release/textvqa/tvqa_{}_imdb.npy"
+textvqa_obj: "data/textvqa/tvqa_{}_obj.lmdb"
+textvqa_ocr: "data/textvqa/tvqa_{}_ocr.lmdb"
+textvqa_spatial_cache: "data/textvqa/tvqa_{}_spat_cache_reset.pkl"
+textvqa_imdb: "data/textvqa/tvqa_{}_imdb.npy"
 
 
 # STVQA
-stvqa_obj: "/srv/share/ykant3/tvqa-release/stvqa/stvqa_{}_obj.lmdb"
-stvqa_ocr: "/srv/share/ykant3/tvqa-release/stvqa/stvqa_{}_ocr.lmdb"
-stvqa_spatial_cache: "/srv/share/ykant3/tvqa-release/stvqa/stvqa_{}_spat_cache_reset.pkl"
-stvqa_imdb: "/srv/share/ykant3/tvqa-release/stvqa/stvqa_{}_imdb.npy"
+stvqa_obj: "data/stvqa/stvqa_{}_obj.lmdb"
+stvqa_ocr: "data/stvqa/stvqa_{}_ocr.lmdb"
+stvqa_spatial_cache: "data/stvqa/stvqa_{}_spat_cache_reset.pkl"
+stvqa_imdb: "data/stvqa/stvqa_{}_imdb.npy"
 
 max_seq_length: 20
 max_obj_num: 100 # object features + avg feature
@@ -89,12 +89,12 @@ TextBERT:
 
 
 Vocabs:
-  vocab5k: "/srv/share/ykant3/tvqa-release/vocabs/fixed_answer_vocab_textvqa_5k.txt"
-  vocab5k_stvqa: "/srv/share/ykant3/tvqa-release/vocabs/fixed_answer_vocab_stvqa_5k.txt"
+  vocab5k: "data/vocabs/fixed_answer_vocab_textvqa_5k.txt"
+  vocab5k_stvqa: "data/vocabs/fixed_answer_vocab_stvqa_5k.txt"
 
 
 Evaluation:
-  textvqa_val: "/srv/share/ykant3/tvqa-release/evaluation/tvqa_eval_df.pkl"
-  textvqa_test: "/srv/share/ykant3/tvqa-release/evaluation/tvqa_eval_df_test.pkl"
-  stvqa_val: "/srv/share/ykant3/tvqa-release/evaluation/stvqa_eval_df.pkl"
-  stvqa_test: "/srv/share/ykant3/tvqa-release/evaluation/stvqa_eval_df_test.pkl"
+  textvqa_val: "data/evaluation/tvqa_eval_df.pkl"
+  textvqa_test: "data/evaluation/tvqa_eval_df_test.pkl"
+  stvqa_val: "data/evaluation/stvqa_eval_df.pkl"
+  stvqa_test: "data/evaluation/stvqa_eval_df_test.pkl"
