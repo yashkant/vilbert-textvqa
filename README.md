@@ -5,8 +5,8 @@
 Create a fresh conda environment and install all dependencies.
 
 ```text
-conda create -n vqa-cc python=3.6
-conda activate vqa-cc
+conda create -n concat python=3.6
+conda activate concat
 cd code
 pip install -r requirements.txt
 ```
@@ -15,8 +15,6 @@ Install PyTorch and CUDA tooklt.
 ```
 conda install pytorch torchvision cudatoolkit=10.0 -c pytorch
 ```
-
-Install apex from :https://github.com/NVIDIA/apex
 
 ## Data Setup
 Check `README.md` under `data-release` for more details.  
@@ -29,13 +27,13 @@ We provide commands to run both the baseline and ConCAT experiments.
 To train the baseline experiment with only Cross Entropy on train set use:
 ```
 python train.py \
---task_file configs/baseline/baseline-train.yml  \
+--task_file configs/baseline-train.yml  \
 --tag baseline-train \      # output folder
 ```
 To train the baseline experiment with only Cross Entropy on train +val set use:
 ```
 python train.py \
---task_file configs/baseline/baseline-trainval.yml  \
+--task_file configs/baseline-trainval.yml  \
 --tag baseline-trainval \      # output folder
 ```
 
@@ -43,13 +41,13 @@ python train.py \
 To train with ConCAT alternate training on train set use:
 ```
 python train.py \
---task_file configs/baseline/concat-train.yml  \
+--task_file configs/concat-train.yml  \
 --tag concat-train \      # output folder
 ```
 To train with ConCAT alternate training on train+val set use:
 ```
 python train.py \
---task_file configs/baseline/concat-trainval.yml  \
+--task_file configs/concat-trainval.yml  \
 --tag concat-trainval \      # output folder
 ```
 
