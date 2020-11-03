@@ -42,16 +42,16 @@ def create_entry(question, answer):
     return entry
 
 
-def filter_aug(questions_list, answers_list):
+def filter_aug(questions_list, answers_list, num_rephrasings):
     questions, answers = [], []
-    max_samples = registry.aug_filter["num_rephrasings"]
+    max_samples = max(num_rephrasings, registry.aug_filter["num_rephrasings"])
     sim_threshold = registry.aug_filter["sim_threshold"]
     assert len(questions_list) == len(answers_list)
 
     for idx, (que_list, ans_list) in tqdm(
         enumerate(zip(questions_list, answers_list)),
         total=len(questions_list),
-        desc="Filtering Data",
+        desc=f"Filtering Data w/ max_samples {max_samples}",
     ):
 
         assert len(que_list) == len(ans_list)
@@ -79,6 +79,8 @@ def filter_aug(questions_list, answers_list):
                 que["rephrasing_of"] = min_qid
             else:
                 assert min_qid == que["rephrasing_of"]
+                if max_samples == 1:
+                    assert min_qid == que["question_id"]
 
         # add them to main list
         questions.extend(que_list)
@@ -110,7 +112,7 @@ def rephrasings_dict(split, questions):
     print(f"Built dictionary: question_rephrase_dict_{split}")
 
 
-def load_qa(name, sort=True, use_filter=False, set_dict=False):
+def load_qa(name, sort=True, use_filter=False, set_dict=False, num_rephrasings=-1):
     split_path_dict = {
         "train_aug": [
             "data-release/splits/questions_train_aug.pkl",
@@ -168,7 +170,7 @@ def load_qa(name, sort=True, use_filter=False, set_dict=False):
         answers = sorted(answers, key=lambda x: x["question_id"])
 
     if use_filter:
-        questions, answers = filter_aug(questions, answers)
+        questions, answers = filter_aug(questions, answers, num_rephrasings)
 
     if set_dict:
         rephrasings_dict(split, questions)
@@ -194,7 +196,7 @@ def load_entries(name):
         questions, answers = load_qa(name, sort=False, use_filter=False, set_dict=True)
 
     elif name == "revqa_bt":
-        val_questions, val_answers = load_qa("val_aug", sort=False, use_filter=True)
+        val_questions, val_answers = load_qa("val_aug", sort=False, use_filter=True, num_rephrasings=4)
         dump_path = "data-release/splits/non_overlap_ids.npy"
         non_overlap_ids = np.load(dump_path, allow_pickle=True)
         questions, answers = [], []

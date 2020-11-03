@@ -23,8 +23,11 @@ class ScaledSupConLoss(torch.nn.Module):
         self.contrast_mode = contrast_mode
         self.base_temperature = base_temperature
         self.formulation = formulation
+        # do not use intra-class positives
+        self.use_labels = registry["num_positives"] > 0
         logger.info(
-            f"SCL Loss Formulation: {self.formulation} w/ BT: {base_temperature} and T: {temperature}"
+            f"SCL Loss Formulation: {self.formulation} w/ BT: {base_temperature} and T: {temperature} "
+            f"| Use labels: {self.use_labels}"
         )
 
     def set_formulation(self, formulation):
@@ -51,7 +54,10 @@ class ScaledSupConLoss(torch.nn.Module):
         )
 
         # targets for the batch is the one with highest score
-        labels = batch_dict[0]["target"].argmax(dim=-1).view(-1, 1)
+        if self.use_labels:
+            labels = batch_dict[0]["target"].argmax(dim=-1).view(-1, 1)
+        else:
+            labels = None
 
         # samples without an answer cannot work as anchor points
         mask_samples = (batch_dict[0]["target"].sum(dim=-1) != 0).int()

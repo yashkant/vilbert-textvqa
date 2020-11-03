@@ -93,8 +93,7 @@ class ContrastiveSampler(Sampler):
         self.epoch_idx = int(1e10)
         self.epochs = []
         self.num_positives = self.task_cfg.get("num_positives", -1)
-        if self.num_positives > 0:
-            self.read_annotations()
+        self.read_annotations()
         self.bin_ans_threshold = self.task_cfg.get("bin_ans_threshold", None)
         self.freq_ans_threshold = self.task_cfg.get("freq_ans_threshold", None)
         self.iter_count = 0
@@ -130,6 +129,11 @@ class ContrastiveSampler(Sampler):
 
     def read_annotations(self):
         """Read VQA Annotations to generate question-id -> answer mapping"""
+        self.qid_ans_dict = {}
+
+        if self.num_positives < 1:
+            return
+
         ann_path = [
             "data-release/splits/v2_mscoco_train2014_annotations.json",
             "data-release/splits/v2_mscoco_val2014_annotations.json",
@@ -138,7 +142,6 @@ class ContrastiveSampler(Sampler):
             json.load(open(ann_path[0]))["annotations"]
             + json.load(open(ann_path[1]))["annotations"]
         )
-        self.qid_ans_dict = {}
         for ann in ann_data:
             ans_counter = Counter()
             for ans in ann["answers"]:
@@ -175,7 +178,9 @@ class ContrastiveSampler(Sampler):
                 "iter_idx": 0,
                 "entry_inds": [self.question_map[x] for x in question_ids],
             }
-            self.add_to_answer_map(entry_map_key)
+
+            if self.num_positives > 0:
+                self.add_to_answer_map(entry_map_key)
 
         # post-process: remove duplicates, build sampling weights
         for key in tqdm(

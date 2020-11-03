@@ -130,6 +130,10 @@ def forward_train(device, dataloaders, model, train_type):
     else:
         batch_dicts = get_batch(dataloaders, "train_scl")
 
+    # throw the rephrasings batch
+    if registry["aug_filter"]["num_rephrasings"] == 1:
+        batch_dicts = batch_dicts[:1]
+
     for batch in batch_dicts:
         results_dict = run_model(batch, model, device)
         batch.update(results_dict)
