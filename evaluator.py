@@ -109,6 +109,7 @@ def final_evaluate(
         super(EasyDict, registry).__setattr__("revqa_bt_bins", dd_bt)
         super(EasyDict, registry).__setitem__("revqa_bt_bins", dd_bt)
 
+    model.to(torch.device("cuda"))
     model.eval()
     results = {}
 
@@ -133,49 +134,51 @@ def final_evaluate(
     c_scores, revqa_bins_scores = None, None
     c_scores_bt, revqa_bins_scores_bt = None, None
 
-    if registry.revqa_eval and val_split == "val":
-        cs_results = {}
-        for batch in tqdm(task_dataloader_val["revqa"], desc="Revqa Eval"):
-            with torch.no_grad():  # turn off autograd engine
-                batch_dict = ForwardModelsVal(
-                    None, None, device, task_id, batch, model, task_losses, revqa_eval=True, revqa_split="re_total"
-                )
-                # build the json file here!
-                logits = torch.max(batch_dict["vil_prediction"], 1)[1].data  # argmax
-                for idx in range(logits.size(0)):
-                    cs_results[batch_dict["question_id"][idx].item()] = \
-                        {
-                            "question_id": batch_dict["question_id"][idx].item(),
-                            "answer": task_dataloader_val[task_id].dataset.label2ans[
-                                logits[idx].item()
-                            ],
-                            "vqa_score": np.round(batch_dict["vqa_scores"][idx], 1) if "vqa_scores" in batch_dict else None
-                        }
-        c_scores, revqa_bins_scores = get_consistency_score(results=cs_results, bins_scores=True)
+    # if registry.revqa_eval and val_split == "val":
+    #     cs_results = {}
+    #     for batch in tqdm(task_dataloader_val["revqa"], desc="Revqa Eval"):
+    #         with torch.no_grad():  # turn off autograd engine
+    #             batch_dict = ForwardModelsVal(
+    #                 None, None, device, task_id, batch, model, task_losses, revqa_eval=True, revqa_split="re_total"
+    #             )
+    #             # build the json file here!
+    #             logits = torch.max(batch_dict["vil_prediction"], 1)[1].data  # argmax
+    #             for idx in range(logits.size(0)):
+    #                 cs_results[batch_dict["question_id"][idx].item()] = \
+    #                     {
+    #                         "question_id": batch_dict["question_id"][idx].item(),
+    #                         "answer": task_dataloader_val[task_id].dataset.label2ans[
+    #                             logits[idx].item()
+    #                         ],
+    #                         "vqa_score": np.round(batch_dict["vqa_scores"][idx], 1) if "vqa_scores" in batch_dict else None
+    #                     }
+    #     c_scores, revqa_bins_scores = get_consistency_score(results=cs_results, bins_scores=True)
+    #
+    #     cs_results_bt = {}
+    #     for batch in tqdm(task_dataloader_val["revqa_bt"], desc="Revqa BT Eval"):
+    #         with torch.no_grad():  # turn off autograd engine
+    #             batch_dict = ForwardModelsVal(
+    #                 None, None, device, task_id, batch, model, task_losses, revqa_eval=True, revqa_split="re_total_bt"
+    #             )
+    #             # build the json file here!
+    #             logits = torch.max(batch_dict["vil_prediction"], 1)[1].data  # argmax
+    #             for idx in range(logits.size(0)):
+    #                 cs_results_bt[batch_dict["question_id"][idx].item()] = \
+    #                     {
+    #                         "question_id": batch_dict["question_id"][idx].item(),
+    #                         "answer": task_dataloader_val[task_id].dataset.label2ans[
+    #                             logits[idx].item()
+    #                         ],
+    #                         "vqa_score": np.round(batch_dict["vqa_scores"][idx], 1) if "vqa_scores" in batch_dict else None
+    #                     }
+    #     c_scores_bt, revqa_bins_scores_bt = get_consistency_score(results=cs_results_bt, bins_scores=True, bins_key="revqa_bt_bins")
+    #
+    # elif registry.revqa_eval_on_val and val_split == "val":
+    #     logger.info("Ran re-vqa eval on validation!")
+    #     c_scores, revqa_bins_scores = get_consistency_score(results=results, bins_scores=True)
 
-        cs_results_bt = {}
-        for batch in tqdm(task_dataloader_val["revqa_bt"], desc="Revqa BT Eval"):
-            with torch.no_grad():  # turn off autograd engine
-                batch_dict = ForwardModelsVal(
-                    None, None, device, task_id, batch, model, task_losses, revqa_eval=True, revqa_split="re_total_bt"
-                )
-                # build the json file here!
-                logits = torch.max(batch_dict["vil_prediction"], 1)[1].data  # argmax
-                for idx in range(logits.size(0)):
-                    cs_results_bt[batch_dict["question_id"][idx].item()] = \
-                        {
-                            "question_id": batch_dict["question_id"][idx].item(),
-                            "answer": task_dataloader_val[task_id].dataset.label2ans[
-                                logits[idx].item()
-                            ],
-                            "vqa_score": np.round(batch_dict["vqa_scores"][idx], 1) if "vqa_scores" in batch_dict else None
-                        }
-        c_scores_bt, revqa_bins_scores_bt = get_consistency_score(results=cs_results_bt, bins_scores=True, bins_key="revqa_bt_bins")
-
-    elif registry.revqa_eval_on_val and val_split == "val":
-        logger.info("Ran re-vqa eval on validation!")
-        c_scores, revqa_bins_scores = get_consistency_score(results=results, bins_scores=True)
-
+    import pdb
+    pdb.set_trace()
 
     final_results = {}
     final_results["results"] = results

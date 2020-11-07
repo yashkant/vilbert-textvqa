@@ -39,7 +39,7 @@ from pytorch_transformers.optimization import (
     WarmupLinearSchedule,
 )
 
-from vilbert.losses import NTXentLoss, SCLLoss, SupConLoss
+from vilbert.losses import NTXentLoss, SCLLoss, SupConLoss, TripletLoss, DynamicTripletLoss
 from vilbert.optimization import RAdam
 from tools.registry import registry
 from vilbert.utils import debug_sampler
@@ -53,7 +53,8 @@ LossMap = {
     # "NTXentLoss": NTXentLoss(registry.batch_size),
     "SCLLoss": SupConLoss(temperature=registry.temperature,
                           formulation=registry.scl_formulation,
-                          base_temperature=registry.base_temperature), # using the default parameter setting
+                          base_temperature=registry.base_temperature,
+                          use_2d=registry.get("use_2d", False)), # using the default parameter setting
 }
 
 def clip_gradients(model, max_grad_l2_norm, clip_norm_mode):
@@ -253,8 +254,11 @@ def ForwardModelsTrain(
         dataloader = task_dataloader_train[task_id]
         if task_count[task_id] % len(dataloader) == 0:
             task_iter_train[task_id] = iter(dataloader)
-        task_count[task_id] += 1
         batch_dicts = task_iter_train[task_id].next()
+        epoch_idx = dataloader.sampler.epoch_idx
+        batch_negs = dataloader.sampler.epochs_negs[epoch_idx][task_count[task_id]]
+        batch_dicts[0]["batch_negs"] = batch_negs
+        task_count[task_id] += 1
 
     if not isinstance(batch_dicts, tuple) and not isinstance(batch_dicts, list):
         batch_dicts = [batch_dicts]
@@ -264,7 +268,7 @@ def ForwardModelsTrain(
             # send to gpu
             input_keys = list(batch.keys())
             for key in input_keys:
-                if key in ["image_id", "question_id"]:
+                if key in ["image_id", "question_id", "batch_negs"]:
                     continue
                 if isinstance(batch[key], torch.Tensor):
                     batch[key] = batch[key].cuda(device=device, non_blocking=True)
@@ -272,7 +276,7 @@ def ForwardModelsTrain(
             results_dict = model(batch)
             # delete present batch-inputs (only keep results)
             for key in input_keys:
-                if key in ["image_id", "question_id", "target"]:
+                if key in ["image_id", "question_id", "target", "batch_negs"]:
                     continue
                 else:
                     del batch[key]
@@ -326,7 +330,12 @@ def ForwardModelsTrain(
         losses = []
         # use scl only
         if train_type == "scl":
-            loss, batch_score = task_losses[task_id](batch_dicts)
+            if task_cfg[task_id].get("loss_type", None) == "triplet":
+                loss, batch_score = TripletLoss(batch_dicts)
+            elif task_cfg[task_id].get("loss_type", None) == "dynamic_triplet":
+                loss, batch_score = DynamicTripletLoss(batch_dicts)
+            else:
+                loss, batch_score = task_losses[task_id](batch_dicts)
         else:
             loss, batch_score = add_ce_loss(batch_dicts, device)
 

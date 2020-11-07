@@ -88,6 +88,7 @@ def assert_add_registry(task_cfg, args):
         ("allowed_only", False),
         ("two_norm", False),
         ("freeze_textbert_and_mmt", False),
+        ("use_2d", False),
     ]
 
     for key in add_keys:
@@ -428,58 +429,58 @@ def main():
             print("\n", file=f)
             print(task_cfg, file=f)
 
-    # LOAD DATASETS
-    task_batch_size, task_num_iters, task_ids, task_datasets_train, task_datasets_val, task_dataloader_train, \
-    task_dataloader_val = LoadDatasets(args, task_cfg, args.tasks.split("-"))
+    # # LOAD DATASETS
+    # task_batch_size, task_num_iters, task_ids, task_datasets_train, task_datasets_val, task_dataloader_train, \
+    # task_dataloader_val = LoadDatasets(args, task_cfg, args.tasks.split("-"))
+    #
+    # if registry.sdebug:
+    #     batch_iter = iter(task_dataloader_train["TASK19"])
+    #     batch_dict = batch_iter.next()
+    #     epoch_inds = np.load(registry.sampler_cache_name, allow_pickle=True)[0]
+    #     import pdb
+    #     pdb.set_trace()
+    #
+    #
+    #
+    # logdir = os.path.join(savePath, "logs")
+    # tbLogger = utils.tbLogger(
+    #     logdir,
+    #     savePath,
+    #     task_names,
+    #     task_ids,
+    #     task_num_iters,
+    #     args.gradient_accumulation_steps,
+    # )
 
-    if registry.sdebug:
-        batch_iter = iter(task_dataloader_train["TASK19"])
-        batch_dict = batch_iter.next()
-        epoch_inds = np.load(registry.sampler_cache_name, allow_pickle=True)[0]
-        import pdb
-        pdb.set_trace()
+    # if args.visual_target == 0:
+    #     config.v_target_size = 1601
+    #     config.visual_target = args.visual_target
+    # else:
+    #     config.v_target_size = 2048
+    #     config.visual_target = args.visual_target
+    #
+    # if args.task_specific_tokens:
+    #     config.task_specific_tokens = True
+    #
+    # if not os.path.exists(args.output_dir):
+    #     os.makedirs(args.output_dir)
 
-
-
-    logdir = os.path.join(savePath, "logs")
-    tbLogger = utils.tbLogger(
-        logdir,
-        savePath,
-        task_names,
-        task_ids,
-        task_num_iters,
-        args.gradient_accumulation_steps,
-    )
-
-    if args.visual_target == 0:
-        config.v_target_size = 1601
-        config.visual_target = args.visual_target
-    else:
-        config.v_target_size = 2048
-        config.visual_target = args.visual_target
-
-    if args.task_specific_tokens:
-        config.task_specific_tokens = True
-
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
-
-    task_ave_iter = {}
-    # task_stop_controller = {}
-    for task_id, num_iter in task_num_iters.items():
-        task_ave_iter[task_id] = int(
-            task_cfg[task]["num_epoch"]
-            * num_iter
-            * args.train_iter_multiplier
-            / args.num_train_epochs
-        )
-
-    task_ave_iter_list = sorted(task_ave_iter.values())
-    median_num_iter = task_ave_iter_list[-1]
-    num_train_optimization_steps = (
-            median_num_iter * args.num_train_epochs // args.gradient_accumulation_steps
-    )
-
+    # task_ave_iter = {}
+    # # task_stop_controller = {}
+    # for task_id, num_iter in task_num_iters.items():
+    #     task_ave_iter[task_id] = int(
+    #         task_cfg[task]["num_epoch"]
+    #         * num_iter
+    #         * args.train_iter_multiplier
+    #         / args.num_train_epochs
+    #     )
+    #
+    # task_ave_iter_list = sorted(task_ave_iter.values())
+    # median_num_iter = task_ave_iter_list[-1]
+    # num_train_optimization_steps = (
+    #         median_num_iter * args.num_train_epochs // args.gradient_accumulation_steps
+    # )
+    #
     # LOAD PRETRAINED VILBERT
     if args.baseline:
         # (YK): Single-stream baseline model of ViLBERT
@@ -573,73 +574,73 @@ def main():
     logger.info(f"Training Parameters: {trainable_params}")
     # LOAD LOSSES
     task_losses = LoadLosses(args, task_cfg, args.tasks.split("-"))
-
-    # Turned of weight-decay and fine-tune stuff in ViLBERT!
-    if "m4c" not in model_type:
-        optimizer_grouped_parameters = []
-        for key, value in dict(model.named_parameters()).items():
-            if value.requires_grad:
-                lr = base_lr
-                optimizer_grouped_parameters += [
-                    {"params": [value], "lr": lr, "weight_decay": 0.0}
-                ]
-    else:
-        optimizer_grouped_parameters = model.get_optimizer_parameters(base_lr)
-
-    if default_gpu:
-        print(len(list(model.named_parameters())), len(optimizer_grouped_parameters))
-
-    optimizer, warmup_scheduler, lr_scheduler, lr_scheduler_config, warmpu_steps = get_optim_scheduler(
-        args, task_cfg, optimizer_grouped_parameters, num_train_optimization_steps, base_lr, median_num_iter
-    )
-
-    startIterID = 0
-    global_step = 0
-    start_epoch = 0
-
-    # for finetuning we need resume-file
-    if task_cfg["TASK19"].get("contrastive", None) == "finetune":
-        assert args.resume_file != ""
-
-    if args.resume_file != "" and os.path.exists(args.resume_file):
-        logger.info(f"Resuming from Checkpoint: {args.resume_file}")
-        checkpoint = torch.load(args.resume_file, map_location="cpu")
-        new_dict = {}
-        for attr in checkpoint["model_state_dict"]:
-            if attr.startswith("module."):
-                new_dict[attr.replace("module.", "", 1)] = checkpoint[
-                    "model_state_dict"
-                ][attr]
-            else:
-                new_dict[attr] = checkpoint["model_state_dict"][attr]
-
-        if registry.freeze_textbert_and_mmt:
-            model.load_state_dict(new_dict, strict=False)
-            trainable_params = [p.numel() for p in model.parameters() if p.requires_grad]
-            trainable_params = sum(trainable_params)
-            logger.info(f"Training Parameters: {trainable_params}")
-        else:
-            model.load_state_dict(new_dict)
-
-        if task_cfg["TASK19"].get("load_state", False):
-            print("Loading Optimizer and Scheduler States")
-            warmup_scheduler.load_state_dict(checkpoint["warmup_scheduler_state_di  ct"])
-            # lr_scheduler.load_state_dict(checkpoint['lr_scheduler_state_dict'])
-            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-            global_step = checkpoint["global_step"]
-            start_epoch = int(checkpoint["epoch_id"]) + 1
-            # task_stop_controller = checkpoint["task_stop_controller"]
-            tbLogger = checkpoint["tb_logger"]
-        else:
-            print("Not loading optimizer and scheduler states")
-        del checkpoint
-    model.to(device)
-
-    for state in optimizer.state.values():
-        for k, v in state.items():
-            if torch.is_tensor(v):
-                state[k] = v.cuda()
-
+    #
+    # # Turned of weight-decay and fine-tune stuff in ViLBERT!
+    # if "m4c" not in model_type:
+    #     optimizer_grouped_parameters = []
+    #     for key, value in dict(model.named_parameters()).items():
+    #         if value.requires_grad:
+    #             lr = base_lr
+    #             optimizer_grouped_parameters += [
+    #                 {"params": [value], "lr": lr, "weight_decay": 0.0}
+    #             ]
+    # else:
+    #     optimizer_grouped_parameters = model.get_optimizer_parameters(base_lr)
+    #
+    # if default_gpu:
+    #     print(len(list(model.named_parameters())), len(optimizer_grouped_parameters))
+    #
+    # optimizer, warmup_scheduler, lr_scheduler, lr_scheduler_config, warmpu_steps = get_optim_scheduler(
+    #     args, task_cfg, optimizer_grouped_parameters, num_train_optimization_steps, base_lr, median_num_iter
+    # )
+    #
+    # startIterID = 0
+    # global_step = 0
+    # start_epoch = 0
+    #
+    # # for finetuning we need resume-file
+    # if task_cfg["TASK19"].get("contrastive", None) == "finetune":
+    #     assert args.resume_file != ""
+    #
+    # if args.resume_file != "" and os.path.exists(args.resume_file):
+    #     logger.info(f"Resuming from Checkpoint: {args.resume_file}")
+    #     checkpoint = torch.load(args.resume_file, map_location="cpu")
+    #     new_dict = {}
+    #     for attr in checkpoint["model_state_dict"]:
+    #         if attr.startswith("module."):
+    #             new_dict[attr.replace("module.", "", 1)] = checkpoint[
+    #                 "model_state_dict"
+    #             ][attr]
+    #         else:
+    #             new_dict[attr] = checkpoint["model_state_dict"][attr]
+    #
+    #     if registry.freeze_textbert_and_mmt:
+    #         model.load_state_dict(new_dict, strict=False)
+    #         trainable_params = [p.numel() for p in model.parameters() if p.requires_grad]
+    #         trainable_params = sum(trainable_params)
+    #         logger.info(f"Training Parameters: {trainable_params}")
+    #     else:
+    #         model.load_state_dict(new_dict)
+    #
+    #     if task_cfg["TASK19"].get("load_state", False):
+    #         print("Loading Optimizer and Scheduler States")
+    #         warmup_scheduler.load_state_dict(checkpoint["warmup_scheduler_state_di  ct"])
+    #         # lr_scheduler.load_state_dict(checkpoint['lr_scheduler_state_dict'])
+    #         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    #         global_step = checkpoint["global_step"]
+    #         start_epoch = int(checkpoint["epoch_id"]) + 1
+    #         # task_stop_controller = checkpoint["task_stop_controller"]
+    #         tbLogger = checkpoint["tb_logger"]
+    #     else:
+    #         print("Not loading optimizer and scheduler states")
+    #     del checkpoint
+    # model.to(device)
+    #
+    # for state in optimizer.state.values():
+    #     for k, v in state.items():
+    #         if torch.is_tensor(v):
+    #             state[k] = v.cuda()
+    #
     if args.local_rank != -1:
         try:
             from apex.parallel import DistributedDataParallel as DDP
@@ -651,436 +652,439 @@ def main():
 
     elif n_gpu > 1:
         model = torch.nn.DataParallel(model)
-
-    if default_gpu:
-        print("***** Running training *****")
-        print("  Num Iters: ", task_num_iters)
-        print("  Batch size: ", task_batch_size)
-        print("  Num steps: %d" % num_train_optimization_steps)
-
-    task_iter_train = {name: None for name in task_ids}
-    task_count = {name: 0 for name in task_ids}
-
-    if registry.alt_train:
-        task_iter_train[task_ids[0] + "alt"] = None
-        task_count[task_ids[0] + "alt"] = 0
-
-    if start_epoch >= args.num_train_epochs:
-        logger.info("Resetting Train Epochs to 0")
-        start_epoch = 0
-
-    # This validation score/loss is used for model-saving.
-    best_val_score = 0
-    best_val_loss = np.inf
-    best_val_epoch = 0
-    # grad_dots = []
-    grad_diff = []
-    import time
-    eval_iter_factor = task_cfg["TASK19"].get("eval_iter_factor", 1500)
-
-    # list of (iter, vqa_score, cs_score, cs_score_bt)
-    best_checkpoints = [(-1, -1, -1, -1)]
-    cs_checkpoints = [(-1, -1, -1, -1)]
-    cs_bt_checkpoints = [(-1, -1, -1, -1)]
-
-    ckpts_log_file = os.path.join(savePath, "ckpts.log")
-
-    # TRAINING LOOP
-    for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
-        model.train()
-        for step in tqdm(range(median_num_iter), desc="Iters"):
-
-            if global_step > args.hard_stop:
-                logger.info(f"Breaking w/ hard-stop at {args.hard_stop}")
-                break
-
-            # logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}")
-            start_time = time.time()
-            iterId = startIterID + step + (epochId * median_num_iter)
-            first_task = True
-            for task_id in task_ids:
-                is_forward = True
-                if is_forward:
-
-                    train_type = "ce" if registry.use_freq == "ce" else "scl"
-
-                    if registry.alt_train and registry.use_freq == "ce" \
-                        and iterId % registry.ce_freq == 1:
-                        train_type = "scl"
-
-                    if registry.alt_train and registry.use_freq == "scl" \
-                        and iterId % registry.scl_freq == 1:
-                        train_type = "ce"
-
-                    # print(f"Train Type: {train_type}")
-                    loss, score, losses = ForwardModelsTrain(
-                        args,
-                        task_cfg,
-                        device,
-                        task_id,
-                        task_count,
-                        task_iter_train,
-                        task_dataloader_train,
-                        model,
-                        task_losses,
-                        train_type
-                    )
-                    iter_time = time.time()
-                    # print(f"Iter time: {iter_time - start_time}")
-
-                    if task_cfg["TASK19"].get("pcgrad", False):
-                        # if task_cfg["TASK19"].get("default_double", False):
-                        #     torch.set_default_tensor_type(torch.DoubleTensor)
-
-                        losses[0].backward(retain_graph=True)
-                        l1_grad = [k.grad.clone().view(-1) for k in model.parameters()]
-                        l1_grad = torch.cat(l1_grad)
-                        optimizer.zero_grad()
-                        model.zero_grad()
-                        losses[1].backward(retain_graph=True)
-                        l2_grad = [k.grad.clone().view(-1) for k in model.parameters()]
-                        l2_grad = torch.cat(l2_grad)
-                        l_dot = torch.dot(l1_grad, l2_grad)
-                        # grad_dots.append(float(l_dot))
-                        l2_grad_mag = torch.dot(l2_grad, l2_grad)
-                        l1_grad_mag = torch.dot(l1_grad, l1_grad)
-
-                        # l1: SCL and l2: CE
-                        if l_dot < 0 and task_cfg["TASK19"].get("pcgrad_adjust", True):
-                            l1_proj = (l_dot/l2_grad_mag) * l2_grad
-                            l2_proj = (l_dot/l1_grad_mag) * l1_grad
-
-                            if "scl" in task_cfg["TASK19"]["pcgrad_on"]:
-                                l1_grad = l1_grad - l1_proj
-
-                            if "ce" in task_cfg["TASK19"]["pcgrad_on"]:
-                                l2_grad = l2_grad - l2_proj
-
-                            # assert torch.dot(l1_grad, l2_grad) >= 0
-
-                        l_grad = l1_grad + l2_grad
-                        optimizer.zero_grad()
-                        model.zero_grad()
-                        (losses[0] + losses[1]).backward()
-                        l3_grad = [k.grad.clone().view(-1) for k in model.parameters()]
-                        l3_grad = torch.cat(l3_grad)
-                        grad_diff.append(float((l3_grad - l_grad).sum()))
-
-                        del l1_grad
-                        del l2_grad
-                        del l3_grad
-
-                        prev_sum = 0
-                        for param in model.parameters():
-                            slice_start, slice_end = prev_sum, prev_sum + np.prod(list(param.grad.shape))
-                            param.grad = l_grad[slice_start:slice_end].view_as(param.grad).clone()
-                            prev_sum = slice_end
-
-                        # if task_cfg["TASK19"].get("default_double", False):
-                        #     torch.set_default_tensor_type(torch.FloatTensor)
-
-                    elif task_cfg["TASK19"].get("pcgrad_module", False):
-                        losses[0].backward(retain_graph=True)
-                        l1_grad = [k.grad.clone().view(-1) for k in model.parameters()]
-                        # l1_grad = torch.cat(l1_grad)
-                        optimizer.zero_grad()
-                        model.zero_grad()
-                        losses[1].backward()
-                        l2_grad = [k.grad.clone().view(-1) for k in model.parameters()]
-                        # l2_grad = torch.cat(l2_grad)
-                        # grad_dots.append(float(l_dot))
-
-                        l_grad = []
-                        l_dots = []
-                        l1_grad_mag_mods = []
-                        l2_grad_mag_mods = []
-
-                        # l1: SCL and l2: CE
-                        for l1_mod_grad, l2_mod_grad in zip(l1_grad, l2_grad):
-                            l_mod_dot = torch.dot(l1_mod_grad, l2_mod_grad)
-                            l2_grad_mag = torch.dot(l2_mod_grad, l2_mod_grad)
-                            l1_grad_mag = torch.dot(l1_mod_grad, l1_mod_grad)
-
-                            if l_mod_dot < 0 and task_cfg["TASK19"].get("pcgrad_adjust", True):
-                                l1_proj = (l_mod_dot/l2_grad_mag) * l2_mod_grad
-                                l2_proj = (l_mod_dot/l1_grad_mag) * l1_mod_grad
-
-                                if "scl" in task_cfg["TASK19"]["pcgrad_on"]:
-                                    l1_mod_grad = l1_mod_grad - l1_proj
-
-                                if "ce" in task_cfg["TASK19"]["pcgrad_on"]:
-                                    l2_mod_grad = l2_mod_grad - l2_proj
-
-                            l_grad.append(l1_mod_grad + l2_mod_grad)
-                            l_dots.append(float(l_mod_dot))
-                            l1_grad_mag_mods.append(l1_grad_mag)
-                            l2_grad_mag_mods.append(l2_grad_mag)
-
-
-                        optimizer.zero_grad()
-                        model.zero_grad()
-                        # (losses[0] + losses[1]).backward()
-                        # l3_grad = [k.grad.clone().view(-1) for k in model.parameters()]
-                        # l3_grad = torch.cat(l3_grad)
-                        # grad_diff.append(float((l3_grad - l_grad).sum()))
-
-                        del l1_grad
-                        del l2_grad
-                        # del l3_grad
-
-                        for param, l_g in zip(model.parameters(), l_grad):
-                            param.grad = l_g.view_as(param.grad).clone()
-
-                        l_dot = sum(l_dots)/len(l_dots)
-                        l1_grad_mag = sum(l1_grad_mag_mods)/len(l1_grad_mag_mods)
-                        l2_grad_mag = sum(l2_grad_mag_mods)/len(l2_grad_mag_mods)
-
-                    elif task_cfg["TASK19"].get("step_scl", False):
-                        if iterId > task_cfg["TASK19"].get("scl_start_step", None):
-                            loss.backward()
-                        else:
-                            losses[1].backward()
-
-                    elif task_cfg["TASK19"].get("ramp_scl", False):
-                        ramp_start = task_cfg["TASK19"].get("scl_start_ramp", None)
-                        ramp_stop = task_cfg["TASK19"].get("scl_stop_ramp", None)
-                        if iterId < ramp_start:
-                            losses[1].backward()
-                        elif ramp_stop > iterId > ramp_start:
-                            ramp_loss = losses[1] + ((iterId - ramp_start)/(ramp_stop-ramp_start)) * losses[0]
-                            ramp_loss.backward()
-                        else:
-                            loss.backward()
-
-                    else:
-                        # import pdb
-                        # pdb.set_trace()
-                        #
-                        loss.backward()
-
-                    back_time = time.time()
-                    # print(f"Backward time: {back_time - iter_time}")
-
-
-                    if task_cfg["TASK19"]["grad_clip_mode"] == "all":
-                        clip_gradients(model, task_cfg["TASK19"]["max_grad_norm"], task_cfg["TASK19"]["grad_clip_mode"])
-
-                    optimizer.step()
-                    warmup_scheduler.step()
-                    model.zero_grad()
-                    optimizer.zero_grad()
-                    if first_task:
-                        global_step += 1
-                        first_task = False
-
-                    if train_type == "ce" or (not registry.alt_train):
-                        tbLogger.step_train(
-                            epochId,
-                            iterId,
-                            float(loss),
-                            float(score),
-                            optimizer.param_groups[0]["lr"],
-                            task_id,
-                            "train",
-                            extra_dict={
-                                "grad_dot": l_dot,
-                                "grad_mag_scl": l1_grad_mag,
-                                "grad_mag_ce": l2_grad_mag,
-                            } if (task_cfg["TASK19"].get("pcgrad", False) or
-                                  task_cfg["TASK19"].get("pcgrad_module", False)) else None
-                        )
-
-                    del loss
-                    del score
-                    del losses
-
-            # gc.collect()
-            finish_time = time.time()
-            # print(f"Finish time: {finish_time - back_time}")
-
-            if "cosine" in lr_scheduler_config and global_step > warmpu_steps:
-                lr_scheduler.step()
-
-            if (
-                    step % (20 * args.gradient_accumulation_steps) == 0
-                    and step != 0
-                    and default_gpu
-            ):
-                tbLogger.showLossTrain()
-                logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}, "
-                            # f"Grad Dot: {sum(grad_dots) / len(grad_dots) if len(grad_dots) > 0 else None}, '"
-                            f"Grad Diff: {sum(grad_diff) / len(grad_diff) if len(grad_diff) > 0 else None}")
-                grad_dots, grad_diff = [], []
-
-            # decided whether to evaluate on each tasks.
-            for task_id in task_ids:
-                # don't run validation during debug runs
-                # if task_cfg["TASK19"]["debug"]:
-                #     break
-
-                if (iterId != 0 and iterId % eval_iter_factor == 0) or (
-                        epochId == args.num_train_epochs - 1 and step == median_num_iter - 1
-                ) or (global_step == args.hard_stop and not args.no_eval_last):
-                    logger.info("Starting Validation Run....")
-                    curr_val_score, curr_val_loss, cs_scores, cs_bt_scores = evaluate(
-                        args,
-                        task_dataloader_val,
-                        None,
-                        task_cfg,
-                        device,
-                        task_id,
-                        model,
-                        task_losses,
-                        epochId,
-                        default_gpu,
-                        tbLogger,
-                    )
-
-                    if default_gpu:
-                        # Save a trained model
-                        logger.info("** ** * Saving fine - tuned model ** ** * ")
-                        model_to_save = (
-                            model.module if hasattr(model, "module") else model
-                        )  # Only save the model it-self
-
-                        checkpoint_dict = \
-                            {
-                                    "model_state_dict": model_to_save.state_dict(),
-                                    "optimizer_state_dict": optimizer.state_dict(),
-                                    "warmup_scheduler_state_dict": warmup_scheduler.state_dict(),
-                                    "global_step": global_step,
-                                    "epoch_id": epochId,
-                                    "tb_logger": tbLogger
-                            }
-
-                        if task_cfg["TASK19"].get("monitor_value","val_score") == "val_score" and cs_scores is None:
-                            save_thresh = registry.save_top
-                            top_vqa_scores = [ckpt[1] for ckpt in sorted(best_checkpoints, key=lambda x: x[1])][
-                                             -save_thresh:]
-                            vqa_rank = bisect.bisect(top_vqa_scores, curr_val_score)
-                            checkpoint_dict.update(
-                                {
-                                    "vqa_rank": vqa_rank,
-                                    "vqa_acc": curr_val_score,
-                                }
-                            )
-
-                            if vqa_rank != 0:
-                                logger.info(f"Saving for VQA score w/ rank: {vqa_rank}")
-                                output_checkpoint = os.path.join(savePath, f"vqa_rank_{vqa_rank}.tar")
-                                torch.save(checkpoint_dict, output_checkpoint)
-
-                            logger.info(
-                                f"Current Val Score and Rank: {curr_val_score} / {vqa_rank} | Previous Best Val Scores: {top_vqa_scores}")
-
-                            best_checkpoints.append((global_step, curr_val_score, -1, -1))
-
-                            try:
-                                with open(ckpts_log_file, "w") as outfile:
-                                    dump_str = ""
-                                    for ckpt in best_checkpoints:
-                                        dump_str += f"Ckpt: {ckpt} \n"
-                                    outfile.write(dump_str)
-                                logger.info(f"Dumped File: {ckpts_log_file}")
-                            except:
-                                import pdb
-                                pdb.set_trace()
-                            best_val_score = curr_val_score
-                            best_val_epoch = epochId
-
-                        elif curr_val_loss <= best_val_loss and task_cfg["TASK19"].get("monitor_value",
-                                                                                       "val_loss") == "val_loss" and cs_scores is None:
-                            output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
-                            logger.info(f"Saving Checkpoint: {output_checkpoint}")
-                            logger.info(
-                                f"Current Validation Loss: {curr_val_loss} | Previous Best Validation Loss: {best_val_loss}")
-                            best_val_loss = curr_val_loss
-                            torch.save(checkpoint_dict, output_checkpoint)
-
-                        elif cs_scores is not None:
-                            try:
-                                save_thresh = registry.save_top
-                                curr_cs_score = cs_scores[-1]
-                                curr_cs_bt_score = cs_bt_scores[-1]
-
-                                top_vqa_scores = [ ckpt[1] for ckpt in sorted(best_checkpoints, key=lambda x: x[1])][-save_thresh:]
-                                top_cs_scores = [ ckpt[2] for ckpt in sorted(best_checkpoints, key=lambda x: x[2])][-save_thresh:]
-                                top_cs_bt_scores = [ckpt[3] for ckpt in sorted(best_checkpoints, key=lambda x: x[3])][-save_thresh:]
-
-                                vqa_rank = bisect.bisect(top_vqa_scores, curr_val_score)
-                                cs_rank = bisect.bisect(top_cs_scores, curr_cs_score)
-                                cs_bt_rank = bisect.bisect(top_cs_bt_scores, curr_cs_bt_score)
-
-
-                                logger.info(f"Current Val Score and Rank: {curr_val_score} / {vqa_rank} | Previous Best Val Scores: {top_vqa_scores}")
-                                logger.info(f"Current CS Score and Rank: {curr_cs_score} / {cs_rank} | Previous Best CS Scores: {top_cs_scores}")
-                                logger.info(f"Current CS BT Score and Rank: {curr_cs_bt_score} / {cs_bt_rank} | Previous Best CS BT Scores: {top_cs_bt_scores}")
-
-                                logger.info(f"Top CS checkpoint: {sorted(best_checkpoints, key=lambda x: x[2])[-1]}")
-                                logger.info(f"Top CS BT checkpoint: {sorted(best_checkpoints, key=lambda x: x[3])[-1]}")
-                                logger.info(f"Checkpoint Dir: {savePath}")
-                                checkpoint_dict.update(
-                                    {
-                                        "vqa_rank": vqa_rank,
-                                        "cs_rank": cs_rank,
-                                        "cs_bt_rank": cs_bt_rank,
-                                        "vqa_acc": curr_val_score,
-                                        "cs_score": curr_cs_score,
-                                        "cs_bt_score": curr_cs_bt_score
-                                    }
-                                )
-
-                                if vqa_rank != 0:
-                                    logger.info(f"Saving for VQA score w/ rank: {vqa_rank}")
-                                    output_checkpoint = os.path.join(savePath, f"vqa_rank_{vqa_rank}.tar")
-                                    torch.save(checkpoint_dict, output_checkpoint)
-
-                                if cs_rank != 0:
-                                    logger.info(f"Saving for CS score w/ rank: {cs_rank}")
-                                    output_checkpoint = os.path.join(savePath, f"cs_rank_{cs_rank}.tar")
-                                    torch.save(checkpoint_dict, output_checkpoint)
-
-                                if cs_bt_rank != 0:
-                                    logger.info(f"Saving for CS BT score w/ rank: {cs_bt_rank}")
-                                    output_checkpoint = os.path.join(savePath, f"cs_bt_rank_{cs_bt_rank}.tar")
-                                    torch.save(checkpoint_dict, output_checkpoint)
-
-                                best_checkpoints.append((global_step, curr_val_score, curr_cs_score, curr_cs_bt_score))
-                                cs_checkpoints.append(cs_scores)
-                                cs_bt_checkpoints.append(cs_bt_scores)
-
-                                with open(ckpts_log_file, "w") as outfile:
-                                    dump_str = ""
-                                    assert len(best_checkpoints) == len(cs_bt_checkpoints) == len(cs_checkpoints)
-                                    for ckpt, cs_ckpt, cs_bt_ckpt in zip(best_checkpoints,
-                                                                         cs_checkpoints,
-                                                                         cs_bt_checkpoints):
-                                        dump_str += f"Ckpt: {ckpt} | CS : {cs_ckpt}| CS-BT: {cs_bt_ckpt} \n"
-                                    outfile.write(dump_str)
-                                logger.info(f"Dumped File: {ckpts_log_file}")
-                            except:
-                                import pdb
-                                pdb.set_trace()
-
-            residue_time = time.time()
-            # print(f"Finish time: {residue_time - finish_time}")
-
-        if global_step > args.hard_stop:
-            break
-
-        if lr_scheduler_config == "automatic":
-            lr_scheduler.step(sum(val_scores.values()))
-            logger.info("best average score is %3f" % lr_scheduler.best)
-        elif lr_scheduler_config == "mannul":
-            lr_scheduler.step()
-    # Todo: Add config for final_evaluation splits [re-vqa, val, test]
-
-    tbLogger.txt_close()
+    #
+    # if default_gpu:
+    #     print("***** Running training *****")
+    #     print("  Num Iters: ", task_num_iters)
+    #     print("  Batch size: ", task_batch_size)
+    #     print("  Num steps: %d" % num_train_optimization_steps)
+    #
+    # task_iter_train = {name: None for name in task_ids}
+    # task_count = {name: 0 for name in task_ids}
+    #
+    # if registry.alt_train:
+    #     task_iter_train[task_ids[0] + "alt"] = None
+    #     task_count[task_ids[0] + "alt"] = 0
+    #
+    # if start_epoch >= args.num_train_epochs:
+    #     logger.info("Resetting Train Epochs to 0")
+    #     start_epoch = 0
+    #
+    # # This validation score/loss is used for model-saving.
+    # best_val_score = 0
+    # best_val_loss = np.inf
+    # best_val_epoch = 0
+    # # grad_dots = []
+    # grad_diff = []
+    # import time
+    # eval_iter_factor = task_cfg["TASK19"].get("eval_iter_factor", 1500)
+    #
+    # # list of (iter, vqa_score, cs_score, cs_score_bt)
+    # best_checkpoints = [(-1, -1, -1, -1)]
+    # cs_checkpoints = [(-1, -1, -1, -1)]
+    # cs_bt_checkpoints = [(-1, -1, -1, -1)]
+    #
+    # ckpts_log_file = os.path.join(savePath, "ckpts.log")
+
+    # # TRAINING LOOP
+    # for epochId in tqdm(range(start_epoch, args.num_train_epochs), desc="Epoch"):
+    #     model.train()
+    #     for step in tqdm(range(median_num_iter), desc="Iters"):
+    #
+    #         if global_step > args.hard_stop:
+    #             logger.info(f"Breaking w/ hard-stop at {args.hard_stop}")
+    #             break
+    #
+    #         # logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}")
+    #         start_time = time.time()
+    #         iterId = startIterID + step + (epochId * median_num_iter)
+    #         first_task = True
+    #         for task_id in task_ids:
+    #             is_forward = True
+    #             if is_forward:
+    #
+    #                 train_type = "ce" if registry.use_freq == "ce" else "scl"
+    #
+    #                 if registry.alt_train and registry.use_freq == "ce" \
+    #                     and iterId % registry.ce_freq == 1:
+    #                     train_type = "scl"
+    #
+    #                 if registry.alt_train and registry.use_freq == "scl" \
+    #                     and iterId % registry.scl_freq == 1:
+    #                     train_type = "ce"
+    #
+    #                 # print(f"Train Type: {train_type}")
+    #                 loss, score, losses = ForwardModelsTrain(
+    #                     args,
+    #                     task_cfg,
+    #                     device,
+    #                     task_id,
+    #                     task_count,
+    #                     task_iter_train,
+    #                     task_dataloader_train,
+    #                     model,
+    #                     task_losses,
+    #                     train_type
+    #                 )
+    #                 iter_time = time.time()
+    #                 # print(f"Iter time: {iter_time - start_time}")
+    #
+    #                 if task_cfg["TASK19"].get("pcgrad", False):
+    #                     # if task_cfg["TASK19"].get("default_double", False):
+    #                     #     torch.set_default_tensor_type(torch.DoubleTensor)
+    #
+    #                     losses[0].backward(retain_graph=True)
+    #                     l1_grad = [k.grad.clone().view(-1) for k in model.parameters()]
+    #                     l1_grad = torch.cat(l1_grad)
+    #                     optimizer.zero_grad()
+    #                     model.zero_grad()
+    #                     losses[1].backward(retain_graph=True)
+    #                     l2_grad = [k.grad.clone().view(-1) for k in model.parameters()]
+    #                     l2_grad = torch.cat(l2_grad)
+    #                     l_dot = torch.dot(l1_grad, l2_grad)
+    #                     # grad_dots.append(float(l_dot))
+    #                     l2_grad_mag = torch.dot(l2_grad, l2_grad)
+    #                     l1_grad_mag = torch.dot(l1_grad, l1_grad)
+    #
+    #                     # l1: SCL and l2: CE
+    #                     if l_dot < 0 and task_cfg["TASK19"].get("pcgrad_adjust", True):
+    #                         l1_proj = (l_dot/l2_grad_mag) * l2_grad
+    #                         l2_proj = (l_dot/l1_grad_mag) * l1_grad
+    #
+    #                         if "scl" in task_cfg["TASK19"]["pcgrad_on"]:
+    #                             l1_grad = l1_grad - l1_proj
+    #
+    #                         if "ce" in task_cfg["TASK19"]["pcgrad_on"]:
+    #                             l2_grad = l2_grad - l2_proj
+    #
+    #                         # assert torch.dot(l1_grad, l2_grad) >= 0
+    #
+    #                     l_grad = l1_grad + l2_grad
+    #                     optimizer.zero_grad()
+    #                     model.zero_grad()
+    #                     (losses[0] + losses[1]).backward()
+    #                     l3_grad = [k.grad.clone().view(-1) for k in model.parameters()]
+    #                     l3_grad = torch.cat(l3_grad)
+    #                     grad_diff.append(float((l3_grad - l_grad).sum()))
+    #
+    #                     del l1_grad
+    #                     del l2_grad
+    #                     del l3_grad
+    #
+    #                     prev_sum = 0
+    #                     for param in model.parameters():
+    #                         slice_start, slice_end = prev_sum, prev_sum + np.prod(list(param.grad.shape))
+    #                         param.grad = l_grad[slice_start:slice_end].view_as(param.grad).clone()
+    #                         prev_sum = slice_end
+    #
+    #                     # if task_cfg["TASK19"].get("default_double", False):
+    #                     #     torch.set_default_tensor_type(torch.FloatTensor)
+    #
+    #                 elif task_cfg["TASK19"].get("pcgrad_module", False):
+    #                     losses[0].backward(retain_graph=True)
+    #                     l1_grad = [k.grad.clone().view(-1) for k in model.parameters()]
+    #                     # l1_grad = torch.cat(l1_grad)
+    #                     optimizer.zero_grad()
+    #                     model.zero_grad()
+    #                     losses[1].backward()
+    #                     l2_grad = [k.grad.clone().view(-1) for k in model.parameters()]
+    #                     # l2_grad = torch.cat(l2_grad)
+    #                     # grad_dots.append(float(l_dot))
+    #
+    #                     l_grad = []
+    #                     l_dots = []
+    #                     l1_grad_mag_mods = []
+    #                     l2_grad_mag_mods = []
+    #
+    #                     # l1: SCL and l2: CE
+    #                     for l1_mod_grad, l2_mod_grad in zip(l1_grad, l2_grad):
+    #                         l_mod_dot = torch.dot(l1_mod_grad, l2_mod_grad)
+    #                         l2_grad_mag = torch.dot(l2_mod_grad, l2_mod_grad)
+    #                         l1_grad_mag = torch.dot(l1_mod_grad, l1_mod_grad)
+    #
+    #                         if l_mod_dot < 0 and task_cfg["TASK19"].get("pcgrad_adjust", True):
+    #                             l1_proj = (l_mod_dot/l2_grad_mag) * l2_mod_grad
+    #                             l2_proj = (l_mod_dot/l1_grad_mag) * l1_mod_grad
+    #
+    #                             if "scl" in task_cfg["TASK19"]["pcgrad_on"]:
+    #                                 l1_mod_grad = l1_mod_grad - l1_proj
+    #
+    #                             if "ce" in task_cfg["TASK19"]["pcgrad_on"]:
+    #                                 l2_mod_grad = l2_mod_grad - l2_proj
+    #
+    #                         l_grad.append(l1_mod_grad + l2_mod_grad)
+    #                         l_dots.append(float(l_mod_dot))
+    #                         l1_grad_mag_mods.append(l1_grad_mag)
+    #                         l2_grad_mag_mods.append(l2_grad_mag)
+    #
+    #
+    #                     optimizer.zero_grad()
+    #                     model.zero_grad()
+    #                     # (losses[0] + losses[1]).backward()
+    #                     # l3_grad = [k.grad.clone().view(-1) for k in model.parameters()]
+    #                     # l3_grad = torch.cat(l3_grad)
+    #                     # grad_diff.append(float((l3_grad - l_grad).sum()))
+    #
+    #                     del l1_grad
+    #                     del l2_grad
+    #                     # del l3_grad
+    #
+    #                     for param, l_g in zip(model.parameters(), l_grad):
+    #                         param.grad = l_g.view_as(param.grad).clone()
+    #
+    #                     l_dot = sum(l_dots)/len(l_dots)
+    #                     l1_grad_mag = sum(l1_grad_mag_mods)/len(l1_grad_mag_mods)
+    #                     l2_grad_mag = sum(l2_grad_mag_mods)/len(l2_grad_mag_mods)
+    #
+    #                 elif task_cfg["TASK19"].get("step_scl", False):
+    #                     if iterId > task_cfg["TASK19"].get("scl_start_step", None):
+    #                         loss.backward()
+    #                     else:
+    #                         losses[1].backward()
+    #
+    #                 elif task_cfg["TASK19"].get("ramp_scl", False):
+    #                     ramp_start = task_cfg["TASK19"].get("scl_start_ramp", None)
+    #                     ramp_stop = task_cfg["TASK19"].get("scl_stop_ramp", None)
+    #                     if iterId < ramp_start:
+    #                         losses[1].backward()
+    #                     elif ramp_stop > iterId > ramp_start:
+    #                         ramp_loss = losses[1] + ((iterId - ramp_start)/(ramp_stop-ramp_start)) * losses[0]
+    #                         ramp_loss.backward()
+    #                     else:
+    #                         loss.backward()
+    #
+    #                 else:
+    #                     # import pdb
+    #                     # pdb.set_trace()
+    #                     #
+    #                     loss.backward()
+    #
+    #                 back_time = time.time()
+    #                 # print(f"Backward time: {back_time - iter_time}")
+    #
+    #
+    #                 if task_cfg["TASK19"]["grad_clip_mode"] == "all":
+    #                     clip_gradients(model, task_cfg["TASK19"]["max_grad_norm"], task_cfg["TASK19"]["grad_clip_mode"])
+    #
+    #                 optimizer.step()
+    #                 warmup_scheduler.step()
+    #                 model.zero_grad()
+    #                 optimizer.zero_grad()
+    #                 if first_task:
+    #                     global_step += 1
+    #                     first_task = False
+    #
+    #                 if train_type == "ce" or (not registry.alt_train):
+    #                     tbLogger.step_train(
+    #                         epochId,
+    #                         iterId,
+    #                         float(loss),
+    #                         float(score),
+    #                         optimizer.param_groups[0]["lr"],
+    #                         task_id,
+    #                         "train",
+    #                         extra_dict={
+    #                             "grad_dot": l_dot,
+    #                             "grad_mag_scl": l1_grad_mag,
+    #                             "grad_mag_ce": l2_grad_mag,
+    #                         } if (task_cfg["TASK19"].get("pcgrad", False) or
+    #                               task_cfg["TASK19"].get("pcgrad_module", False)) else None
+    #                     )
+    #
+    #                 del loss
+    #                 del score
+    #                 del losses
+    #
+    #         # gc.collect()
+    #         finish_time = time.time()
+    #         # print(f"Finish time: {finish_time - back_time}")
+    #
+    #         if "cosine" in lr_scheduler_config and global_step > warmpu_steps:
+    #             lr_scheduler.step()
+    #
+    #         if (
+    #                 step % (20 * args.gradient_accumulation_steps) == 0
+    #                 and step != 0
+    #                 and default_gpu
+    #         ):
+    #             tbLogger.showLossTrain()
+    #             logger.info(f"LR rates: {[grp['lr'] for grp in optimizer.param_groups]}, "
+    #                         # f"Grad Dot: {sum(grad_dots) / len(grad_dots) if len(grad_dots) > 0 else None}, '"
+    #                         f"Grad Diff: {sum(grad_diff) / len(grad_diff) if len(grad_diff) > 0 else None}")
+    #             grad_dots, grad_diff = [], []
+    #
+    #         # decided whether to evaluate on each tasks.
+    #         for task_id in task_ids:
+    #             # don't run validation during debug runs
+    #             # if task_cfg["TASK19"]["debug"]:
+    #             #     break
+    #
+    #             if (iterId != 0 and iterId % eval_iter_factor == 0) or (
+    #                     epochId == args.num_train_epochs - 1 and step == median_num_iter - 1
+    #             ) or (global_step == args.hard_stop and not args.no_eval_last):
+    #                 logger.info("Starting Validation Run....")
+    #                 curr_val_score, curr_val_loss, cs_scores, cs_bt_scores = evaluate(
+    #                     args,
+    #                     task_dataloader_val,
+    #                     None,
+    #                     task_cfg,
+    #                     device,
+    #                     task_id,
+    #                     model,
+    #                     task_losses,
+    #                     epochId,
+    #                     default_gpu,
+    #                     tbLogger,
+    #                 )
+    #
+    #                 if default_gpu:
+    #                     # Save a trained model
+    #                     logger.info("** ** * Saving fine - tuned model ** ** * ")
+    #                     model_to_save = (
+    #                         model.module if hasattr(model, "module") else model
+    #                     )  # Only save the model it-self
+    #
+    #                     checkpoint_dict = \
+    #                         {
+    #                                 "model_state_dict": model_to_save.state_dict(),
+    #                                 "optimizer_state_dict": optimizer.state_dict(),
+    #                                 "warmup_scheduler_state_dict": warmup_scheduler.state_dict(),
+    #                                 "global_step": global_step,
+    #                                 "epoch_id": epochId,
+    #                                 "tb_logger": tbLogger
+    #                         }
+    #
+    #                     if task_cfg["TASK19"].get("monitor_value","val_score") == "val_score" and cs_scores is None:
+    #                         save_thresh = registry.save_top
+    #                         top_vqa_scores = [ckpt[1] for ckpt in sorted(best_checkpoints, key=lambda x: x[1])][
+    #                                          -save_thresh:]
+    #                         vqa_rank = bisect.bisect(top_vqa_scores, curr_val_score)
+    #                         checkpoint_dict.update(
+    #                             {
+    #                                 "vqa_rank": vqa_rank,
+    #                                 "vqa_acc": curr_val_score,
+    #                             }
+    #                         )
+    #
+    #                         if vqa_rank != 0:
+    #                             logger.info(f"Saving for VQA score w/ rank: {vqa_rank}")
+    #                             output_checkpoint = os.path.join(savePath, f"vqa_rank_{vqa_rank}.tar")
+    #                             torch.save(checkpoint_dict, output_checkpoint)
+    #
+    #                         logger.info(
+    #                             f"Current Val Score and Rank: {curr_val_score} / {vqa_rank} | Previous Best Val Scores: {top_vqa_scores}")
+    #
+    #                         best_checkpoints.append((global_step, curr_val_score, -1, -1))
+    #
+    #                         try:
+    #                             with open(ckpts_log_file, "w") as outfile:
+    #                                 dump_str = ""
+    #                                 for ckpt in best_checkpoints:
+    #                                     dump_str += f"Ckpt: {ckpt} \n"
+    #                                 outfile.write(dump_str)
+    #                             logger.info(f"Dumped File: {ckpts_log_file}")
+    #                         except:
+    #                             import pdb
+    #                             pdb.set_trace()
+    #                         best_val_score = curr_val_score
+    #                         best_val_epoch = epochId
+    #
+    #                     elif curr_val_loss <= best_val_loss and task_cfg["TASK19"].get("monitor_value",
+    #                                                                                    "val_loss") == "val_loss" and cs_scores is None:
+    #                         output_checkpoint = os.path.join(savePath, "pytorch_ckpt_latest.tar")
+    #                         logger.info(f"Saving Checkpoint: {output_checkpoint}")
+    #                         logger.info(
+    #                             f"Current Validation Loss: {curr_val_loss} | Previous Best Validation Loss: {best_val_loss}")
+    #                         best_val_loss = curr_val_loss
+    #                         torch.save(checkpoint_dict, output_checkpoint)
+    #
+    #                     elif cs_scores is not None:
+    #                         try:
+    #                             save_thresh = registry.save_top
+    #                             curr_cs_score = cs_scores[-1]
+    #                             curr_cs_bt_score = cs_bt_scores[-1]
+    #
+    #                             top_vqa_scores = [ ckpt[1] for ckpt in sorted(best_checkpoints, key=lambda x: x[1])][-save_thresh:]
+    #                             top_cs_scores = [ ckpt[2] for ckpt in sorted(best_checkpoints, key=lambda x: x[2])][-save_thresh:]
+    #                             top_cs_bt_scores = [ckpt[3] for ckpt in sorted(best_checkpoints, key=lambda x: x[3])][-save_thresh:]
+    #
+    #                             vqa_rank = bisect.bisect(top_vqa_scores, curr_val_score)
+    #                             cs_rank = bisect.bisect(top_cs_scores, curr_cs_score)
+    #                             cs_bt_rank = bisect.bisect(top_cs_bt_scores, curr_cs_bt_score)
+    #
+    #
+    #                             logger.info(f"Current Val Score and Rank: {curr_val_score} / {vqa_rank} | Previous Best Val Scores: {top_vqa_scores}")
+    #                             logger.info(f"Current CS Score and Rank: {curr_cs_score} / {cs_rank} | Previous Best CS Scores: {top_cs_scores}")
+    #                             logger.info(f"Current CS BT Score and Rank: {curr_cs_bt_score} / {cs_bt_rank} | Previous Best CS BT Scores: {top_cs_bt_scores}")
+    #
+    #                             logger.info(f"Top CS checkpoint: {sorted(best_checkpoints, key=lambda x: x[2])[-1]}")
+    #                             logger.info(f"Top CS BT checkpoint: {sorted(best_checkpoints, key=lambda x: x[3])[-1]}")
+    #                             logger.info(f"Checkpoint Dir: {savePath}")
+    #                             checkpoint_dict.update(
+    #                                 {
+    #                                     "vqa_rank": vqa_rank,
+    #                                     "cs_rank": cs_rank,
+    #                                     "cs_bt_rank": cs_bt_rank,
+    #                                     "vqa_acc": curr_val_score,
+    #                                     "cs_score": curr_cs_score,
+    #                                     "cs_bt_score": curr_cs_bt_score
+    #                                 }
+    #                             )
+    #
+    #                             if vqa_rank != 0:
+    #                                 logger.info(f"Saving for VQA score w/ rank: {vqa_rank}")
+    #                                 output_checkpoint = os.path.join(savePath, f"vqa_rank_{vqa_rank}.tar")
+    #                                 torch.save(checkpoint_dict, output_checkpoint)
+    #
+    #                             if cs_rank != 0:
+    #                                 logger.info(f"Saving for CS score w/ rank: {cs_rank}")
+    #                                 output_checkpoint = os.path.join(savePath, f"cs_rank_{cs_rank}.tar")
+    #                                 torch.save(checkpoint_dict, output_checkpoint)
+    #
+    #                             if cs_bt_rank != 0:
+    #                                 logger.info(f"Saving for CS BT score w/ rank: {cs_bt_rank}")
+    #                                 output_checkpoint = os.path.join(savePath, f"cs_bt_rank_{cs_bt_rank}.tar")
+    #                                 torch.save(checkpoint_dict, output_checkpoint)
+    #
+    #                             best_checkpoints.append((global_step, curr_val_score, curr_cs_score, curr_cs_bt_score))
+    #                             cs_checkpoints.append(cs_scores)
+    #                             cs_bt_checkpoints.append(cs_bt_scores)
+    #
+    #                             with open(ckpts_log_file, "w") as outfile:
+    #                                 dump_str = ""
+    #                                 assert len(best_checkpoints) == len(cs_bt_checkpoints) == len(cs_checkpoints)
+    #                                 for ckpt, cs_ckpt, cs_bt_ckpt in zip(best_checkpoints,
+    #                                                                      cs_checkpoints,
+    #                                                                      cs_bt_checkpoints):
+    #                                     dump_str += f"Ckpt: {ckpt} | CS : {cs_ckpt}| CS-BT: {cs_bt_ckpt} \n"
+    #                                 outfile.write(dump_str)
+    #                             logger.info(f"Dumped File: {ckpts_log_file}")
+    #                         except:
+    #                             import pdb
+    #                             pdb.set_trace()
+    #
+    #         residue_time = time.time()
+    #         # print(f"Finish time: {residue_time - finish_time}")
+    #
+    #     if global_step > args.hard_stop:
+    #         break
+    #
+    #     if lr_scheduler_config == "automatic":
+    #         lr_scheduler.step(sum(val_scores.values()))
+    #         logger.info("best average score is %3f" % lr_scheduler.best)
+    #     elif lr_scheduler_config == "mannul":
+    #         lr_scheduler.step()
+    # # Todo: Add config for final_evaluation splits [re-vqa, val, test]
+
+    # tbLogger.txt_close()
+
+    import pdb
+    pdb.set_trace()
 
     # Run final-evaluation for EvalAI file.
-    for split in ["test", "val"]:
+    for split in ["val"]:
         final_evaluate(
-            args, task_cfg, device, task_ids[0], model, task_losses, savePath, split
+            args, task_cfg, device, "TASK19", model, task_losses, savePath, split
         )
 
     if len(best_checkpoints) > 1:

@@ -89,6 +89,7 @@ class NegativeSampler(Sampler):
         self.task_cfg = task_cfg["TASK19"]
         self.epoch_idx = int(1e10)
         self.epochs = []
+        self.epochs_negs = []
         self.num_positives = self.task_cfg.get("num_positives", -1)
         if self.num_positives > 0:
             self.read_annotations()
@@ -298,26 +299,32 @@ class NegativeSampler(Sampler):
 
         # shuffle bins
         self.re_bins = NegativeSampler.shuffle(self.re_bins, 0, len(self.re_bins))
-        batches, batches_bins = NegativeSampler.add_hard_negatives(batches, batches_bins, _args, question_rephrase_dict)
+        batches, batches_bins, negatives = NegativeSampler.add_hard_negatives(batches, batches_bins, _args, question_rephrase_dict)
 
         if registry.sdebug:
             self.debug(batches)
 
         num_epochs = int(len(batches)/self.num_batches)
         epochs = []
+        epochs_negs = []
         # build epochs
         for epoch_idx in range(num_epochs):
             batch_start_idx = epoch_idx * self.num_batches
             batch_end_idx = (epoch_idx+1) * self.num_batches
             assert batch_end_idx <= len(batches)
             epoch = []
+            epoch_negs = []
             for batch_idx in range(batch_start_idx, batch_end_idx):
                 assert len(batches[batch_idx]) == len(set(batches[batch_idx]))
                 epoch.extend(batches[batch_idx])
+                epoch_negs.append(negatives[batch_idx])
             epochs.append(epoch)
+            epochs_negs.append(epoch_negs)
 
         self.epoch_idx = 0
         self.epochs = epochs
+        self.epochs_negs = epochs_negs
+
 
     def check_gt_condition(self, entry_idx, batch_answers):
         entry_answers = self.get_entry_answers(self.entries[entry_idx])
@@ -424,6 +431,28 @@ class NegativeSampler(Sampler):
         return batches, batches_bins
 
     @staticmethod
+    def add_neg(neg_inds, batch_inds, entry_idx):
+        if entry_idx in batch_inds:
+            ref_idx = batch_inds.index(entry_idx)
+            neg_inds[len(batch_inds)] = [ref_idx]
+        else:
+            # random negative can be paired w/ any index
+            neg_inds[len(batch_inds)] = list(range(len(batch_inds)))
+            # np.random.shuffle(neg_inds[len(batch_inds)])
+
+            if entry_idx > -1:
+                ref_idx = batch_inds.index(entry_idx)
+            else:
+                ref_idx = -1
+
+        if ref_idx > -1:
+            if ref_idx not in neg_inds:
+                neg_inds[ref_idx] = [len(batch_inds)]
+            else:
+                neg_inds[ref_idx].append(len(batch_inds))
+                # np.random.shuffle(neg_inds[ref_idx])
+
+    @staticmethod
     def add_hard_negatives(batches,
                            batches_bins,
                            args,
@@ -444,8 +473,10 @@ class NegativeSampler(Sampler):
         ) = args
 
         bins_iterator = cycle(range(len(re_bins)))
+        negatives = [{} for batch in batches]
+        actual_negatives = []
 
-        for batch_inds, batch_bins in tqdm(zip(batches, batches_bins), total=len(batches), desc="Adding Hard Negatives"):
+        for batch_inds, neg_inds, batch_bins in tqdm(zip(batches, negatives, batches_bins), total=len(batches), desc="Adding Hard Negatives"):
             batch_inds_iter = cycle(batch_inds)
 
             while True:
@@ -460,8 +491,10 @@ class NegativeSampler(Sampler):
                     # add better negatives
                     neg_entry_idx, passed, bin_idx = NegativeSampler.get_hard_negative(negatives_list, batch_bins, entry_map, question_rephrase_dict)
                     if not passed:
+                        NegativeSampler.add_neg(neg_inds, batch_inds, entry_idx)
                         batch_inds.append(neg_entry_idx)
                         batch_bins.append(bin_idx)
+
 
                 if neg_choice in ["question_neg"] or passed:
                     entry_idx = next(batch_inds_iter)
@@ -477,10 +510,12 @@ class NegativeSampler(Sampler):
                     # add better negatives
                     neg_entry_idx, passed, bin_idx = NegativeSampler.get_hard_negative(negatives_list, batch_bins, entry_map, question_rephrase_dict)
                     if not passed:
+                        NegativeSampler.add_neg(neg_inds, batch_inds, entry_idx)
                         batch_inds.append(neg_entry_idx)
                         batch_bins.append(bin_idx)
 
                 if neg_choice == "random" or passed:
+                    prev_entry_idx = entry_idx if passed else -1
                     while True:
                         bin_idx = next(bins_iterator)
                         # to account for bins-used by positive sampler
@@ -491,6 +526,7 @@ class NegativeSampler(Sampler):
                         # randomly pick one entry from the bin
                         iter_idx = next(item["iter_idx"])
                         entry_idx = item["entry_inds"][iter_idx]
+                        NegativeSampler.add_neg(neg_inds, batch_inds, prev_entry_idx)
                         batch_inds.append(entry_idx)
                         batch_bins.append(bin_idx)
                         break
@@ -502,7 +538,28 @@ class NegativeSampler(Sampler):
                     import pdb
                     pdb.set_trace()
 
-        return batches, batches_bins
+            # assert that we have negatives for all the samples
+            try:
+                assert len(neg_inds) == len(batch_inds)
+
+            except:
+                keys_left = list(set(range(len(batch_inds))) - set(neg_inds.keys()))
+                for key in keys_left:
+                    neg_inds[key] = [np.random.choice(list(neg_inds.keys()))]
+                assert len(neg_inds) == len(batch_inds)
+
+            # filter neg-inds
+            actual_neg_inds = []
+            for key in sorted(neg_inds):
+                try:
+                    actual_neg_inds.append(np.random.choice (neg_inds[key]))
+                except:
+                    import pdb
+                    pdb.set_trace()
+
+            actual_negatives.append(actual_neg_inds)
+
+        return batches, batches_bins, actual_negatives
 
     @staticmethod
     def assert_bins(array):

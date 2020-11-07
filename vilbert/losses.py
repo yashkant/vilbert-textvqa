@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-
+from torch import nn
 from tools.registry import registry
 import logging
 
@@ -221,13 +221,14 @@ class SupConLoss(torch.nn.Module):
     It also supports the unsupervised contrastive loss in SimCLR"""
 
     def __init__(self, temperature=0.07, contrast_mode='all',
-                 base_temperature=0.07, formulation="normal"):
+                 base_temperature=0.07, formulation="normal", use_2d=False):
         super(SupConLoss, self).__init__()
         self.temperature = temperature
         self.contrast_mode = contrast_mode
         self.base_temperature = base_temperature
         self.formulation = formulation
-        logger.info(f"SCL Loss Formulation: {self.formulation} w/ BT: {base_temperature} and T: {temperature}")
+        self.use_2d = use_2d
+        logger.info(f"SCL Loss Formulation: {self.formulation} w/ BT: {base_temperature} and T: {temperature} and | 2d: {self.use_2d}")
 
     def set_formulation(self, formulation):
         self.formulation = formulation
@@ -331,7 +332,9 @@ class SupConLoss(torch.nn.Module):
         pos_mask = pos_mask * logits_mask
 
         # compute log_prob
+        half_batch_size = int(logits.shape[0]/2)
         exp_logits = torch.exp(logits) * logits_mask
+
 
         if self.formulation == "custom":
             negs_mask = (pos_mask == 0).int() * logits_mask
@@ -362,6 +365,12 @@ class SupConLoss(torch.nn.Module):
         scl_mask_rescale_factor = registry.scl_mask_rescale_factor
         if scl_mask_rescale_factor > 0:
             secondary_mask = torch.eye(batch_size, device=pos_mask.device).repeat(anchor_count, contrast_count).fill_diagonal_(0)
+            if self.use_2d:
+                exp_max_logits, _ = torch.max(exp_logits, dim=-1)
+                intra_exp_logits = torch.cat([torch.diag(exp_logits[:half_batch_size, half_batch_size:]),
+                                              torch.diag(exp_logits[half_batch_size:, :half_batch_size])])
+                scaling_factors = exp_max_logits / intra_exp_logits
+                secondary_mask = secondary_mask * scaling_factors
             secondary_mask = secondary_mask * scl_mask_rescale_factor
             secondary_mask[secondary_mask == 0] = 1
             pos_mask = pos_mask * secondary_mask
@@ -411,3 +420,42 @@ def MSELoss(batch_dict):
             total_loss += loss
 
     return total_loss
+
+
+def triple_loss(a, p, n, margin=0.2) :
+    d = torch.nn.PairwiseDistance(p=2)
+    distance = d(a, p) - d(a, n) + margin
+    loss = torch.mean(torch.max(distance, torch.zeros_like(distance)))
+    return loss
+
+
+def TripletLoss(batch_dicts):
+    # based on https://arxiv.org/pdf/1804.00298.pdf
+    triplet_loss = torch.nn.TripletMarginLoss(margin=0.99, p=2)
+    ref_embeddings, pos_embeddings = [bd["contrastive_projection_norm"] for bd in batch_dicts]
+    negative_inds = batch_dicts[0]["batch_negs"]
+    neg_embeddings = ref_embeddings[negative_inds]
+    loss = triplet_loss(ref_embeddings, pos_embeddings, neg_embeddings)
+    return loss, -1
+
+
+def DynamicTripletLoss(batch_dicts):
+    # based on "Free the VQA Model from Knowledge Inertia"
+    pos_ref_embeddings, pos_embeddings = [bd["contrastive_projection_norm"] for bd in batch_dicts]
+    negative_inds = batch_dicts[0]["batch_negs"]
+    neg_ref_embeddings, neg_embeddings = pos_ref_embeddings[negative_inds], pos_embeddings[negative_inds]
+    distance = nn.PairwiseDistance(p=2)
+    pos_pos_ref = distance(pos_ref_embeddings, pos_embeddings)
+    neg_pos_ref = distance(neg_embeddings, pos_ref_embeddings)
+    neg_neg_ref = distance(neg_ref_embeddings, neg_embeddings)
+    pos_neg_ref = distance(pos_embeddings, neg_ref_embeddings)
+    margin = distance(pos_ref_embeddings, neg_ref_embeddings)
+    dynamic_loss = torch.mean(
+        torch.max(margin + pos_pos_ref - neg_pos_ref, torch.zeros_like(margin)) +
+        torch.max(margin + neg_neg_ref - pos_neg_ref, torch.zeros_like(margin))
+    )
+    mse_loss = torch.nn.MSELoss(reduction="mean")
+    emb_loss = mse_loss(neg_embeddings, neg_ref_embeddings) + mse_loss(pos_embeddings, pos_ref_embeddings)
+    loss = 0.25 * dynamic_loss + 0.01 * emb_loss
+    return loss, -1
+

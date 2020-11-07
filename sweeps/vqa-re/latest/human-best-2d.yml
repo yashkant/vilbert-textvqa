@@ -74,5 +74,5 @@ TASK19:
   ce_freq: 3
   revqa_eval_on_val: true
   eval_iter_factor: 500
-  loss_type: dynamic_triplet
+  use_2d: true
 #  sdebug: true
